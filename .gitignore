@@ -9,6 +9,7 @@ out/
 *.iml
 *.ipr
 *.iws
+.attach_pid*
 
 **/.DS_Store
 
@@ -18,6 +19,7 @@ build/
 classes/
 idea/
 .gradle/
+node_modules/
 
 jadx-output/
 *-tmp/

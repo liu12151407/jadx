@@ -31,9 +31,10 @@ import jadx.gui.jobs.BackgroundJob;
 import jadx.gui.jobs.BackgroundWorker;
 import jadx.gui.jobs.DecompileJob;
 import jadx.gui.treemodel.JNode;
+import jadx.gui.ui.codearea.CodeArea;
 import jadx.gui.utils.CacheObject;
 import jadx.gui.utils.NLS;
-import jadx.gui.utils.Position;
+import jadx.gui.utils.JumpPosition;
 import jadx.gui.utils.search.TextSearchIndex;
 
 public abstract class CommonSearchDialog extends JDialog {
@@ -106,7 +107,7 @@ public abstract class CommonSearchDialog extends JDialog {
 			return;
 		}
 		JNode node = (JNode) resultsModel.getValueAt(selectedId, 0);
-		tabbedPane.codeJump(new Position(node.getRootClass(), node.getLine()));
+		tabbedPane.codeJump(new JumpPosition(node.getRootClass(), node.getLine()));
 
 		dispose();
 	}
@@ -301,7 +302,10 @@ public abstract class CommonSearchDialog extends JDialog {
 
 	protected static class ResultsModel extends AbstractTableModel {
 		private static final long serialVersionUID = -7821286846923903208L;
-		private static final String[] COLUMN_NAMES = {"Node", "Code"};
+		private static final String[] COLUMN_NAMES = {
+				NLS.str("search_dialog.col_node"),
+				NLS.str("search_dialog.col_code")
+		};
 
 		private final transient ArrayList<JNode> rows = new ArrayList<>();
 		private final transient ResultsTableCellRenderer renderer;
@@ -525,7 +529,7 @@ public abstract class CommonSearchDialog extends JDialog {
 
 		TextSearchIndex textIndex = cache.getTextIndex();
 		if (textIndex == null) {
-			warnLabel.setText("Index not initialized, search will be disabled!");
+			warnLabel.setText(NLS.str("msg.index_not_initialized"));
 			warnLabel.setVisible(true);
 		}
 	}

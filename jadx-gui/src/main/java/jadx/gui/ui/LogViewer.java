@@ -7,6 +7,7 @@ import ch.qos.logback.classic.Level;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 
 import jadx.gui.settings.JadxSettings;
+import jadx.gui.ui.codearea.CodeArea;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.logs.ILogListener;
 import jadx.gui.utils.logs.LogCollector;
@@ -40,7 +41,7 @@ class LogViewer extends JDialog {
 			level = LEVEL_ITEMS[i];
 			registerLogListener();
 		});
-		JLabel levelLabel = new JLabel(NLS.str("log.level"));
+		JLabel levelLabel = new JLabel(NLS.str("log_viewer.log_level"));
 		levelLabel.setLabelFor(cb);
 		controlPane.add(levelLabel);
 		controlPane.add(cb);
@@ -56,7 +57,7 @@ class LogViewer extends JDialog {
 		contentPane.add(scrollPane, BorderLayout.CENTER);
 		contentPane.add(close, BorderLayout.PAGE_END);
 
-		setTitle("Log Viewer");
+		setTitle(NLS.str("log_viewer.title"));
 		pack();
 		setSize(800, 600);
 		setDefaultCloseOperation(DISPOSE_ON_CLOSE);

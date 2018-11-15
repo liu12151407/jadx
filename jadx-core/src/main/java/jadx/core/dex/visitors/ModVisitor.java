@@ -366,7 +366,7 @@ public class ModVisitor extends AbstractVisitor {
 			elType = insnElementType;
 		}
 		if (!elType.equals(insnElementType) && !insnArrayType.equals(ArgType.OBJECT)) {
-			ErrorsCounter.methodError(mth,
+			ErrorsCounter.methodWarn(mth,
 					"Incorrect type for fill-array insn " + InsnUtils.formatOffset(insn.getOffset())
 							+ ", element type: " + elType + ", insn element type: " + insnElementType
 			);
@@ -396,14 +396,14 @@ public class ModVisitor extends AbstractVisitor {
 		return filledArr;
 	}
 
-	private static boolean allArgsNull(InsnNode insn) {
+	private static boolean allArgsNull(ConstructorInsn insn) {
 		for (InsnArg insnArg : insn.getArguments()) {
 			if (insnArg.isLiteral()) {
 				LiteralArg lit = (LiteralArg) insnArg;
 				if (lit.getLiteral() != 0) {
 					return false;
 				}
-			} else if (!insnArg.isThis()) {
+			} else {
 				return false;
 			}
 		}

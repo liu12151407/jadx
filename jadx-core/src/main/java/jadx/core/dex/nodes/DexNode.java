@@ -46,10 +46,13 @@ public class DexNode implements IDexNode {
 
 	public void loadClasses() {
 		for (ClassDef cls : dexBuf.classDefs()) {
-			ClassNode clsNode = new ClassNode(this, cls);
-			classes.add(clsNode);
-			clsMap.put(clsNode.getClassInfo(), clsNode);
+			addClassNode(new ClassNode(this, cls));
 		}
+	}
+
+	public void addClassNode(ClassNode clsNode) {
+		classes.add(clsNode);
+		clsMap.put(clsNode.getClassInfo(), clsNode);
 	}
 
 	void initInnerClasses() {
@@ -95,6 +98,7 @@ public class DexNode implements IDexNode {
 		return resolveClass(ClassInfo.fromType(root, type));
 	}
 
+	@Deprecated
 	@Nullable
 	public MethodNode resolveMethod(@NotNull MethodInfo mth) {
 		ClassNode cls = resolveClass(mth.getDeclClass());
@@ -134,11 +138,41 @@ public class DexNode implements IDexNode {
 		return null;
 	}
 
+	@Deprecated
 	@Nullable
 	public FieldNode resolveField(FieldInfo field) {
 		ClassNode cls = resolveClass(field.getDeclClass());
 		if (cls != null) {
 			return cls.searchField(field);
+		}
+		return null;
+	}
+
+	@Nullable
+	FieldNode deepResolveField(@NotNull ClassNode cls, FieldInfo fieldInfo) {
+		FieldNode field = cls.searchFieldByName(fieldInfo.getName());
+		if (field != null) {
+			return field;
+		}
+		FieldNode found;
+		ArgType superClass = cls.getSuperClass();
+		if (superClass != null) {
+			ClassNode superNode = resolveClass(superClass);
+			if (superNode != null) {
+				found = deepResolveField(superNode, fieldInfo);
+				if (found != null) {
+					return found;
+				}
+			}
+		}
+		for (ArgType iFaceType : cls.getInterfaces()) {
+			ClassNode iFaceNode = resolveClass(iFaceType);
+			if (iFaceNode != null) {
+				found = deepResolveField(iFaceNode, fieldInfo);
+				if (found != null) {
+					return found;
+				}
+			}
 		}
 		return null;
 	}
@@ -204,6 +238,11 @@ public class DexNode implements IDexNode {
 		return this;
 	}
 
+	@Override
+	public String typeName() {
+		return "dex";
+	}
+
 	public int getDexId() {
 		return dexId;
 	}
@@ -212,5 +251,4 @@ public class DexNode implements IDexNode {
 	public String toString() {
 		return "DEX: " + file;
 	}
-
 }

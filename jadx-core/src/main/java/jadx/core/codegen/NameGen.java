@@ -102,16 +102,11 @@ public class NameGen {
 		if (fallback) {
 			return getFallbackName(arg);
 		}
-		String name = arg.getName();
-		String varName;
-		if (name != null) {
-			if ("this".equals(name)) {
-				return name;
-			}
-			varName = name;
-		} else {
-			varName = guessName(arg);
+		if (arg.isThis()) {
+			return RegisterArg.THIS_ARG_NAME;
 		}
+		String name = arg.getName();
+		String varName = name != null ? name : guessName(arg);
 		if (NameMapper.isReserved(varName)) {
 			return varName + "R";
 		}
@@ -141,11 +136,11 @@ public class NameGen {
 	private String makeNameForType(ArgType type) {
 		if (type.isPrimitive()) {
 			return makeNameForPrimitive(type);
-		} else if (type.isArray()) {
-			return makeNameForType(type.getArrayRootElement()) + "Arr";
-		} else {
-			return makeNameForObject(type);
 		}
+		if (type.isArray()) {
+			return makeNameForType(type.getArrayRootElement()) + "Arr";
+		}
+		return makeNameForObject(type);
 	}
 
 	private static String makeNameForPrimitive(ArgType type) {

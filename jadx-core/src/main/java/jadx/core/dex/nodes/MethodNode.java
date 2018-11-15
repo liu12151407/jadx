@@ -39,6 +39,7 @@ import jadx.core.dex.regions.Region;
 import jadx.core.dex.trycatch.ExcHandlerAttr;
 import jadx.core.dex.trycatch.ExceptionHandler;
 import jadx.core.dex.trycatch.TryCatchBlock;
+import jadx.core.utils.ErrorsCounter;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.DecodeException;
 import jadx.core.utils.exceptions.JadxRuntimeException;
@@ -193,11 +194,11 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 				}
 			}
 			initArguments(argsTypes);
+			return true;
 		} catch (JadxRuntimeException e) {
 			LOG.error("Method signature parse error: {}", this, e);
 			return false;
 		}
-		return true;
 	}
 
 	private void initArguments(List<ArgType> args) {
@@ -214,7 +215,7 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 			thisArg = null;
 		} else {
 			TypeImmutableArg arg = InsnArg.typeImmutableReg(pos - 1, parentClass.getClassInfo().getType());
-			arg.markAsThis();
+			arg.add(AFlag.THIS);
 			thisArg = arg;
 		}
 		if (args.isEmpty()) {
@@ -243,6 +244,7 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 		return argsList.remove(0);
 	}
 
+	@Nullable
 	public RegisterArg getThisArg() {
 		return thisArg;
 	}
@@ -602,6 +604,19 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 	@Override
 	public RootNode root() {
 		return dex().root();
+	}
+
+	@Override
+	public String typeName() {
+		return "method";
+	}
+
+	public void addWarn(String errStr) {
+		ErrorsCounter.methodWarn(this, errStr);
+	}
+
+	public void addError(String errStr, Exception e) {
+		ErrorsCounter.methodError(this, errStr, e);
 	}
 
 	public MethodInfo getMethodInfo() {

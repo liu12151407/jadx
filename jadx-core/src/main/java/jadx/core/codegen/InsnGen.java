@@ -137,13 +137,7 @@ public class InsnGen {
 
 	private void instanceField(CodeWriter code, FieldInfo field, InsnArg arg) throws CodegenException {
 		ClassNode pCls = mth.getParentClass();
-		FieldNode fieldNode = pCls.searchField(field);
-		while (fieldNode == null
-				&& pCls.getParentClass() != pCls
-				&& pCls.getParentClass() != null) {
-			pCls = pCls.getParentClass();
-			fieldNode = pCls.searchField(field);
-		}
+		FieldNode fieldNode = pCls.dex().root().deepResolveField(field);
 		if (fieldNode != null) {
 			FieldReplaceAttr replace = fieldNode.get(AType.FIELD_REPLACE);
 			if (replace != null) {
@@ -163,7 +157,11 @@ public class InsnGen {
 		if (fieldNode != null) {
 			code.attachAnnotation(fieldNode);
 		}
-		code.add(field.getAlias());
+		if (fieldNode == null) {
+			code.add(field.getAlias());
+		} else {
+			code.add(fieldNode.getAlias());
+		}
 	}
 
 	public static void makeStaticFieldAccess(CodeWriter code, FieldInfo field, ClassGen clsGen) {
@@ -176,11 +174,15 @@ public class InsnGen {
 			}
 			code.add('.');
 		}
-		FieldNode fieldNode = clsGen.getClassNode().dex().resolveField(field);
+		FieldNode fieldNode = clsGen.getClassNode().dex().root().deepResolveField(field);
 		if (fieldNode != null) {
 			code.attachAnnotation(fieldNode);
 		}
-		code.add(field.getAlias());
+		if (fieldNode == null) {
+			code.add(field.getAlias());
+		} else {
+			code.add(fieldNode.getAlias());
+		}
 	}
 
 	protected void staticField(CodeWriter code, FieldInfo field) {
@@ -222,7 +224,7 @@ public class InsnGen {
 					code.add(';');
 				}
 			}
-		} catch (Throwable th) {
+		} catch (Exception th) {
 			throw new CodegenException(mth, "Error generate insn: " + insn, th);
 		}
 		return true;
@@ -578,7 +580,7 @@ public class InsnGen {
 		// anonymous class construction
 		if (cls.contains(AFlag.DONT_GENERATE)) {
 			code.add("/* anonymous class already generated */");
-			ErrorsCounter.methodError(mth, "Anonymous class already generated: " + cls);
+			ErrorsCounter.methodWarn(mth, "Anonymous class already generated: " + cls);
 			return;
 		}
 		ArgType parent;
@@ -657,7 +659,7 @@ public class InsnGen {
 	}
 
 	void generateMethodArguments(CodeWriter code, InsnNode insn, int startArgNum,
-			@Nullable MethodNode callMth) throws CodegenException {
+	                             @Nullable MethodNode callMth) throws CodegenException {
 		int k = startArgNum;
 		if (callMth != null && callMth.contains(AFlag.SKIP_FIRST_ARG)) {
 			k++;

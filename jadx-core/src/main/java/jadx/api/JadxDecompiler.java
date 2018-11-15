@@ -42,7 +42,7 @@ import jadx.core.xmlgen.ResourcesSaver;
  * jadx.load();
  * jadx.save();
  * </code></pre>
- * <p/>
+ * <p>
  * Instead of 'save()' you can iterate over decompiled classes:
  * <pre><code>
  *  for(JavaClass cls : jadx.getClasses()) {
@@ -91,7 +91,6 @@ public final class JadxDecompiler {
 
 		root.initClassPath();
 		root.loadResources(getResources());
-		root.initAppResClass();
 
 		initVisitors();
 	}
@@ -176,11 +175,11 @@ public final class JadxDecompiler {
 			sourcesOutDir = args.getOutDirSrc();
 			resOutDir = args.getOutDirRes();
 		}
-		if (saveSources) {
-			appendSourcesSave(executor, sourcesOutDir);
-		}
 		if (saveResources) {
 			appendResourcesSave(executor, resOutDir);
+		}
+		if (saveSources) {
+			appendSourcesSave(executor, sourcesOutDir);
 		}
 		return executor;
 	}
@@ -264,6 +263,13 @@ public final class JadxDecompiler {
 		return root.getErrorsCounter().getErrorCount();
 	}
 
+	public int getWarnsCount() {
+		if (root == null) {
+			return 0;
+		}
+		return root.getErrorsCounter().getWarnsCount();
+	}
+
 	public void printErrorsReport() {
 		if (root == null) {
 			return;
@@ -305,8 +311,36 @@ public final class JadxDecompiler {
 		return methodsMap;
 	}
 
+	JavaMethod getJavaMethodByNode(MethodNode mth) {
+		JavaMethod javaMethod = methodsMap.get(mth);
+		if (javaMethod != null) {
+			return javaMethod;
+		}
+		// parent class not loaded yet
+		JavaClass javaClass = classesMap.get(mth.getParentClass());
+		if (javaClass != null) {
+			javaClass.decompile();
+			return methodsMap.get(mth);
+		}
+		return null;
+	}
+
 	Map<FieldNode, JavaField> getFieldsMap() {
 		return fieldsMap;
+	}
+
+	JavaField getJavaFieldByNode(FieldNode fld) {
+		JavaField javaField = fieldsMap.get(fld);
+		if (javaField != null) {
+			return javaField;
+		}
+		// parent class not loaded yet
+		JavaClass javaClass = classesMap.get(fld.getParentClass());
+		if (javaClass != null) {
+			javaClass.decompile();
+			return fieldsMap.get(fld);
+		}
+		return null;
 	}
 
 	public JadxArgs getArgs() {

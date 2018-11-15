@@ -1,7 +1,5 @@
 package jadx.core.dex.nodes;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -17,6 +15,7 @@ import jadx.api.ResourcesLoader;
 import jadx.core.clsp.ClspGraph;
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.ConstStorage;
+import jadx.core.dex.info.FieldInfo;
 import jadx.core.dex.info.InfoStorage;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.utils.ErrorsCounter;
@@ -26,7 +25,6 @@ import jadx.core.utils.exceptions.JadxException;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.core.utils.files.DexFile;
 import jadx.core.utils.files.InputFile;
-import jadx.core.xmlgen.ResContainer;
 import jadx.core.xmlgen.ResTableParser;
 import jadx.core.xmlgen.ResourceStorage;
 
@@ -39,11 +37,12 @@ public class RootNode {
 	private final ConstStorage constValues;
 	private final InfoStorage infoStorage = new InfoStorage();
 
+	private ClspGraph clsp;
 	private List<DexNode> dexNodes;
 	@Nullable
 	private String appPackage;
+	@Nullable
 	private ClassNode appResClass;
-	private ClspGraph clsp;
 
 	public RootNode(JadxArgs args) {
 		this.args = args;
@@ -84,25 +83,21 @@ public class RootNode {
 		}
 		ResTableParser parser = new ResTableParser();
 		try {
-			ResourcesLoader.decodeStream(arsc, new ResourcesLoader.ResourceDecoder() {
-				@Override
-				public ResContainer decode(long size, InputStream is) throws IOException {
-					parser.decode(is);
-					return null;
-				}
+			ResourcesLoader.decodeStream(arsc, (size, is) -> {
+				parser.decode(is);
+				return null;
 			});
 		} catch (JadxException e) {
 			LOG.error("Failed to parse '.arsc' file", e);
 			return;
 		}
-
-		ResourceStorage resStorage = parser.getResStorage();
-		constValues.setResourcesNames(resStorage.getResourcesNames());
-		appPackage = resStorage.getAppPackage();
+		processResources(parser.getResStorage());
 	}
 
-	public void initAppResClass() {
-		appResClass = AndroidResourcesUtils.searchAppResClass(this);
+	public void processResources(ResourceStorage resStorage) {
+		constValues.setResourcesNames(resStorage.getResourcesNames());
+		appPackage = resStorage.getAppPackage();
+		appResClass = AndroidResourcesUtils.searchAppResClass(this, resStorage);
 	}
 
 	public void initClassPath() {
@@ -182,6 +177,15 @@ public class RootNode {
 			return null;
 		}
 		return cls.dex().deepResolveMethod(cls, mth.makeSignature(false));
+	}
+
+	@Nullable
+	public FieldNode deepResolveField(@NotNull FieldInfo field) {
+		ClassNode cls = resolveClass(field.getDeclClass());
+		if (cls == null) {
+			return null;
+		}
+		return cls.dex().deepResolveField(cls, field);
 	}
 
 	public List<DexNode> getDexNodes() {

@@ -28,7 +28,6 @@ import java.util.Arrays;
 import java.util.Timer;
 import java.util.TimerTask;
 
-import jadx.gui.treemodel.*;
 import org.fife.ui.rsyntaxtextarea.Theme;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,13 +39,19 @@ import jadx.gui.jobs.DecompileJob;
 import jadx.gui.jobs.IndexJob;
 import jadx.gui.settings.JadxSettings;
 import jadx.gui.settings.JadxSettingsWindow;
+import jadx.gui.treemodel.JCertificate;
+import jadx.gui.treemodel.JClass;
+import jadx.gui.treemodel.JLoadableNode;
+import jadx.gui.treemodel.JNode;
+import jadx.gui.treemodel.JResource;
+import jadx.gui.treemodel.JRoot;
 import jadx.gui.update.JadxUpdate;
 import jadx.gui.update.JadxUpdate.IUpdateCallback;
 import jadx.gui.update.data.Release;
 import jadx.gui.utils.CacheObject;
 import jadx.gui.utils.Link;
 import jadx.gui.utils.NLS;
-import jadx.gui.utils.Position;
+import jadx.gui.utils.JumpPosition;
 import jadx.gui.utils.Utils;
 
 import static javax.swing.KeyStroke.getKeyStroke;
@@ -154,7 +159,7 @@ public class MainWindow extends JFrame {
 		String[] exts = {"apk", "dex", "jar", "class", "zip", "aar", "arsc"};
 		String description = "supported files: " + Arrays.toString(exts).replace('[', '(').replace(']', ')');
 		fileChooser.setFileFilter(new FileNameExtensionFilter(description, exts));
-		fileChooser.setToolTipText(NLS.str("file.open"));
+		fileChooser.setToolTipText(NLS.str("file.open_action"));
 		String currentDirectory = settings.getLastOpenFilePath();
 		if (!currentDirectory.isEmpty()) {
 			fileChooser.setCurrentDirectory(new File(currentDirectory));
@@ -288,15 +293,14 @@ public class MainWindow extends JFrame {
 				if (resFile != null && JResource.isSupportedForView(resFile.getType())) {
 					tabbedPane.showResource(res);
 				}
-			}else if (obj instanceof JCertificate) {
+			} else if (obj instanceof JCertificate) {
 				JCertificate cert = (JCertificate) obj;
 				tabbedPane.showCertificate(cert);
-			}
-			else if (obj instanceof JNode) {
+			} else if (obj instanceof JNode) {
 				JNode node = (JNode) obj;
 				JClass cls = node.getRootClass();
 				if (cls != null) {
-					tabbedPane.codeJump(new Position(cls, node.getLine()));
+					tabbedPane.codeJump(new JumpPosition(cls, node.getLine()));
 				}
 			}
 		} catch (Exception e) {
@@ -336,7 +340,7 @@ public class MainWindow extends JFrame {
 				openFile();
 			}
 		};
-		openAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("file.open"));
+		openAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("file.open_action"));
 		openAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_O, KeyEvent.CTRL_DOWN_MASK));
 
 		Action saveAllAction = new AbstractAction(NLS.str("file.save_all"), ICON_SAVE_ALL) {
@@ -409,7 +413,7 @@ public class MainWindow extends JFrame {
 		clsSearchAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("menu.class_search"));
 		clsSearchAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_N, KeyEvent.CTRL_DOWN_MASK));
 
-		Action deobfAction = new AbstractAction(NLS.str("preferences.deobfuscation"), ICON_DEOBF) {
+		Action deobfAction = new AbstractAction(NLS.str("menu.deobfuscation"), ICON_DEOBF) {
 			@Override
 			public void actionPerformed(ActionEvent e) {
 				toggleDeobfuscation();

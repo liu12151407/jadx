@@ -15,7 +15,9 @@ import org.slf4j.LoggerFactory;
 
 import jadx.api.JadxArgs;
 import jadx.cli.JadxCLIArgs;
-import jadx.gui.ui.CodeArea;
+import jadx.gui.ui.codearea.EditorTheme;
+import jadx.gui.utils.LangLocale;
+import jadx.gui.utils.NLS;
 
 import static jadx.gui.utils.Utils.FONT_HACK;
 
@@ -24,7 +26,7 @@ public class JadxSettings extends JadxCLIArgs {
 
 	private static final String USER_HOME = System.getProperty("user.home");
 	private static final int RECENT_FILES_COUNT = 15;
-	private static final int CURRENT_SETTINGS_VERSION = 2;
+	private static final int CURRENT_SETTINGS_VERSION = 5;
 
 	private static final Font DEFAULT_FONT = FONT_HACK != null ? FONT_HACK : new RSyntaxTextArea().getFont();
 
@@ -38,22 +40,38 @@ public class JadxSettings extends JadxCLIArgs {
 	private List<String> recentFiles = new ArrayList<>();
 	private String fontStr = "";
 	private String editorThemePath = "";
+	private LangLocale langLocale = NLS.defaultLocale();
 	private boolean autoStartJobs = false;
 
 	private int settingsVersion = 0;
 
 	private Map<String, WindowLocation> windowPos = new HashMap<>();
 
-	public JadxSettings() {
+	public static JadxSettings makeDefault() {
+		JadxSettings jadxSettings = new JadxSettings();
+		jadxSettings.fixOnLoad();
+		return jadxSettings;
 	}
 
 	public void sync() {
 		JadxSettingsAdapter.store(this);
 	}
 
+	public void partialSync(ISettingsUpdater updater) {
+		JadxSettings settings = JadxSettingsAdapter.load();
+		updater.update(settings);
+		JadxSettingsAdapter.store(settings);
+	}
+
 	public void fixOnLoad() {
 		if (threadsCount <= 0) {
 			threadsCount = JadxArgs.DEFAULT_THREADS_COUNT;
+		}
+		if (deobfuscationMinLength < 0) {
+			deobfuscationMinLength = 0;
+		}
+		if (deobfuscationMaxLength < 0) {
+			deobfuscationMaxLength = 0;
 		}
 		if (settingsVersion != CURRENT_SETTINGS_VERSION) {
 			upgradeSettings(settingsVersion);
@@ -66,7 +84,7 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setLastOpenFilePath(String lastOpenFilePath) {
 		this.lastOpenFilePath = lastOpenFilePath;
-		sync();
+		partialSync(settings -> settings.lastOpenFilePath = JadxSettings.this.lastOpenFilePath);
 	}
 
 	public String getLastSaveFilePath() {
@@ -75,7 +93,7 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setLastSaveFilePath(String lastSaveFilePath) {
 		this.lastSaveFilePath = lastSaveFilePath;
-		sync();
+		partialSync(settings -> settings.lastSaveFilePath = JadxSettings.this.lastSaveFilePath);
 	}
 
 	public boolean isFlattenPackage() {
@@ -84,7 +102,7 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setFlattenPackage(boolean flattenPackage) {
 		this.flattenPackage = flattenPackage;
-		sync();
+		partialSync(settings -> settings.flattenPackage = JadxSettings.this.flattenPackage);
 	}
 
 	public boolean isCheckForUpdates() {
@@ -105,9 +123,9 @@ public class JadxSettings extends JadxCLIArgs {
 		recentFiles.add(0, filePath);
 		int count = recentFiles.size();
 		if (count > RECENT_FILES_COUNT) {
-			recentFiles.subList(0, count - RECENT_FILES_COUNT).clear();
+			recentFiles.subList(RECENT_FILES_COUNT, count).clear();
 		}
-		sync();
+		partialSync(settings -> settings.recentFiles = recentFiles);
 	}
 
 	public void saveWindowPos(Window window) {
@@ -116,7 +134,7 @@ public class JadxSettings extends JadxCLIArgs {
 				window.getWidth(), window.getHeight()
 		);
 		windowPos.put(pos.getWindowId(), pos);
-		sync();
+		partialSync(settings -> settings.windowPos = windowPos);
 	}
 
 	public boolean loadWindowPos(Window window) {
@@ -147,6 +165,14 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setShowInconsistentCode(boolean showInconsistentCode) {
 		this.showInconsistentCode = showInconsistentCode;
+	}
+
+	public LangLocale getLangLocale() {
+		return this.langLocale;
+	}
+
+	public void setLangLocale(LangLocale langLocale) {
+		this.langLocale = langLocale;
 	}
 
 	public void setCfgOutput(boolean cfgOutput) {
@@ -187,6 +213,10 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setReplaceConsts(boolean replaceConsts) {
 		this.replaceConsts = replaceConsts;
+	}
+
+	public void setUseImports(boolean useImports) {
+		this.useImports = useImports;
 	}
 
 	public boolean isAutoStartJobs() {
@@ -236,7 +266,7 @@ public class JadxSettings extends JadxCLIArgs {
 	private void upgradeSettings(int fromVersion) {
 		LOG.debug("upgrade settings from version: {} to {}", fromVersion, CURRENT_SETTINGS_VERSION);
 		if (fromVersion == 0) {
-			setDeobfuscationMinLength(4);
+			setDeobfuscationMinLength(3);
 			setDeobfuscationUseSourceNameAsAlias(true);
 			setDeobfuscationForceSave(true);
 			setThreadsCount(1);
@@ -246,7 +276,21 @@ public class JadxSettings extends JadxCLIArgs {
 			fromVersion++;
 		}
 		if (fromVersion == 1) {
-			setEditorThemePath(CodeArea.getAllThemes()[0].getPath());
+			setEditorThemePath(EditorTheme.getDefaultTheme().getPath());
+			fromVersion++;
+		}
+		if (fromVersion == 2) {
+			if (getDeobfuscationMinLength() == 4) {
+				setDeobfuscationMinLength(3);
+			}
+			fromVersion++;
+		}
+		if (fromVersion == 3) {
+			setLangLocale(NLS.defaultLocale());
+			fromVersion++;
+		}
+		if (fromVersion == 4) {
+			setUseImports(true);
 		}
 		settingsVersion = CURRENT_SETTINGS_VERSION;
 		sync();
