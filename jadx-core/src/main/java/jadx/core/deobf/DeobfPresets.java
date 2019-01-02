@@ -112,18 +112,20 @@ class DeobfPresets {
 		for (DeobfClsInfo deobfClsInfo : deobfuscator.getClsMap().values()) {
 			if (deobfClsInfo.getAlias() != null) {
 				list.add(String.format("c %s = %s",
-						deobfClsInfo.getCls().getClassInfo().getFullName(), deobfClsInfo.getAlias()));
+						deobfClsInfo.getCls().getClassInfo().makeRawFullName(), deobfClsInfo.getAlias()));
 			}
 		}
 		for (FieldInfo fld : deobfuscator.getFldMap().keySet()) {
-			list.add(String.format("f %s = %s", fld.getFullId(), fld.getAlias()));
+			list.add(String.format("f %s = %s", fld.getRawFullId(), fld.getAlias()));
 		}
 		for (MethodInfo mth : deobfuscator.getMthMap().keySet()) {
-			list.add(String.format("m %s = %s", mth.getFullId(), mth.getAlias()));
+			list.add(String.format("m %s = %s", mth.getRawFullId(), mth.getAlias()));
 		}
 		Collections.sort(list);
 		FileUtils.writeLines(deobfMapFile, MAP_FILE_CHARSET, list);
-		list.clear();
+		if (LOG.isDebugEnabled()) {
+			LOG.debug("Deobfuscation map file saved as: {}", deobfMapFile);
+		}
 	}
 
 	private static void dfsPackageName(List<String> list, String prefix, PackageNode node) {
@@ -136,15 +138,15 @@ class DeobfPresets {
 	}
 
 	public String getForCls(ClassInfo cls) {
-		return clsPresetMap.get(cls.getFullName());
+		return clsPresetMap.get(cls.makeRawFullName());
 	}
 
 	public String getForFld(FieldInfo fld) {
-		return fldPresetMap.get(fld.getFullId());
+		return fldPresetMap.get(fld.getRawFullId());
 	}
 
 	public String getForMth(MethodInfo mth) {
-		return mthPresetMap.get(mth.getFullId());
+		return mthPresetMap.get(mth.getRawFullId());
 	}
 
 	public void clear() {
