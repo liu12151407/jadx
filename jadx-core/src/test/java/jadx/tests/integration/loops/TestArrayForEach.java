@@ -1,18 +1,18 @@
 package jadx.tests.integration.loops;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
 import static jadx.tests.api.utils.JadxMatchers.containsLines;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestArrayForEach extends IntegrationTest {
 
 	public static class TestCls {
 
-		private int test(int[] a) {
+		public int test(int[] a) {
 			int sum = 0;
 			for (int n : a) {
 				sum += n;
@@ -31,7 +31,6 @@ public class TestArrayForEach extends IntegrationTest {
 				"for (int n : a) {",
 				indent(1) + "sum += n;",
 				"}",
-				"return sum;"
-		));
+				"return sum;"));
 	}
 }

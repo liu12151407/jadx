@@ -58,6 +58,16 @@ public class PackageNode {
 		return packageAlias != null;
 	}
 
+	public boolean hasAnyAlias() {
+		if (hasAlias()) {
+			return true;
+		}
+		if (parentPackage != this) {
+			return parentPackage.hasAnyAlias();
+		}
+		return false;
+	}
+
 	public String getFullAlias() {
 		if (cachedPackageFullAlias == null) {
 			Deque<PackageNode> pp = getParentPackages();
@@ -126,5 +136,10 @@ public class PackageNode {
 			parentPkg = currentPkg.getParentPackage();
 		}
 		return pp;
+	}
+
+	@Override
+	public String toString() {
+		return packageAlias;
 	}
 }

@@ -1,14 +1,16 @@
 package jadx.gui.jobs;
 
-import javax.swing.*;
 import java.util.concurrent.Future;
+
+import javax.swing.*;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.gui.ui.ProgressPanel;
 import jadx.gui.utils.CacheObject;
-import jadx.gui.utils.Utils;
+import jadx.gui.utils.NLS;
+import jadx.gui.utils.UiUtils;
 import jadx.gui.utils.search.TextSearchIndex;
 
 public class BackgroundWorker extends SwingWorker<Void, Void> {
@@ -26,12 +28,7 @@ public class BackgroundWorker extends SwingWorker<Void, Void> {
 		if (isDone()) {
 			return;
 		}
-		SwingUtilities.invokeLater(new Runnable() {
-			@Override
-			public void run() {
-				progressPane.setVisible(true);
-			}
-		});
+		SwingUtilities.invokeLater(() -> progressPane.setVisible(true));
 		addPropertyChangeListener(progressPane);
 		execute();
 	}
@@ -45,23 +42,25 @@ public class BackgroundWorker extends SwingWorker<Void, Void> {
 	}
 
 	@Override
-	protected Void doInBackground() throws Exception {
+	protected Void doInBackground() {
 		try {
 			System.gc();
-			LOG.debug("Memory usage: Before decompile: {}", Utils.memoryInfo());
+			LOG.debug("Memory usage: Before decompile: {}", UiUtils.memoryInfo());
 			runJob(cache.getDecompileJob());
 
-			LOG.debug("Memory usage: Before index: {}", Utils.memoryInfo());
+			LOG.debug("Memory usage: Before index: {}", UiUtils.memoryInfo());
 			runJob(cache.getIndexJob());
-			LOG.debug("Memory usage: After index: {}", Utils.memoryInfo());
+			LOG.debug("Memory usage: After index: {}", UiUtils.memoryInfo());
 
 			System.gc();
-			LOG.debug("Memory usage: After gc: {}", Utils.memoryInfo());
+			LOG.debug("Memory usage: After gc: {}", UiUtils.memoryInfo());
 
 			TextSearchIndex searchIndex = cache.getTextIndex();
 			if (searchIndex != null && searchIndex.getSkippedCount() > 0) {
 				LOG.warn("Indexing of some classes skipped, count: {}, low memory: {}",
-						searchIndex.getSkippedCount(), Utils.memoryInfo());
+						searchIndex.getSkippedCount(), UiUtils.memoryInfo());
+				String msg = NLS.str("message.indexingClassesSkipped", searchIndex.getSkippedCount());
+				JOptionPane.showMessageDialog(null, msg);
 			}
 		} catch (Exception e) {
 			LOG.error("Exception in background worker", e);

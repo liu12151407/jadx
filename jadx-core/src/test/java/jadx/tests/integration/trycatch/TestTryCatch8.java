@@ -1,15 +1,15 @@
 package jadx.tests.integration.trycatch;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
 import static jadx.tests.api.utils.JadxMatchers.containsOne;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.isA;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
-import static org.junit.Assert.assertThat;
 
 public class TestTryCatch8 extends IntegrationTest {
 
@@ -31,10 +31,10 @@ public class TestTryCatch8 extends IntegrationTest {
 			synchronized (this) {
 				try {
 					throw new MyException();
-				} catch (MyException e) {
-					this.e = e;
-				} catch (Exception x) {
-					this.e = new MyException("MyExc", x);
+				} catch (MyException myExc) {
+					this.e = myExc;
+				} catch (Exception ex) {
+					this.e = new MyException("MyExc", ex);
 				}
 			}
 		}
@@ -54,9 +54,19 @@ public class TestTryCatch8 extends IntegrationTest {
 
 		assertThat(code, containsOne("synchronized (this) {"));
 		assertThat(code, containsOne("throw new MyException();"));
-		assertThat(code, containsOne("} catch (MyException e) {"));
-		assertThat(code, containsOne("this.e = e;"));
-		assertThat(code, containsOne("} catch (Exception x) {"));
-		assertThat(code, containsOne("this.e = new MyException(\"MyExc\", x);"));
+		assertThat(code, containsOne("} catch (MyException myExc) {"));
+		assertThat(code, containsOne("this.e = myExc;"));
+		assertThat(code, containsOne("} catch (Exception ex) {"));
+		assertThat(code, containsOne("this.e = new MyException(\"MyExc\", ex);"));
+	}
+
+	@Test
+	public void testNoDebug() {
+		noDebugInfo();
+		ClassNode cls = getClassNode(TestCls.class);
+		String code = cls.getCode().toString();
+
+		assertThat(code, containsOne("synchronized (this) {"));
+		assertThat(code, containsOne("throw new MyException();"));
 	}
 }

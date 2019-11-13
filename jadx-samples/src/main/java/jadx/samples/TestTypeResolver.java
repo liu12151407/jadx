@@ -2,7 +2,7 @@ package jadx.samples;
 
 public class TestTypeResolver extends AbstractTest {
 
-	private final int f1;
+	public final int f1;
 
 	public TestTypeResolver() {
 		this.f1 = 2;
@@ -20,7 +20,7 @@ public class TestTypeResolver extends AbstractTest {
 	public static class TestTernaryInSuper extends TestTypeResolver {
 
 		public TestTernaryInSuper(int c) {
-//			super(c > 0 ? c : -c, 1);
+			// super(c > 0 ? c : -c, 1);
 		}
 	}
 

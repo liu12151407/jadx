@@ -10,13 +10,8 @@ public class DecompileJob extends BackgroundJob {
 	}
 
 	protected void runJob() {
-		for (final JavaClass cls : wrapper.getClasses()) {
-			addTask(new Runnable() {
-				@Override
-				public void run() {
-					cls.decompile();
-				}
-			});
+		for (final JavaClass cls : wrapper.getIncludedClasses()) {
+			addTask(cls::decompile);
 		}
 	}
 

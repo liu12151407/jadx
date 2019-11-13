@@ -13,7 +13,7 @@ import jadx.gui.utils.CacheObject;
 import jadx.gui.utils.CodeLinesInfo;
 import jadx.gui.utils.CodeUsageInfo;
 import jadx.gui.utils.JNodeCache;
-import jadx.gui.utils.Utils;
+import jadx.gui.utils.UiUtils;
 import jadx.gui.utils.search.StringRef;
 import jadx.gui.utils.search.TextSearchIndex;
 
@@ -33,25 +33,22 @@ public class IndexJob extends BackgroundJob {
 		final CodeUsageInfo usageInfo = new CodeUsageInfo(nodeCache);
 		cache.setTextIndex(index);
 		cache.setUsageInfo(usageInfo);
-		for (final JavaClass cls : wrapper.getClasses()) {
-			addTask(new Runnable() {
-				@Override
-				public void run() {
-					try {
-						index.indexNames(cls);
+		for (final JavaClass cls : wrapper.getIncludedClasses()) {
+			addTask(() -> {
+				try {
+					index.indexNames(cls);
 
-						CodeLinesInfo linesInfo = new CodeLinesInfo(cls);
-						List<StringRef> lines = splitLines(cls);
+					CodeLinesInfo linesInfo = new CodeLinesInfo(cls);
+					List<StringRef> lines = splitLines(cls);
 
-						usageInfo.processClass(cls, linesInfo, lines);
-						if (Utils.isFreeMemoryAvailable()) {
-							index.indexCode(cls, linesInfo, lines);
-						} else {
-							index.classCodeIndexSkipped(cls);
-						}
-					} catch (Exception e) {
-						LOG.error("Index error in class: {}", cls.getFullName(), e);
+					usageInfo.processClass(cls, linesInfo, lines);
+					if (UiUtils.isFreeMemoryAvailable()) {
+						index.indexCode(cls, linesInfo, lines);
+					} else {
+						index.classCodeIndexSkipped(cls);
 					}
+				} catch (Exception e) {
+					LOG.error("Index error in class: {}", cls.getFullName(), e);
 				}
 			});
 		}

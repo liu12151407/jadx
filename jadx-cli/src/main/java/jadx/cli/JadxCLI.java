@@ -3,7 +3,9 @@ package jadx.cli;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.api.JadxArgs;
 import jadx.api.JadxDecompiler;
+import jadx.api.impl.NoOpCodeCache;
 import jadx.core.utils.exceptions.JadxArgsValidateException;
 
 public class JadxCLI {
@@ -25,7 +27,9 @@ public class JadxCLI {
 	}
 
 	static int processAndSave(JadxCLIArgs inputArgs) {
-		JadxDecompiler jadx = new JadxDecompiler(inputArgs.toJadxArgs());
+		JadxArgs args = inputArgs.toJadxArgs();
+		args.setCodeCache(new NoOpCodeCache());
+		JadxDecompiler jadx = new JadxDecompiler(args);
 		try {
 			jadx.load();
 		} catch (JadxArgsValidateException e) {
@@ -36,10 +40,10 @@ public class JadxCLI {
 		int errorsCount = jadx.getErrorsCount();
 		if (errorsCount != 0) {
 			jadx.printErrorsReport();
-			LOG.error("finished with errors");
+			LOG.error("finished with errors, count: {}", errorsCount);
 		} else {
 			LOG.info("done");
 		}
-		return errorsCount;
+		return 0;
 	}
 }

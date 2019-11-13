@@ -2,6 +2,7 @@ package jadx.samples;
 
 public class TestStringProcessing extends AbstractTest {
 
+	@SuppressWarnings("AvoidEscapedUnicodeCharacters")
 	public void testStringEscape() {
 		String str = "test\tstr\n";
 		assertTrue(str.length() == 9);
@@ -12,7 +13,7 @@ public class TestStringProcessing extends AbstractTest {
 
 	public void testStringConcat() {
 		String s = "1";
-		assertEquals("a" + s, "a1");
+		assertEquals('a' + s, "a1");
 	}
 
 	@Override

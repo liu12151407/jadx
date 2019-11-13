@@ -1,10 +1,5 @@
 package jadx.gui.ui;
 
-import javax.swing.*;
-import javax.swing.table.AbstractTableModel;
-import javax.swing.table.TableCellRenderer;
-import javax.swing.table.TableColumn;
-import javax.swing.table.TableColumnModel;
 import java.awt.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
@@ -17,6 +12,12 @@ import java.util.Collection;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Map;
+
+import javax.swing.*;
+import javax.swing.table.AbstractTableModel;
+import javax.swing.table.TableCellRenderer;
+import javax.swing.table.TableColumn;
+import javax.swing.table.TableColumnModel;
 
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
@@ -31,16 +32,16 @@ import jadx.gui.jobs.BackgroundJob;
 import jadx.gui.jobs.BackgroundWorker;
 import jadx.gui.jobs.DecompileJob;
 import jadx.gui.treemodel.JNode;
-import jadx.gui.ui.codearea.CodeArea;
+import jadx.gui.ui.codearea.AbstractCodeArea;
 import jadx.gui.utils.CacheObject;
-import jadx.gui.utils.NLS;
 import jadx.gui.utils.JumpPosition;
+import jadx.gui.utils.NLS;
 import jadx.gui.utils.search.TextSearchIndex;
 
 public abstract class CommonSearchDialog extends JDialog {
+	private static final long serialVersionUID = 8939332306115370276L;
 
 	private static final Logger LOG = LoggerFactory.getLogger(CommonSearchDialog.class);
-	private static final long serialVersionUID = 8939332306115370276L;
 
 	public static final int RESULTS_PER_PAGE = 100;
 
@@ -154,7 +155,7 @@ public abstract class CommonSearchDialog extends JDialog {
 		resultsTable.setShowHorizontalLines(false);
 		resultsTable.setDragEnabled(false);
 		resultsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-//		resultsTable.setBackground(CodeArea.CODE_BACKGROUND);
+		// resultsTable.setBackground(CodeArea.CODE_BACKGROUND);
 		resultsTable.setColumnSelectionAllowed(false);
 		resultsTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
 		resultsTable.setAutoscrolls(false);
@@ -232,12 +233,10 @@ public abstract class CommonSearchDialog extends JDialog {
 	}
 
 	protected void updateProgressLabel() {
-		String statusText = String.format(
-				NLS.str("search_dialog.info_label"),
+		String statusText = NLS.str("search_dialog.info_label",
 				resultsModel.getDisplayedResultsStart(),
 				resultsModel.getDisplayedResultsEnd(),
-				resultsModel.getResultCount()
-		);
+				resultsModel.getResultCount());
 		resultsInfoLabel.setText(statusText);
 	}
 
@@ -287,7 +286,8 @@ public abstract class CommonSearchDialog extends JDialog {
 				TableColumn column = columnModel.getColumn(col);
 				column.setPreferredWidth(colWidth);
 			}
-//				setRowHeight(Math.max(nodeComp.getPreferredSize().height, codeComp.getPreferredSize().height + 4));
+			// setRowHeight(Math.max(nodeComp.getPreferredSize().height, codeComp.getPreferredSize().height +
+			// 4));
 			updateUI();
 			setRowHeight(Math.max(getHeight(nodeComp), getHeight(codeComp) + 4));
 		}
@@ -397,24 +397,26 @@ public abstract class CommonSearchDialog extends JDialog {
 
 	protected class ResultsTableCellRenderer implements TableCellRenderer {
 		private final JLabel emptyLabel = new JLabel();
+		private final Font font;
 		private final Color codeSelectedColor;
 		private final Color codeBackground;
-		private Map<Integer, Component> componentCache = new HashMap<>();
+		private final Map<Integer, Component> componentCache = new HashMap<>();
 
 		public ResultsTableCellRenderer() {
-			RSyntaxTextArea area = CodeArea.getDefaultArea(mainWindow);
+			RSyntaxTextArea area = AbstractCodeArea.getDefaultArea(mainWindow);
+			this.font = area.getFont();
 			this.codeSelectedColor = area.getSelectionColor();
 			this.codeBackground = area.getBackground();
 		}
 
 		@Override
 		public Component getTableCellRendererComponent(JTable table, Object obj, boolean isSelected,
-		                                               boolean hasFocus, int row, int column) {
+				boolean hasFocus, int row, int column) {
 			int id = row << 2 | column;
 			Component comp = componentCache.get(id);
 			if (comp == null) {
 				if (obj instanceof JNode) {
-					comp = makeCell(table, (JNode) obj, column);
+					comp = makeCell((JNode) obj, column);
 					componentCache.put(id, comp);
 				} else {
 					comp = emptyLabel;
@@ -442,10 +444,10 @@ public abstract class CommonSearchDialog extends JDialog {
 			}
 		}
 
-		private Component makeCell(JTable table, JNode node, int column) {
+		private Component makeCell(JNode node, int column) {
 			if (column == 0) {
 				JLabel label = new JLabel(node.makeLongString() + "  ", node.getIcon(), SwingConstants.LEFT);
-				label.setFont(table.getFont());
+				label.setFont(font);
 				label.setOpaque(true);
 				label.setToolTipText(label.getText());
 				return label;
@@ -453,7 +455,7 @@ public abstract class CommonSearchDialog extends JDialog {
 			if (!node.hasDescString()) {
 				return emptyLabel;
 			}
-			RSyntaxTextArea textArea = CodeArea.getDefaultArea(mainWindow);
+			RSyntaxTextArea textArea = AbstractCodeArea.getDefaultArea(mainWindow);
 			textArea.setLayout(new GridLayout(1, 1));
 			textArea.setEditable(false);
 			textArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JAVA);

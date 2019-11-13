@@ -3,9 +3,11 @@ package jadx.core.dex.info;
 import com.android.dx.rop.code.AccessFlags;
 
 import jadx.core.Consts;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 
 public class AccessInfo {
 
+	public static final int VISIBILITY_FLAGS = AccessFlags.ACC_PUBLIC | AccessFlags.ACC_PROTECTED | AccessFlags.ACC_PRIVATE;
 	private final int accFlags;
 
 	public enum AFType {
@@ -30,11 +32,24 @@ public class AccessInfo {
 		return this;
 	}
 
+	public AccessInfo add(int flag) {
+		if (!containsFlag(flag)) {
+			return new AccessInfo(accFlags | flag, type);
+		}
+		return this;
+	}
+
+	public AccessInfo changeVisibility(int flag) {
+		int currentVisFlags = accFlags & VISIBILITY_FLAGS;
+		if (currentVisFlags == flag) {
+			return this;
+		}
+		int unsetAllVisFlags = accFlags & ~VISIBILITY_FLAGS;
+		return new AccessInfo(unsetAllVisFlags | flag, type);
+	}
+
 	public AccessInfo getVisibility() {
-		int f = accFlags & AccessFlags.ACC_PUBLIC
-				| accFlags & AccessFlags.ACC_PROTECTED
-				| accFlags & AccessFlags.ACC_PRIVATE;
-		return new AccessInfo(f, type);
+		return new AccessInfo(accFlags & VISIBILITY_FLAGS, type);
 	}
 
 	public boolean isPublic() {
@@ -47,6 +62,10 @@ public class AccessInfo {
 
 	public boolean isPrivate() {
 		return (accFlags & AccessFlags.ACC_PRIVATE) != 0;
+	}
+
+	public boolean isPackagePrivate() {
+		return (accFlags & VISIBILITY_FLAGS) == 0;
 	}
 
 	public boolean isAbstract() {
@@ -174,6 +193,22 @@ public class AccessInfo {
 		return code.toString();
 	}
 
+	public String visibilityName() {
+		if (isPackagePrivate()) {
+			return "package-private";
+		}
+		if (isPublic()) {
+			return "public";
+		}
+		if (isPrivate()) {
+			return "private";
+		}
+		if (isProtected()) {
+			return "protected";
+		}
+		throw new JadxRuntimeException("Unknown visibility flags: " + getVisibility());
+	}
+
 	public String rawString() {
 		switch (type) {
 			case CLASS:
@@ -187,8 +222,12 @@ public class AccessInfo {
 		}
 	}
 
+	public int rawValue() {
+		return accFlags;
+	}
+
 	@Override
 	public String toString() {
-		return "AccessInfo: " + type + " 0x" + Integer.toHexString(accFlags) + " (" + rawString() + ")";
+		return "AccessInfo: " + type + " 0x" + Integer.toHexString(accFlags) + " (" + rawString() + ')';
 	}
 }

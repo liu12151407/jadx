@@ -20,11 +20,15 @@ public class SwitchNode extends TargetInsnNode {
 	private BlockNode defTargetBlock;
 
 	public SwitchNode(InsnArg arg, Object[] keys, int[] targets, int def) {
+		this(keys, targets, def);
+		addArg(arg);
+	}
+
+	private SwitchNode(Object[] keys, int[] targets, int def) {
 		super(InsnType.SWITCH, 1);
 		this.keys = keys;
 		this.targets = targets;
 		this.def = def;
-		addArg(arg);
 	}
 
 	public int getCasesCount() {
@@ -64,6 +68,9 @@ public class SwitchNode extends TargetInsnNode {
 
 	@Override
 	public boolean replaceTargetBlock(BlockNode origin, BlockNode replace) {
+		if (targetBlocks == null) {
+			return false;
+		}
 		int count = 0;
 		int len = targetBlocks.length;
 		for (int i = 0; i < len; i++) {
@@ -91,6 +98,14 @@ public class SwitchNode extends TargetInsnNode {
 		return def == other.def
 				&& Arrays.equals(keys, other.keys)
 				&& Arrays.equals(targets, other.targets);
+	}
+
+	@Override
+	public InsnNode copy() {
+		SwitchNode copy = new SwitchNode(keys, targets, def);
+		copy.targetBlocks = targetBlocks;
+		copy.defTargetBlock = defTargetBlock;
+		return copyCommonParams(copy);
 	}
 
 	@Override

@@ -1,9 +1,10 @@
 package jadx.core.utils;
 
-import com.android.dx.io.instructions.DecodedInstruction;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.android.dx.io.instructions.DecodedInstruction;
 
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.info.FieldInfo;
@@ -11,6 +12,9 @@ import jadx.core.dex.instructions.ConstClassNode;
 import jadx.core.dex.instructions.ConstStringNode;
 import jadx.core.dex.instructions.IndexInsnNode;
 import jadx.core.dex.instructions.InsnType;
+import jadx.core.dex.instructions.args.InsnArg;
+import jadx.core.dex.instructions.args.InsnWrapArg;
+import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.DexNode;
 import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.InsnNode;
@@ -57,9 +61,36 @@ public class InsnUtils {
 			return "";
 		}
 		if (index instanceof String) {
-			return "\"" + index + "\"";
+			return "\"" + index + '"';
 		}
 		return index.toString();
+	}
+
+	/**
+	 * Search constant assigned to provided arg.
+	 *
+	 * @return LiteralArg, String, ArgType or null
+	 */
+	public static Object getConstValueByArg(DexNode dex, InsnArg arg) {
+		if (arg.isLiteral()) {
+			return arg;
+		}
+		if (arg.isRegister()) {
+			RegisterArg reg = (RegisterArg) arg;
+			InsnNode parInsn = reg.getAssignInsn();
+			if (parInsn == null) {
+				return null;
+			}
+			if (parInsn.getType() == InsnType.MOVE) {
+				return getConstValueByArg(dex, parInsn.getArg(0));
+			}
+			return getConstValueByInsn(dex, parInsn);
+		}
+		if (arg.isInsnWrap()) {
+			InsnNode insn = ((InsnWrapArg) arg).getWrapInsn();
+			return getConstValueByInsn(dex, insn);
+		}
+		return null;
 	}
 
 	/**

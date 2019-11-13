@@ -1,13 +1,13 @@
 package jadx.tests.integration.trycatch;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
 import static jadx.tests.api.utils.JadxMatchers.containsOne;
 import static org.hamcrest.CoreMatchers.not;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestFinally extends IntegrationTest {
 
@@ -17,7 +17,7 @@ public class TestFinally extends IntegrationTest {
 		String test(Context context, Object uri) {
 			Cursor cursor = null;
 			try {
-				String[] projection = {DISPLAY_NAME};
+				String[] projection = { DISPLAY_NAME };
 				cursor = context.query(uri, projection);
 				int columnIndex = cursor.getColumnIndexOrThrow(DISPLAY_NAME);
 				cursor.moveToFirst();

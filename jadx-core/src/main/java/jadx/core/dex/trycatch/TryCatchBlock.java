@@ -5,6 +5,8 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 
+import org.jetbrains.annotations.Nullable;
+
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.info.ClassInfo;
@@ -40,16 +42,29 @@ public class TryCatchBlock {
 		return handlers.containsAll(tb.handlers);
 	}
 
-	public ExceptionHandler addHandler(MethodNode mth, int addr, ClassInfo type) {
+	public ExceptionHandler addHandler(MethodNode mth, int addr, @Nullable ClassInfo type) {
 		ExceptionHandler handler = new ExceptionHandler(addr, type);
-		handler = mth.addExceptionHandler(handler);
-		handlers.add(handler);
 		handler.setTryBlock(this);
-		return handler;
+		ExceptionHandler addedHandler = mth.addExceptionHandler(handler);
+		if (addedHandler == handler || addedHandler.getTryBlock() != this) {
+			handlers.add(addedHandler);
+		}
+		return addedHandler;
+	}
+
+	/**
+	 * Use only before BlockSplitter
+	 */
+	public void removeSameHandlers(TryCatchBlock outerTry) {
+		for (ExceptionHandler handler : outerTry.getHandlers()) {
+			if (handlers.remove(handler)) {
+				handler.setTryBlock(outerTry);
+			}
+		}
 	}
 
 	public void removeHandler(MethodNode mth, ExceptionHandler handler) {
-		for (Iterator<ExceptionHandler> it = handlers.iterator(); it.hasNext(); ) {
+		for (Iterator<ExceptionHandler> it = handlers.iterator(); it.hasNext();) {
 			ExceptionHandler h = it.next();
 			if (h == handler) {
 				unbindHandler(h);
@@ -66,7 +81,7 @@ public class TryCatchBlock {
 		for (BlockNode block : handler.getBlocks()) {
 			// skip synthetic loop exit blocks
 			BlockUtils.skipPredSyntheticPaths(block);
-			block.add(AFlag.SKIP);
+			block.add(AFlag.REMOVE);
 			ExcHandlerAttr excHandlerAttr = block.get(AType.EXC_HANDLER);
 			if (excHandlerAttr != null
 					&& excHandlerAttr.getHandler().equals(handler)) {
@@ -74,14 +89,19 @@ public class TryCatchBlock {
 			}
 			SplitterBlockAttr splitter = handler.getHandlerBlock().get(AType.SPLITTER_BLOCK);
 			if (splitter != null) {
-				splitter.getBlock().remove(AType.SPLITTER_BLOCK);
+				BlockNode splitterBlock = splitter.getBlock();
+				splitterBlock.remove(AType.SPLITTER_BLOCK);
+				for (BlockNode successor : splitterBlock.getSuccessors()) {
+					successor.remove(AType.SPLITTER_BLOCK);
+				}
 			}
 		}
+		handler.markForRemove();
 	}
 
 	private void removeWholeBlock(MethodNode mth) {
 		// self destruction
-		for (Iterator<ExceptionHandler> it = handlers.iterator(); it.hasNext(); ) {
+		for (Iterator<ExceptionHandler> it = handlers.iterator(); it.hasNext();) {
 			ExceptionHandler h = it.next();
 			unbindHandler(h);
 			it.remove();

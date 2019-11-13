@@ -3,9 +3,10 @@ package jadx.core.codegen;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import jadx.api.JadxArgs;
 import jadx.core.deobf.NameMapper;
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.instructions.args.ArgType;
+import jadx.core.dex.instructions.args.LiteralArg;
 import jadx.core.dex.instructions.args.PrimitiveType;
 import jadx.core.dex.nodes.IDexNode;
 import jadx.core.utils.StringUtils;
@@ -30,26 +31,38 @@ public class TypeGen {
 	}
 
 	/**
+	 * Convert literal arg to string (preferred method)
+	 */
+	public static String literalToString(LiteralArg arg, IDexNode dexNode, boolean fallback) {
+		return literalToString(arg.getLiteral(), arg.getType(),
+				dexNode.root().getStringUtils(),
+				fallback,
+				arg.contains(AFlag.EXPLICIT_PRIMITIVE_TYPE));
+	}
+
+	/**
 	 * Convert literal value to string according to value type
 	 *
 	 * @throws JadxRuntimeException for incorrect type or literal value
 	 */
-	public static String literalToString(long lit, ArgType type, IDexNode dexNode) {
-		return literalToString(lit, type, dexNode.root().getStringUtils());
+	public static String literalToString(long lit, ArgType type, IDexNode dexNode, boolean fallback) {
+		return literalToString(lit, type, dexNode.root().getStringUtils(), fallback, false);
 	}
 
-	@Deprecated
-	public static String literalToString(long lit, ArgType type) {
-		return literalToString(lit, type, new StringUtils(new JadxArgs()));
-	}
-
-	private static String literalToString(long lit, ArgType type, StringUtils stringUtils) {
+	public static String literalToString(long lit, ArgType type, StringUtils stringUtils, boolean fallback, boolean cast) {
 		if (type == null || !type.isTypeKnown()) {
 			String n = Long.toString(lit);
-			if (Math.abs(lit) > 100) {
-				n += "; // 0x" + Long.toHexString(lit)
-						+ " float:" + Float.intBitsToFloat((int) lit)
-						+ " double:" + Double.longBitsToDouble(lit);
+			if (fallback && Math.abs(lit) > 100) {
+				StringBuilder sb = new StringBuilder();
+				sb.append(n).append("(0x").append(Long.toHexString(lit));
+				if (type == null || type.contains(PrimitiveType.FLOAT)) {
+					sb.append(", float:").append(Float.intBitsToFloat((int) lit));
+				}
+				if (type == null || type.contains(PrimitiveType.DOUBLE)) {
+					sb.append(", double:").append(Double.longBitsToDouble(lit));
+				}
+				sb.append(')');
+				return sb.toString();
 			}
 			return n;
 		}
@@ -64,13 +77,13 @@ public class TypeGen {
 				}
 				return stringUtils.unescapeChar(ch);
 			case BYTE:
-				return formatByte((byte) lit);
+				return formatByte(lit, cast);
 			case SHORT:
-				return formatShort((short) lit);
+				return formatShort(lit, cast);
 			case INT:
-				return formatInteger((int) lit);
+				return formatInteger(lit, cast);
 			case LONG:
-				return formatLong(lit);
+				return formatLong(lit, cast);
 			case FLOAT:
 				return formatFloat(Float.intBitsToFloat((int) lit));
 			case DOUBLE:
@@ -89,37 +102,40 @@ public class TypeGen {
 		}
 	}
 
-	public static String formatShort(short s) {
-		if (s == Short.MAX_VALUE) {
+	public static String formatShort(long l, boolean cast) {
+		if (l == Short.MAX_VALUE) {
 			return "Short.MAX_VALUE";
 		}
-		if (s == Short.MIN_VALUE) {
+		if (l == Short.MIN_VALUE) {
 			return "Short.MIN_VALUE";
 		}
-		return "(short) " + Short.toString(s);
+		String str = Long.toString(l);
+		return cast ? "(short) " + str : str;
 	}
 
-	public static String formatByte(byte b) {
-		if (b == Byte.MAX_VALUE) {
+	public static String formatByte(long l, boolean cast) {
+		if (l == Byte.MAX_VALUE) {
 			return "Byte.MAX_VALUE";
 		}
-		if (b == Byte.MIN_VALUE) {
+		if (l == Byte.MIN_VALUE) {
 			return "Byte.MIN_VALUE";
 		}
-		return "(byte) " + Byte.toString(b);
+		String str = Long.toString(l);
+		return cast ? "(byte) " + str : str;
 	}
 
-	public static String formatInteger(int i) {
-		if (i == Integer.MAX_VALUE) {
+	public static String formatInteger(long l, boolean cast) {
+		if (l == Integer.MAX_VALUE) {
 			return "Integer.MAX_VALUE";
 		}
-		if (i == Integer.MIN_VALUE) {
+		if (l == Integer.MIN_VALUE) {
 			return "Integer.MIN_VALUE";
 		}
-		return Integer.toString(i);
+		String str = Long.toString(l);
+		return cast ? "(int) " + str : str;
 	}
 
-	public static String formatLong(long l) {
+	public static String formatLong(long l, boolean cast) {
 		if (l == Long.MAX_VALUE) {
 			return "Long.MAX_VALUE";
 		}
@@ -127,8 +143,8 @@ public class TypeGen {
 			return "Long.MIN_VALUE";
 		}
 		String str = Long.toString(l);
-		if (Math.abs(l) >= Integer.MAX_VALUE) {
-			str += "L";
+		if (cast || Math.abs(l) >= Integer.MAX_VALUE) {
+			return str + 'L';
 		}
 		return str;
 	}
@@ -152,7 +168,7 @@ public class TypeGen {
 		if (d == Double.MIN_NORMAL) {
 			return "Double.MIN_NORMAL";
 		}
-		return Double.toString(d) + "d";
+		return Double.toString(d) + 'd';
 	}
 
 	public static String formatFloat(float f) {
@@ -174,6 +190,6 @@ public class TypeGen {
 		if (f == Float.MIN_NORMAL) {
 			return "Float.MIN_NORMAL";
 		}
-		return Float.toString(f) + "f";
+		return Float.toString(f) + 'f';
 	}
 }

@@ -5,6 +5,7 @@ import com.android.dx.io.instructions.DecodedInstruction;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
+import jadx.core.dex.instructions.args.LiteralArg;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.utils.InsnUtils;
@@ -50,9 +51,16 @@ public class ArithNode extends InsnNode {
 		addArg(b);
 	}
 
-	public ArithNode(ArithOp op, RegisterArg res, InsnArg a) {
-		this(op, res, res, a);
-		add(AFlag.ARITH_ONEARG);
+	/**
+	 * Create one argument arithmetic instructions (a+=2).
+	 * Result is not set (null).
+	 *
+	 * @param res argument to change
+	 */
+	public static ArithNode oneArgOp(ArithOp op, InsnArg res, InsnArg a) {
+		ArithNode insn = new ArithNode(op, null, res, a);
+		insn.add(AFlag.ARITH_ONEARG);
+		return insn;
 	}
 
 	public ArithOp getOp() {
@@ -68,7 +76,28 @@ public class ArithNode extends InsnNode {
 			return false;
 		}
 		ArithNode other = (ArithNode) obj;
-		return op == other.op;
+		return op == other.op && isSameLiteral(other);
+	}
+
+	private boolean isSameLiteral(ArithNode other) {
+		InsnArg thisSecond = getArg(1);
+		InsnArg otherSecond = other.getArg(1);
+		if (thisSecond.isLiteral() != otherSecond.isLiteral()) {
+			return false;
+		}
+		if (!thisSecond.isLiteral()) {
+			// both not literals
+			return true;
+		}
+		// both literals
+		long thisLit = ((LiteralArg) thisSecond).getLiteral();
+		long otherLit = ((LiteralArg) otherSecond).getLiteral();
+		return thisLit == otherLit;
+	}
+
+	@Override
+	public InsnNode copy() {
+		return copyCommonParams(new ArithNode(op, getResult(), getArg(0), getArg(1)));
 	}
 
 	@Override
@@ -76,8 +105,8 @@ public class ArithNode extends InsnNode {
 		return InsnUtils.formatOffset(offset) + ": "
 				+ InsnUtils.insnTypeToString(insnType)
 				+ getResult() + " = "
-				+ getArg(0) + " "
-				+ op.getSymbol() + " "
+				+ getArg(0) + ' '
+				+ op.getSymbol() + ' '
 				+ getArg(1);
 	}
 }

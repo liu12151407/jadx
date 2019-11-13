@@ -4,7 +4,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 import jadx.core.dex.attributes.AFlag;
-import jadx.core.dex.info.FieldInfo;
+import jadx.core.dex.info.MethodInfo;
+import jadx.core.dex.instructions.CallMthInterface;
+import jadx.core.dex.instructions.ConstStringNode;
 import jadx.core.dex.instructions.IndexInsnNode;
 import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.InvokeNode;
@@ -16,14 +18,23 @@ import jadx.core.dex.instructions.args.PrimitiveType;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.args.SSAVar;
 import jadx.core.dex.nodes.BlockNode;
-import jadx.core.dex.nodes.DexNode;
 import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
-import jadx.core.dex.visitors.typeinference.PostTypeInference;
-import jadx.core.utils.InstructionRemover;
+import jadx.core.dex.visitors.ssa.SSATransform;
+import jadx.core.dex.visitors.typeinference.TypeInferenceVisitor;
+import jadx.core.utils.InsnRemover;
 import jadx.core.utils.exceptions.JadxException;
 
+@JadxVisitor(
+		name = "Constants Inline",
+		desc = "Inline constant registers into instructions",
+		runAfter = {
+				SSATransform.class,
+				MarkFinallyVisitor.class
+		},
+		runBefore = TypeInferenceVisitor.class
+)
 public class ConstInlineVisitor extends AbstractVisitor {
 
 	@Override
@@ -31,44 +42,91 @@ public class ConstInlineVisitor extends AbstractVisitor {
 		if (mth.isNoCode()) {
 			return;
 		}
+		process(mth);
+	}
+
+	public static void process(MethodNode mth) {
 		List<InsnNode> toRemove = new ArrayList<>();
 		for (BlockNode block : mth.getBasicBlocks()) {
 			toRemove.clear();
 			for (InsnNode insn : block.getInstructions()) {
-				if (checkInsn(mth, insn)) {
-					toRemove.add(insn);
-				}
+				checkInsn(mth, insn, toRemove);
 			}
-			InstructionRemover.removeAll(mth, block, toRemove);
+			InsnRemover.removeAllAndUnbind(mth, block, toRemove);
 		}
 	}
 
-	private static boolean checkInsn(MethodNode mth, InsnNode insn) {
-		if (insn.getType() != InsnType.CONST || insn.contains(AFlag.DONT_INLINE)) {
-			return false;
+	private static void checkInsn(MethodNode mth, InsnNode insn, List<InsnNode> toRemove) {
+		if (insn.contains(AFlag.DONT_INLINE)
+				|| insn.contains(AFlag.DONT_GENERATE)
+				|| insn.getResult() == null) {
+			return;
 		}
-		InsnArg arg = insn.getArg(0);
-		if (!arg.isLiteral()) {
-			return false;
-		}
-		long lit = ((LiteralArg) arg).getLiteral();
 
 		SSAVar sVar = insn.getResult().getSVar();
-		if (lit == 0 && checkObjectInline(sVar)) {
-			if (sVar.getUseCount() == 1) {
-				InsnNode assignInsn = insn.getResult().getAssignInsn();
-				if (assignInsn != null) {
-					assignInsn.add(AFlag.DONT_INLINE);
-				}
+		InsnArg constArg;
+
+		InsnType insnType = insn.getType();
+		if (insnType == InsnType.CONST || insnType == InsnType.MOVE) {
+			constArg = insn.getArg(0);
+			if (!constArg.isLiteral()) {
+				return;
 			}
+			long lit = ((LiteralArg) constArg).getLiteral();
+			if (lit == 0 && checkObjectInline(sVar)) {
+				if (sVar.getUseCount() == 1) {
+					InsnNode assignInsn = insn.getResult().getAssignInsn();
+					if (assignInsn != null) {
+						assignInsn.add(AFlag.DONT_INLINE);
+					}
+				}
+				return;
+			}
+		} else if (insnType == InsnType.CONST_STR) {
+			if (sVar.isUsedInPhi()) {
+				return;
+			}
+			String s = ((ConstStringNode) insn).getString();
+			FieldNode f = mth.getParentClass().getConstField(s);
+			if (f == null) {
+				InsnNode copy = insn.copy();
+				copy.setResult(null);
+				constArg = InsnArg.wrapArg(copy);
+			} else {
+				InsnNode constGet = new IndexInsnNode(InsnType.SGET, f.getFieldInfo(), 0);
+				constArg = InsnArg.wrapArg(constGet);
+				constArg.setType(ArgType.STRING);
+			}
+		} else {
+			return;
+		}
+		if (checkForFinallyBlock(sVar)) {
+			return;
+		}
+
+		// all check passed, run replace
+		replaceConst(mth, insn, constArg, toRemove);
+	}
+
+	private static boolean checkForFinallyBlock(SSAVar sVar) {
+		List<SSAVar> ssaVars = sVar.getCodeVar().getSsaVars();
+		if (ssaVars.size() <= 1) {
 			return false;
 		}
-		ArgType resType = insn.getResult().getType();
-		// make sure arg has correct type
-		if (!arg.getType().isTypeKnown()) {
-			arg.merge(mth.dex(), resType);
+		int countInsns = 0;
+		int countFinallyInsns = 0;
+		for (SSAVar ssaVar : ssaVars) {
+			for (RegisterArg reg : ssaVar.getUseList()) {
+				InsnNode parentInsn = reg.getParentInsn();
+				if (parentInsn != null) {
+					countInsns++;
+					if (parentInsn.contains(AFlag.FINALLY_INSNS)) {
+						countFinallyInsns++;
+					}
+				}
+			}
 		}
-		return replaceConst(mth, insn, lit);
+		return countFinallyInsns != 0 && countFinallyInsns != countInsns;
 	}
 
 	/**
@@ -98,145 +156,83 @@ public class ConstInlineVisitor extends AbstractVisitor {
 		return false;
 	}
 
-	private static boolean replaceConst(MethodNode mth, InsnNode constInsn, long literal) {
-		SSAVar sVar = constInsn.getResult().getSVar();
-		List<RegisterArg> use = new ArrayList<>(sVar.getUseList());
+	private static int replaceConst(MethodNode mth, InsnNode constInsn, InsnArg constArg, List<InsnNode> toRemove) {
+		SSAVar ssaVar = constInsn.getResult().getSVar();
+		List<RegisterArg> useList = new ArrayList<>(ssaVar.getUseList());
 		int replaceCount = 0;
-		for (RegisterArg arg : use) {
-			InsnNode useInsn = arg.getParentInsn();
-			if (useInsn == null
-					|| useInsn.getType() == InsnType.PHI
-					|| useInsn.getType() == InsnType.MERGE) {
-				continue;
+		for (RegisterArg arg : useList) {
+			if (replaceArg(mth, arg, constArg, constInsn, toRemove)) {
+				replaceCount++;
 			}
-			LiteralArg litArg;
+		}
+		if (replaceCount == useList.size()) {
+			toRemove.add(constInsn);
+		}
+		return replaceCount;
+	}
+
+	private static boolean replaceArg(MethodNode mth, RegisterArg arg, InsnArg constArg, InsnNode constInsn, List<InsnNode> toRemove) {
+		InsnNode useInsn = arg.getParentInsn();
+		if (useInsn == null) {
+			return false;
+		}
+		InsnType insnType = useInsn.getType();
+		if (insnType == InsnType.PHI) {
+			return false;
+		}
+
+		if (constArg.isLiteral()) {
+			long literal = ((LiteralArg) constArg).getLiteral();
 			ArgType argType = arg.getType();
+			if (argType == ArgType.UNKNOWN) {
+				argType = arg.getInitType();
+			}
 			if (argType.isObject() && literal != 0) {
 				argType = ArgType.NARROW_NUMBERS;
 			}
-			if (use.size() == 1 || arg.isTypeImmutable()) {
-				// arg used only in one place
-				litArg = InsnArg.lit(literal, argType);
-			} else if (useInsn.getType() == InsnType.MOVE
-					&& !useInsn.getResult().getType().isTypeKnown()) {
-				// save type for 'move' instructions (hard to find type in chains of 'move')
-				litArg = InsnArg.lit(literal, argType);
-			} else {
-				// in most cases type not equal arg.getType()
-				// just set unknown type and run type fixer
-				litArg = InsnArg.lit(literal, ArgType.UNKNOWN);
+			LiteralArg litArg = InsnArg.lit(literal, argType);
+			litArg.copyAttributesFrom(constArg);
+			if (!useInsn.replaceArg(arg, litArg)) {
+				return false;
 			}
-			if (useInsn.replaceArg(arg, litArg)) {
-				fixTypes(mth, useInsn, litArg);
-				replaceCount++;
-				if (useInsn.getType() == InsnType.RETURN) {
-					useInsn.setSourceLine(constInsn.getSourceLine());
+			// arg replaced, made some optimizations
+			FieldNode fieldNode = null;
+			ArgType litArgType = litArg.getType();
+			if (litArgType.isTypeKnown()) {
+				fieldNode = mth.getParentClass().getConstFieldByLiteralArg(litArg);
+			} else if (litArgType.contains(PrimitiveType.INT)) {
+				fieldNode = mth.getParentClass().getConstField((int) literal, false);
+			}
+			if (fieldNode != null) {
+				litArg.wrapInstruction(mth, new IndexInsnNode(InsnType.SGET, fieldNode.getFieldInfo(), 0));
+			} else {
+				if (needExplicitCast(useInsn, litArg)) {
+					litArg.add(AFlag.EXPLICIT_PRIMITIVE_TYPE);
 				}
-
-				FieldNode f = null;
-				ArgType litArgType = litArg.getType();
-				if (litArgType.isTypeKnown()) {
-					f = mth.getParentClass().getConstFieldByLiteralArg(litArg);
-				} else if (litArgType.contains(PrimitiveType.INT)) {
-					f = mth.getParentClass().getConstField((int) literal, false);
-				}
-				if (f != null) {
-					litArg.wrapInstruction(new IndexInsnNode(InsnType.SGET, f.getFieldInfo(), 0));
-				}
+			}
+		} else {
+			if (!useInsn.replaceArg(arg, constArg.duplicate())) {
+				return false;
 			}
 		}
-		return replaceCount == use.size();
+		if (insnType == InsnType.RETURN) {
+			useInsn.setSourceLine(constInsn.getSourceLine());
+		}
+		return true;
 	}
 
-	/**
-	 * This is method similar to PostTypeInference.process method,
-	 * but contains some expensive operations needed only after constant inline
-	 */
-	private static void fixTypes(MethodNode mth, InsnNode insn, LiteralArg litArg) {
-		DexNode dex = mth.dex();
-		PostTypeInference.process(mth, insn);
-		switch (insn.getType()) {
-			case CONST:
-				insn.getArg(0).merge(dex, insn.getResult());
-				break;
-
-			case MOVE:
-				insn.getResult().merge(dex, insn.getArg(0));
-				insn.getArg(0).merge(dex, insn.getResult());
-				break;
-
-			case IPUT:
-			case SPUT:
-				IndexInsnNode node = (IndexInsnNode) insn;
-				insn.getArg(0).merge(dex, ((FieldInfo) node.getIndex()).getType());
-				break;
-
-			case IF:
-				InsnArg firstArg = insn.getArg(0);
-				InsnArg secondArg = insn.getArg(1);
-				if (firstArg == litArg) {
-					firstArg.merge(dex, secondArg);
-				} else {
-					secondArg.merge(dex, firstArg);
-				}
-				break;
-
-			case CMP_G:
-			case CMP_L:
-				InsnArg arg0 = insn.getArg(0);
-				InsnArg arg1 = insn.getArg(1);
-				if (arg0 == litArg) {
-					arg0.merge(dex, arg1);
-				} else {
-					arg1.merge(dex, arg0);
-				}
-				break;
-
-			case RETURN:
-				if (insn.getArgsCount() != 0) {
-					insn.getArg(0).merge(dex, mth.getReturnType());
-				}
-				break;
-
-			case INVOKE:
-				InvokeNode inv = (InvokeNode) insn;
-				List<ArgType> types = inv.getCallMth().getArgumentsTypes();
-				int count = insn.getArgsCount();
-				int k = types.size() == count ? 0 : -1;
-				for (int i = 0; i < count; i++) {
-					InsnArg arg = insn.getArg(i);
-					if (!arg.getType().isTypeKnown()) {
-						ArgType type;
-						if (k >= 0) {
-							type = types.get(k);
-						} else {
-							type = mth.getParentClass().getClassInfo().getType();
-						}
-						arg.merge(dex, type);
-					}
-					k++;
-				}
-				break;
-
-			case ARITH:
-				litArg.merge(dex, insn.getResult());
-				break;
-
-			case APUT:
-			case AGET:
-				if (litArg == insn.getArg(1)) {
-					litArg.merge(dex, ArgType.INT);
-				}
-				break;
-
-			case NEW_ARRAY:
-				if (litArg == insn.getArg(0)) {
-					litArg.merge(dex, ArgType.INT);
-				}
-				break;
-
-			default:
-				break;
+	private static boolean needExplicitCast(InsnNode insn, LiteralArg arg) {
+		if (insn instanceof CallMthInterface) {
+			CallMthInterface callInsn = (CallMthInterface) insn;
+			MethodInfo callMth = callInsn.getCallMth();
+			int offset = callInsn.getFirstArgOffset();
+			int argIndex = insn.getArgIndex(arg);
+			ArgType argType = callMth.getArgumentsTypes().get(argIndex - offset);
+			if (argType.isPrimitive()) {
+				arg.setType(argType);
+				return argType.equals(ArgType.BYTE);
+			}
 		}
+		return false;
 	}
 }

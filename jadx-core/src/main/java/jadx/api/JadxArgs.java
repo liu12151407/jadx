@@ -2,7 +2,13 @@ package jadx.api;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
+import java.util.function.Predicate;
+
+import jadx.api.impl.InMemoryCodeCache;
 
 public class JadxArgs {
 
@@ -18,6 +24,8 @@ public class JadxArgs {
 	private File outDirSrc;
 	private File outDirRes;
 
+	private ICodeCache codeCache = new InMemoryCodeCache();
+
 	private int threadsCount = DEFAULT_THREADS_COUNT;
 
 	private boolean cfgOutput = false;
@@ -27,12 +35,19 @@ public class JadxArgs {
 	private boolean showInconsistentCode = false;
 
 	private boolean useImports = true;
+	private boolean debugInfo = true;
+	private boolean inlineAnonymousClasses = true;
 
-	private boolean isSkipResources = false;
-	private boolean isSkipSources = false;
+	private boolean skipResources = false;
+	private boolean skipSources = false;
 
-	private boolean isDeobfuscationOn = false;
-	private boolean isDeobfuscationForceSave = false;
+	/**
+	 * Predicate that allows to filter the classes to be process based on their full name
+	 */
+	private Predicate<String> classFilter = null;
+
+	private boolean deobfuscationOn = false;
+	private boolean deobfuscationForceSave = false;
 	private boolean useSourceNameAsClassAlias = false;
 
 	private int deobfuscationMinLength = 0;
@@ -40,7 +55,22 @@ public class JadxArgs {
 
 	private boolean escapeUnicode = false;
 	private boolean replaceConsts = true;
+	private boolean respectBytecodeAccModifiers = false;
 	private boolean exportAsGradleProject = false;
+
+	private boolean fsCaseSensitive;
+
+	public enum RenameEnum {
+		CASE, VALID, PRINTABLE
+	}
+
+	private Set<RenameEnum> renameFlags = EnumSet.allOf(RenameEnum.class);
+
+	public enum OutputFormatEnum {
+		JAVA, JSON
+	}
+
+	private OutputFormatEnum outputFormat = OutputFormatEnum.JAVA;
 
 	public JadxArgs() {
 		// use default options
@@ -54,6 +84,10 @@ public class JadxArgs {
 
 	public List<File> getInputFiles() {
 		return inputFiles;
+	}
+
+	public void setInputFile(File inputFile) {
+		this.inputFiles = Collections.singletonList(inputFile);
 	}
 
 	public void setInputFiles(List<File> inputFiles) {
@@ -132,36 +166,60 @@ public class JadxArgs {
 		this.useImports = useImports;
 	}
 
+	public boolean isDebugInfo() {
+		return debugInfo;
+	}
+
+	public void setDebugInfo(boolean debugInfo) {
+		this.debugInfo = debugInfo;
+	}
+
+	public boolean isInlineAnonymousClasses() {
+		return inlineAnonymousClasses;
+	}
+
+	public void setInlineAnonymousClasses(boolean inlineAnonymousClasses) {
+		this.inlineAnonymousClasses = inlineAnonymousClasses;
+	}
+
 	public boolean isSkipResources() {
-		return isSkipResources;
+		return skipResources;
 	}
 
 	public void setSkipResources(boolean skipResources) {
-		isSkipResources = skipResources;
+		this.skipResources = skipResources;
 	}
 
 	public boolean isSkipSources() {
-		return isSkipSources;
+		return skipSources;
 	}
 
 	public void setSkipSources(boolean skipSources) {
-		isSkipSources = skipSources;
+		this.skipSources = skipSources;
+	}
+
+	public Predicate<String> getClassFilter() {
+		return classFilter;
+	}
+
+	public void setClassFilter(Predicate<String> classFilter) {
+		this.classFilter = classFilter;
 	}
 
 	public boolean isDeobfuscationOn() {
-		return isDeobfuscationOn;
+		return deobfuscationOn;
 	}
 
 	public void setDeobfuscationOn(boolean deobfuscationOn) {
-		isDeobfuscationOn = deobfuscationOn;
+		this.deobfuscationOn = deobfuscationOn;
 	}
 
 	public boolean isDeobfuscationForceSave() {
-		return isDeobfuscationForceSave;
+		return deobfuscationForceSave;
 	}
 
 	public void setDeobfuscationForceSave(boolean deobfuscationForceSave) {
-		isDeobfuscationForceSave = deobfuscationForceSave;
+		this.deobfuscationForceSave = deobfuscationForceSave;
 	}
 
 	public boolean isUseSourceNameAsClassAlias() {
@@ -204,6 +262,14 @@ public class JadxArgs {
 		this.replaceConsts = replaceConsts;
 	}
 
+	public boolean isRespectBytecodeAccModifiers() {
+		return respectBytecodeAccModifiers;
+	}
+
+	public void setRespectBytecodeAccModifiers(boolean respectBytecodeAccModifiers) {
+		this.respectBytecodeAccModifiers = respectBytecodeAccModifiers;
+	}
+
 	public boolean isExportAsGradleProject() {
 		return exportAsGradleProject;
 	}
@@ -212,30 +278,93 @@ public class JadxArgs {
 		this.exportAsGradleProject = exportAsGradleProject;
 	}
 
+	public boolean isFsCaseSensitive() {
+		return fsCaseSensitive;
+	}
+
+	public void setFsCaseSensitive(boolean fsCaseSensitive) {
+		this.fsCaseSensitive = fsCaseSensitive;
+	}
+
+	public boolean isRenameCaseSensitive() {
+		return renameFlags.contains(RenameEnum.CASE);
+	}
+
+	public void setRenameCaseSensitive(boolean renameCaseSensitive) {
+		updateRenameFlag(renameCaseSensitive, RenameEnum.CASE);
+	}
+
+	public boolean isRenameValid() {
+		return renameFlags.contains(RenameEnum.VALID);
+	}
+
+	public void setRenameValid(boolean renameValid) {
+		updateRenameFlag(renameValid, RenameEnum.VALID);
+	}
+
+	public boolean isRenamePrintable() {
+		return renameFlags.contains(RenameEnum.PRINTABLE);
+	}
+
+	public void setRenamePrintable(boolean renamePrintable) {
+		updateRenameFlag(renamePrintable, RenameEnum.PRINTABLE);
+	}
+
+	private void updateRenameFlag(boolean enabled, RenameEnum flag) {
+		if (enabled) {
+			renameFlags.add(flag);
+		} else {
+			renameFlags.remove(flag);
+		}
+	}
+
+	public OutputFormatEnum getOutputFormat() {
+		return outputFormat;
+	}
+
+	public boolean isJsonOutput() {
+		return outputFormat == OutputFormatEnum.JSON;
+	}
+
+	public void setOutputFormat(OutputFormatEnum outputFormat) {
+		this.outputFormat = outputFormat;
+	}
+
+	public ICodeCache getCodeCache() {
+		return codeCache;
+	}
+
+	public void setCodeCache(ICodeCache codeCache) {
+		this.codeCache = codeCache;
+	}
+
 	@Override
 	public String toString() {
-		final StringBuilder sb = new StringBuilder("JadxArgs{");
-		sb.append("inputFiles=").append(inputFiles);
-		sb.append(", outDir=").append(outDir);
-		sb.append(", outDirSrc=").append(outDirSrc);
-		sb.append(", outDirRes=").append(outDirRes);
-		sb.append(", threadsCount=").append(threadsCount);
-		sb.append(", cfgOutput=").append(cfgOutput);
-		sb.append(", rawCFGOutput=").append(rawCFGOutput);
-		sb.append(", fallbackMode=").append(fallbackMode);
-		sb.append(", showInconsistentCode=").append(showInconsistentCode);
-		sb.append(", useImports=").append(useImports);
-		sb.append(", isSkipResources=").append(isSkipResources);
-		sb.append(", isSkipSources=").append(isSkipSources);
-		sb.append(", isDeobfuscationOn=").append(isDeobfuscationOn);
-		sb.append(", isDeobfuscationForceSave=").append(isDeobfuscationForceSave);
-		sb.append(", useSourceNameAsClassAlias=").append(useSourceNameAsClassAlias);
-		sb.append(", deobfuscationMinLength=").append(deobfuscationMinLength);
-		sb.append(", deobfuscationMaxLength=").append(deobfuscationMaxLength);
-		sb.append(", escapeUnicode=").append(escapeUnicode);
-		sb.append(", replaceConsts=").append(replaceConsts);
-		sb.append(", exportAsGradleProject=").append(exportAsGradleProject);
-		sb.append('}');
-		return sb.toString();
+		return "JadxArgs{" + "inputFiles=" + inputFiles
+				+ ", outDir=" + outDir
+				+ ", outDirSrc=" + outDirSrc
+				+ ", outDirRes=" + outDirRes
+				+ ", threadsCount=" + threadsCount
+				+ ", cfgOutput=" + cfgOutput
+				+ ", rawCFGOutput=" + rawCFGOutput
+				+ ", fallbackMode=" + fallbackMode
+				+ ", showInconsistentCode=" + showInconsistentCode
+				+ ", useImports=" + useImports
+				+ ", skipResources=" + skipResources
+				+ ", skipSources=" + skipSources
+				+ ", deobfuscationOn=" + deobfuscationOn
+				+ ", deobfuscationForceSave=" + deobfuscationForceSave
+				+ ", useSourceNameAsClassAlias=" + useSourceNameAsClassAlias
+				+ ", deobfuscationMinLength=" + deobfuscationMinLength
+				+ ", deobfuscationMaxLength=" + deobfuscationMaxLength
+				+ ", escapeUnicode=" + escapeUnicode
+				+ ", replaceConsts=" + replaceConsts
+				+ ", respectBytecodeAccModifiers=" + respectBytecodeAccModifiers
+				+ ", exportAsGradleProject=" + exportAsGradleProject
+				+ ", fsCaseSensitive=" + fsCaseSensitive
+				+ ", renameFlags=" + renameFlags
+				+ ", outputFormat=" + outputFormat
+				+ ", codeCache=" + codeCache
+				+ '}';
 	}
 }

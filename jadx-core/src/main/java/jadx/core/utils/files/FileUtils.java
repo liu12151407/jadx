@@ -1,6 +1,7 @@
 package jadx.core.utils.files;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileInputStream;
@@ -18,7 +19,6 @@ import java.util.jar.JarOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
-import org.apache.commons.io.IOCase;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -46,6 +46,12 @@ public class FileUtils {
 		}
 	}
 
+	public static void makeDirsForFile(Path path) {
+		if (path != null) {
+			makeDirs(path.getParent().toFile());
+		}
+	}
+
 	public static void makeDirsForFile(File file) {
 		if (file != null) {
 			makeDirs(file.getParentFile());
@@ -64,24 +70,45 @@ public class FileUtils {
 		}
 	}
 
-	public static File createTempFile(String suffix) {
-		File temp;
-		try {
-			temp = File.createTempFile("jadx-tmp-", System.nanoTime() + "-" + suffix);
-			temp.deleteOnExit();
-		} catch (IOException e) {
-			throw new JadxRuntimeException("Failed to create temp file with suffix: " + suffix);
+	public static boolean deleteDir(File dir) {
+		File[] content = dir.listFiles();
+		if (content != null) {
+			for (File file : content) {
+				deleteDir(file);
+			}
 		}
-		return temp;
+		return dir.delete();
 	}
 
-	public static File createTempDir(String suffix) {
+	private static final Path TEMP_ROOT_DIR = createTempRootDir();
+
+	private static Path createTempRootDir() {
 		try {
-			Path path = Files.createTempDirectory("jadx-tmp-" + System.nanoTime() + "-" + suffix);
+			Path dir = Files.createTempDirectory("jadx-instance-");
+			dir.toFile().deleteOnExit();
+			return dir;
+		} catch (Exception e) {
+			throw new JadxRuntimeException("Failed to create temp root directory", e);
+		}
+	}
+
+	public static Path createTempDir(String prefix) {
+		try {
+			Path dir = Files.createTempDirectory(TEMP_ROOT_DIR, prefix);
+			dir.toFile().deleteOnExit();
+			return dir;
+		} catch (Exception e) {
+			throw new JadxRuntimeException("Failed to create temp directory with suffix: " + prefix, e);
+		}
+	}
+
+	public static Path createTempFile(String suffix) {
+		try {
+			Path path = Files.createTempFile(TEMP_ROOT_DIR, "jadx-tmp-", suffix);
 			path.toFile().deleteOnExit();
-			return path.toFile();
-		} catch (IOException e) {
-			throw new JadxRuntimeException("Failed to create temp directory with suffix: " + suffix);
+			return path;
+		} catch (Exception e) {
+			throw new JadxRuntimeException("Failed to create temp file with suffix: " + suffix, e);
 		}
 	}
 
@@ -93,6 +120,13 @@ public class FileUtils {
 				break;
 			}
 			output.write(buffer, 0, count);
+		}
+	}
+
+	public static byte[] streamToByteArray(InputStream input) throws IOException {
+		try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+			copyStream(input, out);
+			return out.toByteArray();
 		}
 	}
 
@@ -196,34 +230,6 @@ public class FileUtils {
 		} catch (Exception e) {
 			return false;
 		}
-	}
-
-	public static boolean isCaseSensitiveFS(File testDir) {
-		if (testDir != null) {
-			File caseCheckUpper = new File(testDir, "CaseCheck");
-			File caseCheckLow = new File(testDir, "casecheck");
-			try {
-				makeDirs(testDir);
-				if (caseCheckUpper.createNewFile()) {
-					boolean caseSensitive = !caseCheckLow.exists();
-					LOG.debug("Filesystem at {} is {}case-sensitive", testDir.getAbsolutePath(),
-							(caseSensitive ? "" : "NOT "));
-					return caseSensitive;
-				} else {
-					LOG.debug("Failed to create file: {}", caseCheckUpper.getAbsolutePath());
-				}
-			} catch (Exception e) {
-				LOG.debug("Failed to detect filesystem case-sensitivity by file creation", e);
-			} finally {
-				try {
-					Files.deleteIfExists(caseCheckUpper.toPath());
-					Files.deleteIfExists(caseCheckLow.toPath());
-				} catch (Exception e) {
-					// ignore
-				}
-			}
-		}
-		return IOCase.SYSTEM.isCaseSensitive();
 	}
 
 	public static File toFile(String path) {

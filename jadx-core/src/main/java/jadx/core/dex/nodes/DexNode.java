@@ -2,9 +2,15 @@ package jadx.core.dex.nodes;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.android.dex.ClassData;
 import com.android.dex.ClassData.Method;
@@ -16,16 +22,16 @@ import com.android.dex.FieldId;
 import com.android.dex.MethodId;
 import com.android.dex.ProtoId;
 import com.android.dex.TypeList;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.FieldInfo;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.instructions.args.ArgType;
+import jadx.core.utils.ErrorsCounter;
 import jadx.core.utils.files.DexFile;
 
 public class DexNode implements IDexNode {
+	private static final Logger LOG = LoggerFactory.getLogger(DexNode.class);
 
 	public static final int NO_INDEX = -1;
 
@@ -36,18 +42,45 @@ public class DexNode implements IDexNode {
 
 	private final List<ClassNode> classes = new ArrayList<>();
 	private final Map<ClassInfo, ClassNode> clsMap = new HashMap<>();
+	private final ArgType[] typesCache;
 
 	public DexNode(RootNode root, DexFile input, int dexId) {
 		this.root = root;
 		this.file = input;
 		this.dexBuf = input.getDexBuf();
 		this.dexId = dexId;
+		this.typesCache = new ArgType[dexBuf.typeIds().size()];
 	}
 
 	public void loadClasses() {
 		for (ClassDef cls : dexBuf.classDefs()) {
-			addClassNode(new ClassNode(this, cls));
+			try {
+				addClassNode(new ClassNode(this, cls));
+			} catch (Exception e) {
+				addDummyClass(cls, e);
+			}
 		}
+		// sort classes by name, expect top classes before inner
+		classes.sort(Comparator.comparing(ClassNode::getFullName));
+	}
+
+	private void addDummyClass(ClassDef classDef, Exception exc) {
+		int typeIndex = classDef.getTypeIndex();
+		String name = null;
+		try {
+			ClassInfo clsInfo = ClassInfo.fromDex(this, typeIndex);
+			if (clsInfo != null) {
+				name = clsInfo.getShortName();
+			}
+		} catch (Exception e) {
+			LOG.error("Failed to get name for class with type {}", typeIndex, e);
+		}
+		if (name == null || name.isEmpty()) {
+			name = "CLASS_" + typeIndex;
+		}
+		ClassNode clsNode = new ClassNode(this, name, classDef.getAccessFlags());
+		ErrorsCounter.classError(clsNode, "Load error", exc);
+		addClassNode(clsNode);
 	}
 
 	public void addClassNode(ClassNode clsNode) {
@@ -63,6 +96,7 @@ public class DexNode implements IDexNode {
 				inner.add(cls);
 			}
 		}
+		List<ClassNode> updated = new ArrayList<>();
 		for (ClassNode cls : inner) {
 			ClassInfo clsInfo = cls.getClassInfo();
 			ClassNode parent = resolveClass(clsInfo.getParentClass());
@@ -70,8 +104,15 @@ public class DexNode implements IDexNode {
 				clsMap.remove(clsInfo);
 				clsInfo.notInner(root);
 				clsMap.put(clsInfo, cls);
+				updated.add(cls);
 			} else {
 				parent.addInnerClass(cls);
+			}
+		}
+		// reload names for inner classes of updated parents
+		for (ClassNode updCls : updated) {
+			for (ClassNode innerCls : updCls.getInnerClasses()) {
+				innerCls.getClassInfo().updateNames(root);
 			}
 		}
 	}
@@ -87,6 +128,10 @@ public class DexNode implements IDexNode {
 
 	@Nullable
 	public ClassNode resolveClass(ClassInfo clsInfo) {
+		ClassNode classNode = resolveClassLocal(clsInfo);
+		if (classNode != null) {
+			return classNode;
+		}
 		return root.resolveClass(clsInfo);
 	}
 
@@ -98,7 +143,6 @@ public class DexNode implements IDexNode {
 		return resolveClass(ClassInfo.fromType(root, type));
 	}
 
-	@Deprecated
 	@Nullable
 	public MethodNode resolveMethod(@NotNull MethodInfo mth) {
 		ClassNode cls = resolveClass(mth.getDeclClass());
@@ -138,7 +182,6 @@ public class DexNode implements IDexNode {
 		return null;
 	}
 
-	@Deprecated
 	@Nullable
 	public FieldNode resolveField(FieldInfo field) {
 		ClassNode cls = resolveClass(field.getDeclClass());
@@ -150,16 +193,15 @@ public class DexNode implements IDexNode {
 
 	@Nullable
 	FieldNode deepResolveField(@NotNull ClassNode cls, FieldInfo fieldInfo) {
-		FieldNode field = cls.searchFieldByName(fieldInfo.getName());
+		FieldNode field = cls.searchFieldByNameAndType(fieldInfo);
 		if (field != null) {
 			return field;
 		}
-		FieldNode found;
 		ArgType superClass = cls.getSuperClass();
 		if (superClass != null) {
 			ClassNode superNode = resolveClass(superClass);
 			if (superNode != null) {
-				found = deepResolveField(superNode, fieldInfo);
+				FieldNode found = deepResolveField(superNode, fieldInfo);
 				if (found != null) {
 					return found;
 				}
@@ -168,7 +210,7 @@ public class DexNode implements IDexNode {
 		for (ArgType iFaceType : cls.getInterfaces()) {
 			ClassNode iFaceNode = resolveClass(iFaceType);
 			if (iFaceNode != null) {
-				found = deepResolveField(iFaceNode, fieldInfo);
+				FieldNode found = deepResolveField(iFaceNode, fieldInfo);
 				if (found != null) {
 					return found;
 				}
@@ -184,11 +226,25 @@ public class DexNode implements IDexNode {
 	// DexBuffer wrappers
 
 	public String getString(int index) {
+		if (index == DexNode.NO_INDEX) {
+			return null;
+		}
 		return dexBuf.strings().get(index);
 	}
 
 	public ArgType getType(int index) {
-		return ArgType.parse(getString(dexBuf.typeIds().get(index)));
+		if (index == DexNode.NO_INDEX) {
+			return null;
+		}
+		ArgType type = typesCache[index];
+		if (type != null) {
+			return type;
+		}
+		// no synchronization because exactly one ArgType instance not needed, just reduce instances count
+		// note: same types but different instances will exist in other dex nodes
+		ArgType parsedType = ArgType.parse(getString(dexBuf.typeIds().get(index)));
+		typesCache[index] = parsedType;
+		return parsedType;
 	}
 
 	public MethodId getMethodId(int mthIndex) {

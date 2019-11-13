@@ -1,17 +1,26 @@
 package jadx.gui.settings;
 
+import java.awt.Rectangle;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 import java.lang.reflect.Modifier;
+import java.nio.file.Path;
 import java.util.prefs.Preferences;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.gson.ExclusionStrategy;
 import com.google.gson.FieldAttributes;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.InstanceCreator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import jadx.gui.JadxGUI;
+import jadx.gui.utils.PathTypeAdapter;
+import jadx.gui.utils.RectangleTypeAdapter;
 
 public class JadxSettingsAdapter {
 
@@ -21,12 +30,13 @@ public class JadxSettingsAdapter {
 
 	private static final Preferences PREFS = Preferences.userNodeForPackage(JadxGUI.class);
 
-	private static ExclusionStrategy EXCLUDE_FIELDS = new ExclusionStrategy() {
+	private static final ExclusionStrategy EXCLUDE_FIELDS = new ExclusionStrategy() {
 		@Override
 		public boolean shouldSkipField(FieldAttributes f) {
 			return JadxSettings.SKIP_FIELDS.contains(f.getName())
 					|| f.hasModifier(Modifier.PUBLIC)
-					|| f.hasModifier(Modifier.TRANSIENT);
+					|| f.hasModifier(Modifier.TRANSIENT)
+					|| (f.getAnnotation(GsonExclude.class) != null);
 		}
 
 		@Override
@@ -34,15 +44,18 @@ public class JadxSettingsAdapter {
 			return false;
 		}
 	};
-	private static final GsonBuilder GSON_BUILDER = new GsonBuilder().setExclusionStrategies(EXCLUDE_FIELDS);
+	private static final GsonBuilder GSON_BUILDER = new GsonBuilder()
+			.setExclusionStrategies(EXCLUDE_FIELDS)
+			.registerTypeHierarchyAdapter(Path.class, PathTypeAdapter.singleton())
+			.registerTypeHierarchyAdapter(Rectangle.class, RectangleTypeAdapter.singleton());
 	private static final Gson GSON = GSON_BUILDER.create();
 
 	private JadxSettingsAdapter() {
 	}
 
 	public static JadxSettings load() {
+		String jsonSettings = PREFS.get(JADX_GUI_KEY, "");
 		try {
-			String jsonSettings = PREFS.get(JADX_GUI_KEY, "");
 			JadxSettings settings = fromString(jsonSettings);
 			if (settings == null) {
 				LOG.debug("Created new settings.");
@@ -55,7 +68,7 @@ public class JadxSettingsAdapter {
 			}
 			return settings;
 		} catch (Exception e) {
-			LOG.error("Error load settings", e);
+			LOG.error("Error load settings. Settings will reset.\n Loaded json string: {}", jsonSettings, e);
 			return new JadxSettings();
 		}
 	}
@@ -87,5 +100,13 @@ public class JadxSettingsAdapter {
 		builder.registerTypeAdapter(type, (InstanceCreator<T>) t -> into)
 				.create()
 				.fromJson(json, type);
+	}
+
+	/**
+	 * Annotation for specifying fields that should not be be saved/loaded
+	 */
+	@Retention(RetentionPolicy.RUNTIME)
+	@Target(ElementType.FIELD)
+	public @interface GsonExclude {
 	}
 }

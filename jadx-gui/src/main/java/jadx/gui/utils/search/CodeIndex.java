@@ -3,12 +3,13 @@ package jadx.gui.utils.search;
 import java.util.ArrayList;
 import java.util.List;
 
-import io.reactivex.BackpressureStrategy;
-import io.reactivex.Flowable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import jadx.gui.utils.Utils;
+import io.reactivex.BackpressureStrategy;
+import io.reactivex.Flowable;
+
+import jadx.gui.utils.UiUtils;
 
 public class CodeIndex<T> implements SearchIndex<T> {
 
@@ -23,7 +24,7 @@ public class CodeIndex<T> implements SearchIndex<T> {
 	}
 
 	@Override
-	public void put(StringRef str, T value) {
+	public synchronized void put(StringRef str, T value) {
 		if (str == null || str.length() == 0) {
 			return;
 		}
@@ -54,7 +55,7 @@ public class CodeIndex<T> implements SearchIndex<T> {
 					return;
 				}
 			}
-			LOG.debug("Code search complete: {}, memory usage: {}", searchStr, Utils.memoryInfo());
+			LOG.debug("Code search complete: {}, memory usage: {}", searchStr, UiUtils.memoryInfo());
 			emitter.onComplete();
 		}, BackpressureStrategy.LATEST);
 	}

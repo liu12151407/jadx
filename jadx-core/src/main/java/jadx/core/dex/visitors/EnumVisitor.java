@@ -5,11 +5,15 @@ import java.util.List;
 
 import org.jetbrains.annotations.Nullable;
 
+import com.android.dx.rop.code.AccessFlags;
+
 import jadx.core.codegen.TypeGen;
 import jadx.core.deobf.NameMapper;
 import jadx.core.dex.attributes.AFlag;
+import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.EnumClassAttr;
 import jadx.core.dex.attributes.nodes.EnumClassAttr.EnumField;
+import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.FieldInfo;
 import jadx.core.dex.info.MethodInfo;
@@ -26,6 +30,7 @@ import jadx.core.dex.nodes.DexNode;
 import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
+import jadx.core.dex.visitors.shrink.CodeShrinkVisitor;
 import jadx.core.utils.ErrorsCounter;
 import jadx.core.utils.InsnUtils;
 import jadx.core.utils.exceptions.JadxException;
@@ -33,14 +38,25 @@ import jadx.core.utils.exceptions.JadxException;
 @JadxVisitor(
 		name = "EnumVisitor",
 		desc = "Restore enum classes",
-		runAfter = {CodeShrinker.class, ModVisitor.class}
+		runAfter = { CodeShrinkVisitor.class, ModVisitor.class }
 )
 public class EnumVisitor extends AbstractVisitor {
 
 	@Override
 	public boolean visit(ClassNode cls) throws JadxException {
+		if (!convertToEnum(cls)) {
+			AccessInfo accessFlags = cls.getAccessFlags();
+			if (accessFlags.isEnum()) {
+				cls.setAccessFlags(accessFlags.remove(AccessFlags.ACC_ENUM));
+				cls.addAttr(AType.COMMENTS, "'enum' modifier removed");
+			}
+		}
+		return true;
+	}
+
+	private boolean convertToEnum(ClassNode cls) {
 		if (!cls.isEnum()) {
-			return true;
+			return false;
 		}
 		// search class init method
 		MethodNode staticMethod = null;
@@ -53,7 +69,7 @@ public class EnumVisitor extends AbstractVisitor {
 		}
 		if (staticMethod == null) {
 			ErrorsCounter.classWarn(cls, "Enum class init method not found");
-			return true;
+			return false;
 		}
 
 		ArgType clsType = cls.getClassInfo().getType();
@@ -142,8 +158,8 @@ public class EnumVisitor extends AbstractVisitor {
 			String name = getConstString(cls.dex(), co.getArg(0));
 			if (name != null
 					&& !fieldInfo.getAlias().equals(name)
-					&& NameMapper.isValidIdentifier(name)) {
-				// LOG.debug("Rename enum field: '{}' to '{}' in {}", fieldInfo.getName(), name, cls);
+					&& NameMapper.isValidAndPrintable(name)
+					&& cls.root().getArgs().isRenameValid()) {
 				fieldInfo.setAlias(name);
 			}
 
@@ -157,7 +173,7 @@ public class EnumVisitor extends AbstractVisitor {
 				}
 			}
 		}
-		return false;
+		return true;
 	}
 
 	private static void processEnumInnerCls(ConstructorInsn co, EnumField field, ClassNode innerCls) {

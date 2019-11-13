@@ -74,7 +74,7 @@ public class BlockUtils {
 	}
 
 	public static boolean isBlockMustBeCleared(BlockNode b) {
-		if (b.contains(AType.EXC_HANDLER) || b.contains(AFlag.SKIP)) {
+		if (b.contains(AType.EXC_HANDLER) || b.contains(AFlag.REMOVE)) {
 			return true;
 		}
 		if (b.contains(AFlag.SYNTHETIC)) {
@@ -165,6 +165,7 @@ public class BlockUtils {
 		return insns.get(insns.size() - 1);
 	}
 
+	@Nullable
 	public static BlockNode getBlockByInsn(MethodNode mth, InsnNode insn) {
 		if (insn instanceof PhiInsn) {
 			return searchBlockWithPhi(mth, (PhiInsn) insn);
@@ -270,6 +271,9 @@ public class BlockUtils {
 	}
 
 	public static List<BlockNode> bitSetToBlocks(MethodNode mth, BitSet bs) {
+		if (bs == null) {
+			return Collections.emptyList();
+		}
 		int size = bs.cardinality();
 		if (size == 0) {
 			return Collections.emptyList();
@@ -429,6 +433,9 @@ public class BlockUtils {
 		if (b1 == null || b2 == null) {
 			return null;
 		}
+		if (b1.getDomFrontier() == null || b2.getDomFrontier() == null) {
+			return null;
+		}
 		BitSet b = new BitSet();
 		b.or(b1.getDomFrontier());
 		b.and(b2.getDomFrontier());
@@ -454,20 +461,30 @@ public class BlockUtils {
 	 */
 	public static List<BlockNode> collectBlocksDominatedBy(BlockNode dominator, BlockNode start) {
 		List<BlockNode> result = new ArrayList<>();
-		Set<BlockNode> visited = new HashSet<>();
-		collectWhileDominates(dominator, start, result, visited);
+		collectWhileDominates(dominator, start, result, new HashSet<>(), false);
 		return result;
 	}
 
-	private static void collectWhileDominates(BlockNode dominator, BlockNode child, List<BlockNode> result, Set<BlockNode> visited) {
+	/**
+	 * Collect all block dominated by 'dominator', starting from 'start', include exception handlers
+	 */
+	public static List<BlockNode> collectBlocksDominatedByWithExcHandlers(BlockNode dominator, BlockNode start) {
+		List<BlockNode> result = new ArrayList<>();
+		collectWhileDominates(dominator, start, result, new HashSet<>(), true);
+		return result;
+	}
+
+	private static void collectWhileDominates(BlockNode dominator, BlockNode child, List<BlockNode> result,
+			Set<BlockNode> visited, boolean includeExcHandlers) {
 		if (visited.contains(child)) {
 			return;
 		}
 		visited.add(child);
-		for (BlockNode node : child.getCleanSuccessors()) {
+		List<BlockNode> successors = includeExcHandlers ? child.getSuccessors() : child.getCleanSuccessors();
+		for (BlockNode node : successors) {
 			if (node.isDominator(dominator)) {
 				result.add(node);
-				collectWhileDominates(dominator, node, result, visited);
+				collectWhileDominates(dominator, node, result, visited, includeExcHandlers);
 			}
 		}
 	}
@@ -495,7 +512,7 @@ public class BlockUtils {
 			if (pred.contains(AFlag.SYNTHETIC)
 					&& !pred.contains(AType.SPLITTER_BLOCK)
 					&& pred.getInstructions().isEmpty()) {
-				pred.add(AFlag.SKIP);
+				pred.add(AFlag.DONT_GENERATE);
 				skipPredSyntheticPaths(pred);
 			}
 		}
@@ -555,5 +572,47 @@ public class BlockUtils {
 		List<InsnNode> insns = new ArrayList<>();
 		blocks.forEach(block -> insns.addAll(block.getInstructions()));
 		return insns;
+	}
+
+	public static boolean isFirstInsn(MethodNode mth, InsnNode insn) {
+		BlockNode enterBlock = mth.getEnterBlock();
+		if (enterBlock == null || enterBlock.getInstructions().isEmpty()) {
+			return false;
+		}
+		return enterBlock.getInstructions().get(0) == insn;
+	}
+
+	/**
+	 * Replace insn by index i in block,
+	 * for proper copy attributes, assume attributes are not overlap
+	 */
+	public static void replaceInsn(BlockNode block, int i, InsnNode insn) {
+		InsnNode prevInsn = block.getInstructions().get(i);
+		insn.copyAttributesFrom(prevInsn);
+		insn.setSourceLine(prevInsn.getSourceLine());
+		insn.setOffset(prevInsn.getOffset());
+		block.getInstructions().set(i, insn);
+	}
+
+	public static boolean replaceInsn(BlockNode block, InsnNode oldInsn, InsnNode newInsn) {
+		List<InsnNode> instructions = block.getInstructions();
+		int size = instructions.size();
+		for (int i = 0; i < size; i++) {
+			InsnNode instruction = instructions.get(i);
+			if (instruction == oldInsn) {
+				replaceInsn(block, i, newInsn);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public static boolean replaceInsn(MethodNode mth, InsnNode oldInsn, InsnNode newInsn) {
+		for (BlockNode block : mth.getBasicBlocks()) {
+			if (replaceInsn(block, oldInsn, newInsn)) {
+				return true;
+			}
+		}
+		return false;
 	}
 }

@@ -1,13 +1,13 @@
 package jadx.tests.integration.loops;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
 import static jadx.tests.api.utils.JadxMatchers.containsOne;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class TestIfInLoop3 extends IntegrationTest {
 
@@ -16,7 +16,7 @@ public class TestIfInLoop3 extends IntegrationTest {
 		static boolean placingStone = true;
 
 		private static boolean test(int xx, int yy) {
-			int[] extraArray = new int[]{10, 45, 50, 50, 20, 20};
+			int[] extraArray = new int[] { 10, 45, 50, 50, 20, 20 };
 			if (extraArray != null && placingStone) {
 				for (int i = 0; i < extraArray.length; i += 2) {
 					int tX;

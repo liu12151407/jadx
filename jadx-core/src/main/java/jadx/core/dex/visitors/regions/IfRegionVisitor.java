@@ -18,26 +18,19 @@ import static jadx.core.utils.RegionUtils.insnsCount;
 
 public class IfRegionVisitor extends AbstractVisitor {
 
-	private static final TernaryVisitor TERNARY_VISITOR = new TernaryVisitor();
+	private static final TernaryMod TERNARY_VISITOR = new TernaryMod();
 	private static final ProcessIfRegionVisitor PROCESS_IF_REGION_VISITOR = new ProcessIfRegionVisitor();
 	private static final RemoveRedundantElseVisitor REMOVE_REDUNDANT_ELSE_VISITOR = new RemoveRedundantElseVisitor();
 
 	@Override
 	public void visit(MethodNode mth) {
+		if (mth.isNoCode()) {
+			return;
+		}
+
 		DepthRegionTraversal.traverseIterative(mth, TERNARY_VISITOR);
 		DepthRegionTraversal.traverse(mth, PROCESS_IF_REGION_VISITOR);
 		DepthRegionTraversal.traverseIterative(mth, REMOVE_REDUNDANT_ELSE_VISITOR);
-	}
-
-	/**
-	 * Collapse ternary operators
-	 */
-	private static class TernaryVisitor implements IRegionIterativeVisitor {
-		@Override
-		public boolean visitRegion(MethodNode mth, IRegion region) {
-			return region instanceof IfRegion
-					&& TernaryMod.makeTernaryInsn(mth, (IfRegion) region);
-		}
 	}
 
 	private static class ProcessIfRegionVisitor extends AbstractRegionVisitor {
@@ -105,7 +98,7 @@ public class IfRegionVisitor extends AbstractVisitor {
 	private static void moveReturnToThenBlock(MethodNode mth, IfRegion ifRegion) {
 		if (!mth.getReturnType().equals(ArgType.VOID)
 				&& hasSimpleReturnBlock(ifRegion.getElseRegion())
-			/*&& insnsCount(ifRegion.getThenRegion()) < 2*/) {
+		/* && insnsCount(ifRegion.getThenRegion()) < 2 */) {
 			invertIfRegion(ifRegion);
 		}
 	}
@@ -140,7 +133,7 @@ public class IfRegionVisitor extends AbstractVisitor {
 				|| ifRegion.getElseRegion().contains(AFlag.ELSE_IF_CHAIN)) {
 			return false;
 		}
-		if (!hasBranchTerminator(ifRegion.getThenRegion())) {
+		if (!RegionUtils.hasExitBlock(ifRegion.getThenRegion())) {
 			return false;
 		}
 		// code style check:
@@ -160,12 +153,6 @@ public class IfRegionVisitor extends AbstractVisitor {
 			return true;
 		}
 		return false;
-	}
-
-	private static boolean hasBranchTerminator(IContainer region) {
-		// TODO: check for exception throw
-		return RegionUtils.hasExitBlock(region)
-				|| RegionUtils.hasBreakInsn(region);
 	}
 
 	private static void invertIfRegion(IfRegion ifRegion) {

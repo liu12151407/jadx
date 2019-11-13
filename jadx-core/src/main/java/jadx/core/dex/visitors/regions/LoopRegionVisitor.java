@@ -33,11 +33,18 @@ import jadx.core.dex.regions.loops.ForLoop;
 import jadx.core.dex.regions.loops.LoopRegion;
 import jadx.core.dex.regions.loops.LoopType;
 import jadx.core.dex.visitors.AbstractVisitor;
-import jadx.core.dex.visitors.CodeShrinker;
+import jadx.core.dex.visitors.JadxVisitor;
+import jadx.core.dex.visitors.regions.variables.ProcessVariables;
+import jadx.core.dex.visitors.shrink.CodeShrinkVisitor;
 import jadx.core.utils.BlockUtils;
-import jadx.core.utils.InstructionRemover;
 import jadx.core.utils.RegionUtils;
+import jadx.core.utils.exceptions.JadxOverflowException;
 
+@JadxVisitor(
+		name = "LoopRegionVisitor",
+		desc = "Convert 'while' loops to 'for' loops (indexed or for-each)",
+		runBefore = ProcessVariables.class
+)
 public class LoopRegionVisitor extends AbstractVisitor implements IRegionVisitor {
 	private static final Logger LOG = LoggerFactory.getLogger(LoopRegionVisitor.class);
 
@@ -65,9 +72,7 @@ public class LoopRegionVisitor extends AbstractVisitor implements IRegionVisitor
 		if (checkForIndexedLoop(mth, loopRegion, condition)) {
 			return;
 		}
-		if (checkIterableForEach(mth, loopRegion, condition)) {
-			return;
-		}
+		checkIterableForEach(mth, loopRegion, condition);
 	}
 
 	/**
@@ -84,10 +89,13 @@ public class LoopRegionVisitor extends AbstractVisitor implements IRegionVisitor
 				|| !incrArg.getSVar().isUsedInPhi()) {
 			return false;
 		}
-		PhiInsn phiInsn = incrArg.getSVar().getUsedInPhi();
-		if (phiInsn == null
-				|| phiInsn.getArgsCount() != 2
-				|| !phiInsn.getArg(1).equals(incrArg)
+		List<PhiInsn> phiInsnList = incrArg.getSVar().getUsedInPhi();
+		if (phiInsnList.size() != 1) {
+			return false;
+		}
+		PhiInsn phiInsn = phiInsnList.get(0);
+		if (phiInsn.getArgsCount() != 2
+				|| !phiInsn.containsArg(incrArg)
 				|| incrArg.getSVar().getUseCount() != 1) {
 			return false;
 		}
@@ -98,7 +106,9 @@ public class LoopRegionVisitor extends AbstractVisitor implements IRegionVisitor
 		}
 		RegisterArg initArg = phiInsn.getArg(0);
 		InsnNode initInsn = initArg.getAssignInsn();
-		if (initInsn == null || initArg.getSVar().getUseCount() != 1) {
+		if (initInsn == null
+				|| initInsn.contains(AFlag.DONT_GENERATE)
+				|| initArg.getSVar().getUseCount() != 1) {
 			return false;
 		}
 		if (!usedOnlyInLoop(mth, loopRegion, arg)) {
@@ -108,25 +118,30 @@ public class LoopRegionVisitor extends AbstractVisitor implements IRegionVisitor
 		List<RegisterArg> args = new LinkedList<>();
 		incrInsn.getRegisterArgs(args);
 		for (RegisterArg iArg : args) {
-			if (assignOnlyInLoop(mth, loopRegion, iArg)) {
-				return false;
+			try {
+				if (assignOnlyInLoop(mth, loopRegion, iArg)) {
+					return false;
+				}
+			} catch (StackOverflowError error) {
+				throw new JadxOverflowException("LoopRegionVisitor.assignOnlyInLoop endless recursion");
 			}
 		}
 
 		// all checks passed
-		initInsn.add(AFlag.SKIP);
-		incrInsn.add(AFlag.SKIP);
-		LoopType arrForEach = checkArrayForEach(mth, initInsn, incrInsn, condition);
+		initInsn.add(AFlag.DONT_GENERATE);
+		incrInsn.add(AFlag.DONT_GENERATE);
+
+		LoopType arrForEach = checkArrayForEach(mth, loopRegion, initInsn, incrInsn, condition);
 		if (arrForEach != null) {
 			loopRegion.setType(arrForEach);
-			return true;
+		} else {
+			loopRegion.setType(new ForLoop(initInsn, incrInsn));
 		}
-		loopRegion.setType(new ForLoop(initInsn, incrInsn));
 		return true;
 	}
 
-	private static LoopType checkArrayForEach(MethodNode mth, InsnNode initInsn, InsnNode incrInsn,
-	                                          IfCondition condition) {
+	private static LoopType checkArrayForEach(MethodNode mth, LoopRegion loopRegion, InsnNode initInsn, InsnNode incrInsn,
+			IfCondition condition) {
 		if (!(incrInsn instanceof ArithNode)) {
 			return null;
 		}
@@ -186,14 +201,23 @@ public class LoopRegionVisitor extends AbstractVisitor implements IRegionVisitor
 		if (iterVar == null) {
 			return null;
 		}
+		if (!usedOnlyInLoop(mth, loopRegion, iterVar)) {
+			return null;
+		}
 
 		// array for each loop confirmed
-		len.add(AFlag.SKIP);
-		arrGetInsn.add(AFlag.SKIP);
-		InstructionRemover.unbindInsn(mth, len);
+		incrInsn.getResult().add(AFlag.DONT_GENERATE);
+		condArg.add(AFlag.DONT_GENERATE);
+		bCondArg.add(AFlag.DONT_GENERATE);
+		arrGetInsn.add(AFlag.DONT_GENERATE);
 
 		// inline array variable
-		CodeShrinker.shrinkMethod(mth);
+		if (arrayArg.isRegister()) {
+			((RegisterArg) arrayArg).getSVar().removeUse((RegisterArg) arrGetInsn.getArg(0));
+		}
+		CodeShrinkVisitor.shrinkMethod(mth);
+		len.add(AFlag.DONT_GENERATE);
+
 		if (arrGetInsn.contains(AFlag.WRAPPED)) {
 			InsnArg wrapArg = BlockUtils.searchWrappedInsnParent(mth, arrGetInsn);
 			if (wrapArg != null && wrapArg.getParentInsn() != null) {
@@ -215,18 +239,15 @@ public class LoopRegionVisitor extends AbstractVisitor implements IRegionVisitor
 		if (sVar == null || sVar.isUsedInPhi()) {
 			return false;
 		}
-		List<RegisterArg> useList = sVar.getUseList();
+		List<RegisterArg> itUseList = sVar.getUseList();
 		InsnNode assignInsn = iteratorArg.getAssignInsn();
-		if (useList.size() != 2
-				|| assignInsn == null
-				|| !checkInvoke(assignInsn, null, "iterator()Ljava/util/Iterator;", 0)) {
+		if (itUseList.size() != 2 || !checkInvoke(assignInsn, null, "iterator()Ljava/util/Iterator;", 0)) {
 			return false;
 		}
 		InsnArg iterableArg = assignInsn.getArg(0);
-		InsnNode hasNextCall = useList.get(0).getParentInsn();
-		InsnNode nextCall = useList.get(1).getParentInsn();
-		if (hasNextCall == null || nextCall == null
-				|| !checkInvoke(hasNextCall, "java.util.Iterator", "hasNext()Z", 0)
+		InsnNode hasNextCall = itUseList.get(0).getParentInsn();
+		InsnNode nextCall = itUseList.get(1).getParentInsn();
+		if (!checkInvoke(hasNextCall, "java.util.Iterator", "hasNext()Z", 0)
 				|| !checkInvoke(nextCall, "java.util.Iterator", "next()Ljava/lang/Object;", 0)) {
 			return false;
 		}
@@ -235,6 +256,13 @@ public class LoopRegionVisitor extends AbstractVisitor implements IRegionVisitor
 		if (iterVar == null) {
 			return false;
 		}
+		if (!usedOnlyInLoop(mth, loopRegion, iterVar)) {
+			return false;
+		}
+		if (!assignOnlyInLoop(mth, loopRegion, iterVar)) {
+			return false;
+		}
+
 		if (nextCall.contains(AFlag.WRAPPED)) {
 			InsnArg wrapArg = BlockUtils.searchWrappedInsnParent(mth, nextCall);
 			if (wrapArg != null && wrapArg.getParentInsn() != null) {
@@ -265,9 +293,14 @@ public class LoopRegionVisitor extends AbstractVisitor implements IRegionVisitor
 			toSkip.add(nextCall);
 		}
 
-		assignInsn.add(AFlag.SKIP);
+		assignInsn.add(AFlag.DONT_GENERATE);
+		assignInsn.getResult().add(AFlag.DONT_GENERATE);
+
 		for (InsnNode insnNode : toSkip) {
-			insnNode.add(AFlag.SKIP);
+			insnNode.add(AFlag.DONT_GENERATE);
+		}
+		for (RegisterArg itArg : itUseList) {
+			itArg.add(AFlag.DONT_GENERATE);
 		}
 		loopRegion.setType(new ForEachLoop(iterVar, iterableArg));
 		return true;
@@ -289,24 +322,31 @@ public class LoopRegionVisitor extends AbstractVisitor implements IRegionVisitor
 				iterVar.setType(gType);
 				return true;
 			}
-			if (ArgType.isInstanceOf(mth.dex(), gType, varType)) {
+			if (ArgType.isInstanceOf(mth.root(), gType, varType)) {
 				return true;
 			}
 			ArgType wildcardType = gType.getWildcardType();
 			if (wildcardType != null
-					&& gType.getWildcardBounds() == 1
-					&& ArgType.isInstanceOf(mth.dex(), wildcardType, varType)) {
+					&& gType.getWildcardBound() == ArgType.WildcardBound.EXTENDS
+					&& ArgType.isInstanceOf(mth.root(), wildcardType, varType)) {
 				return true;
 			}
 			LOG.warn("Generic type differs: '{}' and '{}' in {}", gType, varType, mth);
 			return false;
 		}
-		if (!iterableArg.isRegister()) {
+		if (!iterableArg.isRegister() || !iterableType.isObject()) {
 			return true;
 		}
-		// TODO: add checks
-		iterableType = ArgType.generic(iterableType.getObject(), new ArgType[]{varType});
-		iterableArg.setType(iterableType);
+		ArgType genericType = ArgType.generic(iterableType.getObject(), varType);
+		if (iterableArg.isRegister()) {
+			ArgType immutableType = ((RegisterArg) iterableArg).getImmutableType();
+			if (immutableType != null && !immutableType.equals(genericType)) {
+				// can't change type
+				// allow to iterate over not generified collection only for Object vars
+				return varType.equals(ArgType.OBJECT);
+			}
+		}
+		iterableArg.setType(genericType);
 		return true;
 	}
 
@@ -314,6 +354,9 @@ public class LoopRegionVisitor extends AbstractVisitor implements IRegionVisitor
 	 * Check if instruction is a interface invoke with corresponding parameters.
 	 */
 	private static boolean checkInvoke(InsnNode insn, String declClsFullName, String mthId, int argsCount) {
+		if (insn == null) {
+			return false;
+		}
 		if (insn.getType() == InsnType.INVOKE) {
 			InvokeNode inv = (InvokeNode) insn;
 			MethodInfo callMth = inv.getCallMth();

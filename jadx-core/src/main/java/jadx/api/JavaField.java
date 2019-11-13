@@ -21,7 +21,7 @@ public final class JavaField implements JavaNode {
 
 	@Override
 	public String getFullName() {
-		return parent.getFullName() + "." + getName();
+		return parent.getFullName() + '.' + getName();
 	}
 
 	@Override
@@ -39,11 +39,15 @@ public final class JavaField implements JavaNode {
 	}
 
 	public ArgType getType() {
-		return field.getType();
+		return ArgType.tryToResolveClassAlias(field.dex(), field.getType());
 	}
 
 	public int getDecompiledLine() {
 		return field.getDecompiledLine();
+	}
+
+	FieldNode getFieldNode() {
+		return field;
 	}
 
 	@Override

@@ -5,6 +5,7 @@ import javax.swing.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.cli.LogHelper;
 import jadx.gui.settings.JadxSettings;
 import jadx.gui.settings.JadxSettingsAdapter;
 import jadx.gui.ui.MainWindow;
@@ -18,6 +19,7 @@ public class JadxGUI {
 		try {
 			LogCollector.register();
 			final JadxSettings settings = JadxSettingsAdapter.load();
+			settings.setLogLevel(LogHelper.LogLevelEnum.INFO);
 			// overwrite loaded settings by command line arguments
 			if (!settings.overrideProvided(args)) {
 				return;
@@ -26,7 +28,7 @@ public class JadxGUI {
 				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
 			}
 			NLS.setLocale(settings.getLangLocale());
-			SwingUtilities.invokeLater(new MainWindow(settings)::open);
+			SwingUtilities.invokeLater(new MainWindow(settings)::init);
 		} catch (Exception e) {
 			LOG.error("Error: {}", e.getMessage(), e);
 			System.exit(1);
@@ -46,4 +48,3 @@ public class JadxGUI {
 		return false;
 	}
 }
-

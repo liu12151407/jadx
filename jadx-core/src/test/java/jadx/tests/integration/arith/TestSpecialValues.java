@@ -1,12 +1,12 @@
 package jadx.tests.integration.arith;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
 import static jadx.tests.api.utils.JadxMatchers.containsOne;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestSpecialValues extends IntegrationTest {
 
@@ -49,11 +49,11 @@ public class TestSpecialValues extends IntegrationTest {
 		ClassNode cls = getClassNode(TestCls.class);
 		String code = cls.getCode().toString();
 
-		assertThat(code, containsOne("Float.NaN, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY, " +
-				"Float.MIN_VALUE, Float.MAX_VALUE, Float.MIN_NORMAL"));
+		assertThat(code, containsOne(
+				"Float.NaN, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY, Float.MIN_VALUE, Float.MAX_VALUE, Float.MIN_NORMAL"));
 
-		assertThat(code, containsOne("Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, " +
-				"Double.MIN_VALUE, Double.MAX_VALUE, Double.MIN_NORMAL"));
+		assertThat(code, containsOne("Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, "
+				+ "Double.MIN_VALUE, Double.MAX_VALUE, Double.MIN_NORMAL"));
 
 		assertThat(code, containsOne("Short.MIN_VALUE, Short.MAX_VALUE"));
 		assertThat(code, containsOne("Byte.MIN_VALUE, Byte.MAX_VALUE"));

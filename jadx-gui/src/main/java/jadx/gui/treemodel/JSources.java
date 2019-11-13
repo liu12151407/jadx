@@ -1,6 +1,5 @@
 package jadx.gui.treemodel;
 
-import javax.swing.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -10,15 +9,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import javax.swing.*;
+
 import jadx.api.JavaPackage;
 import jadx.gui.JadxWrapper;
 import jadx.gui.utils.NLS;
-import jadx.gui.utils.Utils;
+import jadx.gui.utils.UiUtils;
 
 public class JSources extends JNode {
 	private static final long serialVersionUID = 8962924556824862801L;
 
-	private static final ImageIcon ROOT_ICON = Utils.openIcon("packagefolder_obj");
+	private static final ImageIcon ROOT_ICON = UiUtils.openIcon("packagefolder_obj");
 
 	private final transient JadxWrapper wrapper;
 	private final transient boolean flatPackages;
@@ -33,7 +34,7 @@ public class JSources extends JNode {
 		removeAllChildren();
 		if (flatPackages) {
 			for (JavaPackage pkg : wrapper.getPackages()) {
-				add(new JPackage(pkg));
+				add(new JPackage(pkg, wrapper));
 			}
 		} else {
 			// build packages hierarchy
@@ -54,7 +55,7 @@ public class JSources extends JNode {
 	List<JPackage> getHierarchyPackages(List<JavaPackage> packages) {
 		Map<String, JPackage> pkgMap = new HashMap<>();
 		for (JavaPackage pkg : packages) {
-			addPackage(pkgMap, new JPackage(pkg));
+			addPackage(pkgMap, new JPackage(pkg, wrapper));
 		}
 		// merge packages without classes
 		boolean repeat;
@@ -66,7 +67,7 @@ public class JSources extends JNode {
 					pkg.getInnerPackages().clear();
 					pkg.getInnerPackages().addAll(innerPkg.getInnerPackages());
 					pkg.getClasses().addAll(innerPkg.getClasses());
-					pkg.setName(pkg.getName() + "." + innerPkg.getName());
+					pkg.setName(pkg.getName() + '.' + innerPkg.getName());
 
 					innerPkg.getInnerPackages().clear();
 					innerPkg.getClasses().clear();
@@ -78,14 +79,14 @@ public class JSources extends JNode {
 		} while (repeat);
 
 		// remove empty packages
-		for (Iterator<Map.Entry<String, JPackage>> it = pkgMap.entrySet().iterator(); it.hasNext(); ) {
+		for (Iterator<Map.Entry<String, JPackage>> it = pkgMap.entrySet().iterator(); it.hasNext();) {
 			JPackage pkg = it.next().getValue();
 			if (pkg.getInnerPackages().isEmpty() && pkg.getClasses().isEmpty()) {
 				it.remove();
 			}
 		}
 		// use identity set for collect inner packages
-		Set<JPackage> innerPackages = Collections.newSetFromMap(new IdentityHashMap<JPackage, Boolean>());
+		Set<JPackage> innerPackages = Collections.newSetFromMap(new IdentityHashMap<>());
 		for (JPackage pkg : pkgMap.values()) {
 			innerPackages.addAll(pkg.getInnerPackages());
 		}
@@ -114,7 +115,7 @@ public class JSources extends JNode {
 			pkg.setName(shortName);
 			JPackage prevPkg = pkgs.get(prevPart);
 			if (prevPkg == null) {
-				prevPkg = new JPackage(prevPart);
+				prevPkg = new JPackage(prevPart, wrapper);
 				addPackage(pkgs, prevPkg);
 			}
 			prevPkg.getInnerPackages().add(pkg);

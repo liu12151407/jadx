@@ -3,18 +3,26 @@ package jadx.core.utils;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
+
+import org.jetbrains.annotations.Nullable;
 
 import jadx.api.JadxDecompiler;
 import jadx.core.codegen.CodeWriter;
+import jadx.core.dex.visitors.DepthTraversal;
 
 public class Utils {
 
-	public static final String JADX_API_PACKAGE = JadxDecompiler.class.getPackage().getName();
+	private static final String JADX_API_PACKAGE = JadxDecompiler.class.getPackage().getName();
+	private static final String STACKTRACE_STOP_CLS_NAME = DepthTraversal.class.getName();
 
 	private Utils() {
 	}
@@ -39,8 +47,16 @@ public class Utils {
 		if (objects == null) {
 			return "";
 		}
+		return listToString(objects, joiner, Object::toString);
+	}
+
+	public static <T> String listToString(Iterable<T> objects, Function<T, String> toStr) {
+		return listToString(objects, ", ", toStr);
+	}
+
+	public static <T> String listToString(Iterable<T> objects, String joiner, Function<T, String> toStr) {
 		StringBuilder sb = new StringBuilder();
-		listToString(sb, objects, joiner, Object::toString);
+		listToString(sb, objects, joiner, toStr);
 		return sb.toString();
 	}
 
@@ -57,16 +73,15 @@ public class Utils {
 		}
 	}
 
-	public static String arrayToString(Object[] array) {
-		if (array == null) {
+	public static <T> String arrayToStr(T[] arr) {
+		int len = arr == null ? 0 : arr.length;
+		if (len == 0) {
 			return "";
 		}
 		StringBuilder sb = new StringBuilder();
-		for (int i = 0; i < array.length; i++) {
-			if (i != 0) {
-				sb.append(", ");
-			}
-			sb.append(array[i]);
+		sb.append(arr[0]);
+		for (int i = 1; i < len; i++) {
+			sb.append(", ").append(arr[i]);
 		}
 		return sb.toString();
 	}
@@ -127,23 +142,43 @@ public class Utils {
 
 	private static void filter(Throwable th) {
 		StackTraceElement[] stackTrace = th.getStackTrace();
-		int cutIndex = -1;
 		int length = stackTrace.length;
 		for (int i = 0; i < length; i++) {
 			StackTraceElement stackTraceElement = stackTrace[i];
-			if (stackTraceElement.getClassName().startsWith(JADX_API_PACKAGE)) {
-				cutIndex = i;
-			} else if (cutIndex > 0) {
-				cutIndex = i;
-				break;
+			String clsName = stackTraceElement.getClassName();
+			if (clsName.equals(STACKTRACE_STOP_CLS_NAME)
+					|| clsName.startsWith(JADX_API_PACKAGE)) {
+				th.setStackTrace(Arrays.copyOfRange(stackTrace, 0, i));
+				return;
 			}
-		}
-		if (cutIndex > 0 && cutIndex < length) {
-			th.setStackTrace(Arrays.copyOfRange(stackTrace, 0, cutIndex));
 		}
 	}
 
-	@SuppressWarnings("unchecked")
+	public static <T, R> List<R> collectionMap(Collection<T> list, Function<T, R> mapFunc) {
+		if (list == null || list.isEmpty()) {
+			return Collections.emptyList();
+		}
+		List<R> result = new ArrayList<>(list.size());
+		for (T t : list) {
+			result.add(mapFunc.apply(t));
+		}
+		return result;
+	}
+
+	public static <T> int indexInList(List<T> list, T element) {
+		if (list == null || list.isEmpty()) {
+			return -1;
+		}
+		int size = list.size();
+		for (int i = 0; i < size; i++) {
+			T t = list.get(i);
+			if (t == element) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
 	public static <T> List<T> lockList(List<T> list) {
 		if (list.isEmpty()) {
 			return Collections.emptyList();
@@ -152,5 +187,36 @@ public class Utils {
 			return Collections.singletonList(list.get(0));
 		}
 		return new ImmutableList<>(list);
+	}
+
+	public static Map<String, String> newConstStringMap(String... parameters) {
+		int len = parameters.length;
+		if (len == 0) {
+			return Collections.emptyMap();
+		}
+		if (len % 2 != 0) {
+			throw new IllegalArgumentException("Incorrect arguments count: " + len);
+		}
+		Map<String, String> result = new HashMap<>(len / 2);
+		for (int i = 0; i < len - 1; i += 2) {
+			result.put(parameters[i], parameters[i + 1]);
+		}
+		return Collections.unmodifiableMap(result);
+	}
+
+	@Nullable
+	public static <T> T getOne(@Nullable List<T> list) {
+		if (list == null || list.size() != 1) {
+			return null;
+		}
+		return list.get(0);
+	}
+
+	@Nullable
+	public static <T> T last(List<T> list) {
+		if (list.isEmpty()) {
+			return null;
+		}
+		return list.get(list.size() - 1);
 	}
 }

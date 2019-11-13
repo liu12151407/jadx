@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.PrintWriter;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -13,12 +12,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.api.CodePosition;
+import jadx.api.ICodeInfo;
 import jadx.core.dex.attributes.nodes.LineAttrNode;
 import jadx.core.utils.StringUtils;
 import jadx.core.utils.files.FileUtils;
 import jadx.core.utils.files.ZipSecurity;
 
-public class CodeWriter {
+public class CodeWriter implements ICodeInfo {
 	private static final Logger LOG = LoggerFactory.getLogger(CodeWriter.class);
 
 	public static final String NL = System.getProperty("line.separator");
@@ -35,7 +35,9 @@ public class CodeWriter {
 			INDENT_STR + INDENT_STR + INDENT_STR + INDENT_STR + INDENT_STR,
 	};
 
-	private StringBuilder buf = new StringBuilder();
+	public static final CodeWriter EMPTY = new CodeWriter().finish();
+
+	private StringBuilder buf;
 	@Nullable
 	private String code;
 	private String indentStr;
@@ -47,11 +49,19 @@ public class CodeWriter {
 	private Map<Integer, Integer> lineMap = Collections.emptyMap();
 
 	public CodeWriter() {
+		this.buf = new StringBuilder();
 		this.indent = 0;
 		this.indentStr = "";
 		if (ADD_LINE_NUMBERS) {
-			incIndent(2);
+			incIndent(3);
+			add(indentStr);
 		}
+	}
+
+	// create filled instance (just string wrapper)
+	public CodeWriter(String code) {
+		this.buf = null;
+		this.code = code;
 	}
 
 	public CodeWriter startLine() {
@@ -95,10 +105,12 @@ public class CodeWriter {
 	}
 
 	public CodeWriter addMultiLine(String str) {
-		buf.append(str);
 		if (str.contains(NL)) {
+			buf.append(str.replace(NL, NL + indentStr));
 			line += StringUtils.countMatches(str, NL);
 			offset = 0;
+		} else {
+			buf.append(str);
 		}
 		return this;
 	}
@@ -221,6 +233,10 @@ public class CodeWriter {
 		attachAnnotation(obj, new CodePosition(line, offset + 1));
 	}
 
+	public void attachLineAnnotation(Object obj) {
+		attachAnnotation(obj, new CodePosition(line, 0));
+	}
+
 	private Object attachAnnotation(Object obj, CodePosition pos) {
 		if (annotations.isEmpty()) {
 			annotations = new HashMap<>();
@@ -228,6 +244,7 @@ public class CodeWriter {
 		return annotations.put(pos, obj);
 	}
 
+	@Override
 	public Map<CodePosition, Object> getAnnotations() {
 		return annotations;
 	}
@@ -246,31 +263,32 @@ public class CodeWriter {
 		lineMap.put(decompiledLine, sourceLine);
 	}
 
+	@Override
 	public Map<Integer, Integer> getLineMapping() {
 		return lineMap;
 	}
 
-	public void finish() {
+	public CodeWriter finish() {
 		removeFirstEmptyLine();
 		buf.trimToSize();
 		code = buf.toString();
 		buf = null;
 
-		Iterator<Map.Entry<CodePosition, Object>> it = annotations.entrySet().iterator();
-		while (it.hasNext()) {
-			Map.Entry<CodePosition, Object> entry = it.next();
+		annotations.entrySet().removeIf(entry -> {
 			Object v = entry.getValue();
 			if (v instanceof DefinitionWrapper) {
 				LineAttrNode l = ((DefinitionWrapper) v).getNode();
 				l.setDecompiledLine(entry.getKey().getLine());
-				it.remove();
+				return true;
 			}
-		}
+			return false;
+		});
+		return this;
 	}
 
 	private void removeFirstEmptyLine() {
 		int len = NL.length();
-		if (buf.substring(0, len).equals(NL)) {
+		if (buf.length() > len && buf.substring(0, len).equals(NL)) {
 			buf.delete(0, len);
 		}
 	}
@@ -279,7 +297,11 @@ public class CodeWriter {
 		return buf.length();
 	}
 
+	@Override
 	public String getCodeStr() {
+		if (code == null) {
+			throw new NullPointerException("Code not set");
+		}
 		return code;
 	}
 

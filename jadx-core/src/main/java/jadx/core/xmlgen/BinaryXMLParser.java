@@ -15,23 +15,23 @@ import org.slf4j.LoggerFactory;
 import jadx.api.ResourcesLoader;
 import jadx.core.codegen.CodeWriter;
 import jadx.core.dex.info.ConstStorage;
-import jadx.core.dex.instructions.args.ArgType;
-import jadx.core.dex.nodes.FieldNode;
+import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.RootNode;
 import jadx.core.utils.StringUtils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.core.xmlgen.entry.ValuesParser;
 
-/* TODO:
-	Don't die when error occurs
-	Check error cases, maybe checked const values are not always the same
-	Better error messages
-	What to do, when Binary XML Manifest is > size(int)?
-	Check for missing chunk size types
-	Implement missing data types
-	Use line numbers to recreate EXACT AndroidManifest
-	Check Element chunk size
-*/
+/*
+ * TODO:
+ * Don't die when error occurs
+ * Check error cases, maybe checked const values are not always the same
+ * Better error messages
+ * What to do, when Binary XML Manifest is > size(int)?
+ * Check for missing chunk size types
+ * Implement missing data types
+ * Use line numbers to recreate EXACT AndroidManifest
+ * Check Element chunk size
+ */
 
 public class BinaryXMLParser extends CommonBinaryParser {
 
@@ -40,7 +40,6 @@ public class BinaryXMLParser extends CommonBinaryParser {
 	private static final boolean ATTR_NEW_LINE = false;
 
 	private final Map<Integer, String> styleMap = new HashMap<>();
-	private final Map<Integer, FieldNode> localStyleMap = new HashMap<>();
 	private final Map<Integer, String> resNames;
 	private final Map<String, String> nsMap = new HashMap<>();
 	private Set<String> nsMapGenerated;
@@ -63,16 +62,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 		this.rootNode = rootNode;
 		try {
 			readAndroidRStyleClass();
-			// add application constants
 			ConstStorage constStorage = rootNode.getConstValues();
-			Map<Object, FieldNode> constFields = constStorage.getGlobalConstFields();
-			for (Map.Entry<Object, FieldNode> entry : constFields.entrySet()) {
-				Object key = entry.getKey();
-				FieldNode field = entry.getValue();
-				if (field.getType().equals(ArgType.INT) && key instanceof Integer) {
-					localStyleMap.put((Integer) key, field);
-				}
-			}
 			resNames = constStorage.getResourcesNames();
 		} catch (Exception e) {
 			throw new JadxRuntimeException("BinaryXMLParser init error", e);
@@ -85,8 +75,8 @@ public class BinaryXMLParser extends CommonBinaryParser {
 			for (Field f : rStyleCls.getFields()) {
 				styleMap.put(f.getInt(f.getType()), f.getName());
 			}
-		} catch (Exception th) {
-			LOG.error("Android R class loading failed", th);
+		} catch (Exception e) {
+			LOG.error("Android R class loading failed", e);
 		}
 	}
 
@@ -125,7 +115,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 					break;
 				case RES_STRING_POOL_TYPE:
 					strings = parseStringPoolNoType();
-					valuesParser = new ValuesParser(strings, resNames);
+					valuesParser = new ValuesParser(rootNode, strings, resNames);
 					break;
 				case RES_XML_RESOURCE_MAP_TYPE:
 					parseResourceMap();
@@ -221,7 +211,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 		String str = getString(strIndex);
 		if (!isLastEnd) {
 			isLastEnd = true;
-			writer.add(">");
+			writer.add('>');
 		}
 		writer.attachSourceLine(lineNumber);
 		String escapedStr = StringUtils.escapeXML(str);
@@ -247,13 +237,13 @@ public class BinaryXMLParser extends CommonBinaryParser {
 		int startNS = is.readInt32();
 		int startNSName = is.readInt32(); // actually is elementName...
 		if (!isLastEnd && !"ERROR".equals(currentTag)) {
-			writer.add(">");
+			writer.add('>');
 		}
 		isOneLine = true;
 		isLastEnd = false;
 		currentTag = deobfClassName(getString(startNSName));
 		currentTag = getValidTagAttributeName(currentTag);
-		writer.startLine("<").add(currentTag);
+		writer.startLine('<').add(currentTag);
 		writer.attachSourceLine(elementBegLineNumber);
 		int attributeStart = is.readInt16();
 		if (attributeStart != 0x14) {
@@ -275,7 +265,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 					writer.add(':');
 					writer.add(nsValue);
 				}
-				writer.add("=\"").add(StringUtils.escapeXML(entry.getKey())).add("\"");
+				writer.add("=\"").add(StringUtils.escapeXML(entry.getKey())).add('"');
 			}
 		}
 		boolean attrNewLine = attributeCount != 1 && ATTR_NEW_LINE;
@@ -316,6 +306,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 			if (isDeobfCandidateAttr(shortNsName, attrName)) {
 				decodedAttr = deobfClassName(decodedAttr);
 			}
+			attachClassNode(writer, attrName, decodedAttr);
 			writer.add(StringUtils.escapeXML(decodedAttr));
 		} else {
 			decodeAttribute(attributeNS, attrValDataType, attrValData,
@@ -341,7 +332,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 	}
 
 	private String generateNameForNS(String attrUrl) {
-		for (int i = 1; ; i++) {
+		for (int i = 1;; i++) {
 			String attrName = "ns" + i;
 			if (!nsMap.containsValue(attrName) && !nsMapGenerated.contains(attrName)) {
 				nsMapGenerated.add(attrName);
@@ -380,39 +371,28 @@ public class BinaryXMLParser extends CommonBinaryParser {
 	}
 
 	private void decodeAttribute(int attributeNS, int attrValDataType, int attrValData,
-	                             String shortNsName, String attrName) {
-
+			String shortNsName, String attrName) {
 		if (attrValDataType == TYPE_REFERENCE) {
 			// reference custom processing
 			String name = styleMap.get(attrValData);
 			if (name != null) {
-				writer.add("@style/").add(name.replaceAll("_", "."));
+				writer.add("@style/").add(name.replace('_', '.'));
 			} else {
-				FieldNode field = localStyleMap.get(attrValData);
-				if (field != null) {
-					String cls = field.getParentClass().getShortName().toLowerCase();
-					writer.add("@");
-					if ("id".equals(cls)) {
+				String resName = resNames.get(attrValData);
+				if (resName != null) {
+					writer.add('@');
+					if (resName.startsWith("id/")) {
 						writer.add('+');
 					}
-					writer.add(cls).add("/").add(field.getName());
+					writer.add(resName);
 				} else {
-					String resName = resNames.get(attrValData);
+					resName = ValuesParser.getAndroidResMap().get(attrValData);
 					if (resName != null) {
-						writer.add("@");
-						if (resName.startsWith("id/")) {
-							writer.add("+");
-						}
-						writer.add(resName);
+						writer.add("@android:").add(resName);
+					} else if (attrValData == 0) {
+						writer.add("@null");
 					} else {
-						resName = ValuesParser.getAndroidResMap().get(attrValData);
-						if (resName != null) {
-							writer.add("@android:").add(resName);
-						} else if (attrValData == 0) {
-							writer.add("@null");
-						} else {
-							writer.add("0x").add(Integer.toHexString(attrValData));
-						}
+						writer.add("0x").add(Integer.toHexString(attrValData));
 					}
 				}
 			}
@@ -422,6 +402,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 			if (isDeobfCandidateAttr(shortNsName, attrName)) {
 				str = deobfClassName(str);
 			}
+			attachClassNode(writer, attrName, str);
 			writer.add(str != null ? StringUtils.escapeXML(str) : "null");
 		}
 	}
@@ -444,10 +425,10 @@ public class BinaryXMLParser extends CommonBinaryParser {
 		} else {
 			writer.startLine("</");
 			writer.attachSourceLine(endLineNumber);
-//			if (elementNS != -1) {
-//				writer.add(getString(elementNS)).add(':');
-//			}
-			writer.add(elemName).add(">");
+			// if (elementNS != -1) {
+			// writer.add(getString(elementNS)).add(':');
+			// }
+			writer.add(elemName).add('>');
 		}
 		isLastEnd = true;
 		if (writer.getIndent() != 0) {
@@ -465,8 +446,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 		String generated;
 		do {
 			generated = generateTagAttrName();
-		}
-		while (tagAttrDeobfNames.containsValue(generated));
+		} while (tagAttrDeobfNames.containsValue(generated));
 		tagAttrDeobfNames.put(originalName, generated);
 		return generated;
 	}
@@ -481,9 +461,24 @@ public class BinaryXMLParser extends CommonBinaryParser {
 		return sb.toString();
 	}
 
+	private void attachClassNode(CodeWriter writer, String attrName, String clsName) {
+		if (clsName == null || !attrName.equals("name")) {
+			return;
+		}
+		String clsFullName;
+		if (clsName.startsWith(".")) {
+			clsFullName = appPackageName + clsName;
+		} else {
+			clsFullName = clsName;
+		}
+		ClassNode classNode = rootNode.searchClassByFullAlias(clsFullName);
+		if (classNode != null) {
+			writer.attachAnnotation(classNode);
+		}
+	}
+
 	private String deobfClassName(String className) {
-		String newName = XmlDeobf.deobfClassName(rootNode, className,
-				appPackageName);
+		String newName = XmlDeobf.deobfClassName(rootNode, className, appPackageName);
 		if (newName != null) {
 			return newName;
 		}
@@ -493,7 +488,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 	private boolean isDeobfCandidateAttr(String shortNsName, String attrName) {
 		String fullName;
 		if (shortNsName != null) {
-			fullName = shortNsName + ":" + attrName;
+			fullName = shortNsName + ':' + attrName;
 		} else {
 			return false;
 		}

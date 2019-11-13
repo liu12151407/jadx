@@ -11,19 +11,19 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.core.Jadx;
-import jadx.core.ProcessClass;
-import jadx.core.codegen.CodeGen;
 import jadx.core.dex.attributes.AFlag;
+import jadx.core.dex.attributes.nodes.LineAttrNode;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.nodes.RootNode;
-import jadx.core.dex.visitors.IDexTreeVisitor;
 import jadx.core.dex.visitors.SaveCode;
 import jadx.core.export.ExportGradleProject;
 import jadx.core.utils.exceptions.JadxRuntimeException;
@@ -33,7 +33,9 @@ import jadx.core.xmlgen.ResourcesSaver;
 
 /**
  * Jadx API usage example:
- * <pre><code>
+ *
+ * <pre>
+ * <code>
  * JadxArgs args = new JadxArgs();
  * args.getInputFiles().add(new File("test.apk"));
  * args.setOutDir(new File("jadx-test-output"));
@@ -41,26 +43,26 @@ import jadx.core.xmlgen.ResourcesSaver;
  * JadxDecompiler jadx = new JadxDecompiler(args);
  * jadx.load();
  * jadx.save();
- * </code></pre>
+ * </code>
+ * </pre>
  * <p>
  * Instead of 'save()' you can iterate over decompiled classes:
- * <pre><code>
+ *
+ * <pre>
+ * <code>
  *  for(JavaClass cls : jadx.getClasses()) {
  *      System.out.println(cls.getCode());
  *  }
- * </code></pre>
+ * </code>
+ * </pre>
  */
 public final class JadxDecompiler {
 	private static final Logger LOG = LoggerFactory.getLogger(JadxDecompiler.class);
 
 	private JadxArgs args;
-
-	private final List<InputFile> inputFiles = new ArrayList<>();
+	private List<InputFile> inputFiles;
 
 	private RootNode root;
-	private List<IDexTreeVisitor> passes;
-	private CodeGen codeGen;
-
 	private List<JavaClass> classes;
 	private List<ResourceFile> resources;
 
@@ -81,50 +83,45 @@ public final class JadxDecompiler {
 	public void load() {
 		reset();
 		JadxArgsValidator.validate(args);
-		init();
 		LOG.info("loading ...");
 
-		loadFiles(args.getInputFiles());
+		inputFiles = loadFiles(args.getInputFiles());
 
 		root = new RootNode(args);
 		root.load(inputFiles);
-
 		root.initClassPath();
 		root.loadResources(getResources());
-
-		initVisitors();
+		root.initPasses();
 	}
 
-	void init() {
-		this.passes = Jadx.getPassesList(args);
-		this.codeGen = new CodeGen();
-	}
-
-	void reset() {
+	private void reset() {
+		root = null;
 		classes = null;
 		resources = null;
 		xmlParser = null;
-		root = null;
-		passes = null;
-		codeGen = null;
+
+		classesMap.clear();
+		methodsMap.clear();
+		fieldsMap.clear();
 	}
 
 	public static String getVersion() {
 		return Jadx.getVersion();
 	}
 
-	private void loadFiles(List<File> files) {
+	private List<InputFile> loadFiles(List<File> files) {
 		if (files.isEmpty()) {
 			throw new JadxRuntimeException("Empty file list");
 		}
-		inputFiles.clear();
+		List<InputFile> filesList = new ArrayList<>();
 		for (File file : files) {
 			try {
-				InputFile.addFilesFrom(file, inputFiles, args.isSkipSources());
+				InputFile.addFilesFrom(file, filesList, args.isSkipSources());
 			} catch (Exception e) {
 				throw new JadxRuntimeException("Error load file: " + file, e);
 			}
 		}
+		return filesList;
 	}
 
 	public void save() {
@@ -191,14 +188,18 @@ public final class JadxDecompiler {
 	}
 
 	private void appendSourcesSave(ExecutorService executor, File outDir) {
+		final Predicate<String> classFilter = args.getClassFilter();
 		for (JavaClass cls : getClasses()) {
 			if (cls.getClassNode().contains(AFlag.DONT_GENERATE)) {
 				continue;
 			}
+			if (classFilter != null && !classFilter.test(cls.getFullName())) {
+				continue;
+			}
 			executor.execute(() -> {
 				try {
-					cls.decompile();
-					SaveCode.save(outDir, args, cls.getClassNode());
+					ICodeInfo code = cls.getCodeInfo();
+					SaveCode.save(outDir, cls.getClassNode(), code);
 				} catch (Exception e) {
 					LOG.error("Error saving class: {}", cls.getFullName(), e);
 				}
@@ -215,9 +216,11 @@ public final class JadxDecompiler {
 			List<JavaClass> clsList = new ArrayList<>(classNodeList.size());
 			classesMap.clear();
 			for (ClassNode classNode : classNodeList) {
-				JavaClass javaClass = new JavaClass(classNode, this);
-				clsList.add(javaClass);
-				classesMap.put(classNode, javaClass);
+				if (!classNode.contains(AFlag.DONT_GENERATE)) {
+					JavaClass javaClass = new JavaClass(classNode, this);
+					clsList.add(javaClass);
+					classesMap.put(classNode, javaClass);
+				}
 			}
 			classes = Collections.unmodifiableList(clsList);
 		}
@@ -251,7 +254,7 @@ public final class JadxDecompiler {
 		}
 		Collections.sort(packages);
 		for (JavaPackage pkg : packages) {
-			pkg.getClasses().sort(Comparator.comparing(JavaClass::getName));
+			pkg.getClasses().sort(Comparator.comparing(JavaClass::getName, String.CASE_INSENSITIVE_ORDER));
 		}
 		return Collections.unmodifiableList(packages);
 	}
@@ -278,20 +281,6 @@ public final class JadxDecompiler {
 		root.getErrorsCounter().printReport();
 	}
 
-	private void initVisitors() {
-		for (IDexTreeVisitor pass : passes) {
-			try {
-				pass.init(root);
-			} catch (Exception e) {
-				LOG.error("Visitor init failed: {}", pass.getClass().getSimpleName(), e);
-			}
-		}
-	}
-
-	void processClass(ClassNode cls) {
-		ProcessClass.process(cls, passes, codeGen);
-	}
-
 	RootNode getRoot() {
 		return root;
 	}
@@ -303,44 +292,133 @@ public final class JadxDecompiler {
 		return xmlParser;
 	}
 
-	Map<ClassNode, JavaClass> getClassesMap() {
-		return classesMap;
+	private void loadJavaClass(JavaClass javaClass) {
+		javaClass.getMethods().forEach(mth -> methodsMap.put(mth.getMethodNode(), mth));
+		javaClass.getFields().forEach(fld -> fieldsMap.put(fld.getFieldNode(), fld));
+
+		for (JavaClass innerCls : javaClass.getInnerClasses()) {
+			classesMap.put(innerCls.getClassNode(), innerCls);
+			loadJavaClass(innerCls);
+		}
 	}
 
-	Map<MethodNode, JavaMethod> getMethodsMap() {
-		return methodsMap;
+	@Nullable("For not generated classes")
+	private JavaClass getJavaClassByNode(ClassNode cls) {
+		JavaClass javaClass = classesMap.get(cls);
+		if (javaClass != null) {
+			return javaClass;
+		}
+		// load parent class if inner
+		ClassNode parentClass = cls.getTopParentClass();
+		if (parentClass.contains(AFlag.DONT_GENERATE)) {
+			return null;
+		}
+		if (parentClass != cls) {
+			JavaClass parentJavaClass = classesMap.get(parentClass);
+			if (parentJavaClass == null) {
+				getClasses();
+				parentJavaClass = classesMap.get(parentClass);
+			}
+			loadJavaClass(parentJavaClass);
+			javaClass = classesMap.get(cls);
+			if (javaClass != null) {
+				return javaClass;
+			}
+		}
+		// class or parent classes can be excluded from generation
+		if (cls.hasNotGeneratedParent()) {
+			return null;
+		}
+		throw new JadxRuntimeException("JavaClass not found by ClassNode: " + cls);
 	}
 
-	JavaMethod getJavaMethodByNode(MethodNode mth) {
+	@Nullable
+	private JavaMethod getJavaMethodByNode(MethodNode mth) {
 		JavaMethod javaMethod = methodsMap.get(mth);
 		if (javaMethod != null) {
 			return javaMethod;
 		}
 		// parent class not loaded yet
-		JavaClass javaClass = classesMap.get(mth.getParentClass());
-		if (javaClass != null) {
-			javaClass.decompile();
-			return methodsMap.get(mth);
+		JavaClass javaClass = getJavaClassByNode(mth.getParentClass().getTopParentClass());
+		if (javaClass == null) {
+			return null;
 		}
-		return null;
+		loadJavaClass(javaClass);
+		javaMethod = methodsMap.get(mth);
+		if (javaMethod != null) {
+			return javaMethod;
+		}
+		if (mth.getParentClass().hasNotGeneratedParent()) {
+			return null;
+		}
+		throw new JadxRuntimeException("JavaMethod not found by MethodNode: " + mth);
 	}
 
-	Map<FieldNode, JavaField> getFieldsMap() {
-		return fieldsMap;
-	}
-
-	JavaField getJavaFieldByNode(FieldNode fld) {
+	@Nullable
+	private JavaField getJavaFieldByNode(FieldNode fld) {
 		JavaField javaField = fieldsMap.get(fld);
 		if (javaField != null) {
 			return javaField;
 		}
 		// parent class not loaded yet
-		JavaClass javaClass = classesMap.get(fld.getParentClass());
-		if (javaClass != null) {
-			javaClass.decompile();
-			return fieldsMap.get(fld);
+		JavaClass javaClass = getJavaClassByNode(fld.getParentClass().getTopParentClass());
+		if (javaClass == null) {
+			return null;
 		}
-		return null;
+		loadJavaClass(javaClass);
+		javaField = fieldsMap.get(fld);
+		if (javaField != null) {
+			return javaField;
+		}
+		if (fld.getParentClass().hasNotGeneratedParent()) {
+			return null;
+		}
+		throw new JadxRuntimeException("JavaField not found by FieldNode: " + fld);
+	}
+
+	@Nullable
+	JavaNode convertNode(Object obj) {
+		if (!(obj instanceof LineAttrNode)) {
+			return null;
+		}
+		LineAttrNode node = (LineAttrNode) obj;
+		if (node.contains(AFlag.DONT_GENERATE)) {
+			return null;
+		}
+		if (obj instanceof ClassNode) {
+			return getJavaClassByNode((ClassNode) obj);
+		}
+		if (obj instanceof MethodNode) {
+			return getJavaMethodByNode(((MethodNode) obj));
+		}
+		if (obj instanceof FieldNode) {
+			return getJavaFieldByNode((FieldNode) obj);
+		}
+		throw new JadxRuntimeException("Unexpected node type: " + obj);
+	}
+
+	@Nullable
+	public JavaNode getJavaNodeAtPosition(ICodeInfo codeInfo, int line, int offset) {
+		Map<CodePosition, Object> map = codeInfo.getAnnotations();
+		if (map.isEmpty()) {
+			return null;
+		}
+		Object obj = map.get(new CodePosition(line, offset));
+		if (obj == null) {
+			return null;
+		}
+		return convertNode(obj);
+	}
+
+	@Nullable
+	public CodePosition getDefinitionPosition(JavaNode javaNode) {
+		JavaClass jCls = javaNode.getTopParentClass();
+		jCls.decompile();
+		int defLine = javaNode.getDecompiledLine();
+		if (defLine == 0) {
+			return null;
+		}
+		return new CodePosition(jCls, defLine, 0);
 	}
 
 	public JadxArgs getArgs() {

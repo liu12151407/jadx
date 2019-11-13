@@ -4,17 +4,17 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.android.dex.ClassData.Method;
 import com.android.dex.Code;
 import com.android.dex.Code.CatchHandler;
 import com.android.dex.Code.Try;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
@@ -28,12 +28,12 @@ import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.instructions.GotoNode;
 import jadx.core.dex.instructions.IfNode;
 import jadx.core.dex.instructions.InsnDecoder;
+import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.SwitchNode;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.args.SSAVar;
-import jadx.core.dex.instructions.args.TypeImmutableArg;
 import jadx.core.dex.nodes.parser.SignatureParser;
 import jadx.core.dex.regions.Region;
 import jadx.core.dex.trycatch.ExcHandlerAttr;
@@ -46,34 +46,39 @@ import jadx.core.utils.exceptions.JadxRuntimeException;
 
 import static jadx.core.utils.Utils.lockList;
 
-public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
+public class MethodNode extends LineAttrNode implements ILoadable, ICodeNode {
 	private static final Logger LOG = LoggerFactory.getLogger(MethodNode.class);
 
 	private final MethodInfo mthInfo;
 	private final ClassNode parentClass;
-	private final AccessInfo accFlags;
+	private AccessInfo accFlags;
 
 	private final Method methodData;
+	private final boolean methodIsVirtual;
+
+	private boolean noCode;
 	private int regsCount;
-	private InsnNode[] instructions;
 	private int codeSize;
 	private int debugInfoOffset;
-	private boolean noCode;
-	private boolean methodIsVirtual;
 
+	private boolean loaded;
+
+	// additional info available after load, keep on unload
 	private ArgType retType;
+	private List<ArgType> argTypes;
+	private List<GenericInfo> generics;
+
+	// decompilation data, reset on unload
 	private RegisterArg thisArg;
 	private List<RegisterArg> argsList;
-	private List<SSAVar> sVars = Collections.emptyList();
-	private Map<ArgType, List<ArgType>> genericMap;
-
+	private InsnNode[] instructions;
 	private List<BlockNode> blocks;
 	private BlockNode enterBlock;
 	private List<BlockNode> exitBlocks;
-
+	private List<SSAVar> sVars;
+	private List<ExceptionHandler> exceptionHandlers;
+	private List<LoopInfo> loops;
 	private Region region;
-	private List<ExceptionHandler> exceptionHandlers = Collections.emptyList();
-	private List<LoopInfo> loops = Collections.emptyList();
 
 	public MethodNode(ClassNode classNode, Method mthData, boolean isVirtual) {
 		this.mthInfo = MethodInfo.fromDex(classNode.dex(), mthData.getMethodIndex());
@@ -82,34 +87,62 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 		this.noCode = mthData.getCodeOffset() == 0;
 		this.methodData = noCode ? null : mthData;
 		this.methodIsVirtual = isVirtual;
+		unload();
+	}
+
+	@Override
+	public void unload() {
+		loaded = false;
+		if (noCode) {
+			return;
+		}
+		// don't unload retType, argTypes, generics
+		thisArg = null;
+		argsList = null;
+		sVars = Collections.emptyList();
+		instructions = null;
+		blocks = null;
+		enterBlock = null;
+		exitBlocks = null;
+		region = null;
+		exceptionHandlers = Collections.emptyList();
+		loops = Collections.emptyList();
+		unloadAttributes();
 	}
 
 	@Override
 	public void load() throws DecodeException {
+		if (loaded) {
+			// method already loaded
+			return;
+		}
 		try {
+			loaded = true;
 			if (noCode) {
 				regsCount = 0;
 				codeSize = 0;
-				initMethodTypes();
+				// TODO: registers not needed without code
+				initArguments(this.argTypes);
 				return;
 			}
 
 			DexNode dex = parentClass.dex();
 			Code mthCode = dex.readCode(methodData);
-			regsCount = mthCode.getRegistersSize();
-			initMethodTypes();
+			this.regsCount = mthCode.getRegistersSize();
+			initArguments(this.argTypes);
 
 			InsnDecoder decoder = new InsnDecoder(this);
 			decoder.decodeInsns(mthCode);
-			instructions = decoder.process();
-			codeSize = instructions.length;
+			this.instructions = decoder.process();
+			this.codeSize = instructions.length;
 
-			initTryCatches(mthCode);
-			initJumps();
+			initTryCatches(this, mthCode, instructions);
+			initJumps(instructions);
 
 			this.debugInfoOffset = mthCode.getDebugInfoOffset();
 		} catch (Exception e) {
 			if (!noCode) {
+				unload();
 				noCode = true;
 				// load without code
 				load();
@@ -131,9 +164,8 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 				list.add(resultArg);
 			}
 			insnNode.getRegisterArgs(list);
-			int argsCount = list.size();
-			for (int i = 0; i < argsCount; i++) {
-				if (list.get(i).getRegNum() >= regsCount) {
+			for (RegisterArg arg : list) {
+				if (arg.getRegNum() >= regsCount) {
 					throw new JadxRuntimeException("Incorrect register number in instruction: " + insnNode
 							+ ", expected to be less than " + regsCount);
 				}
@@ -141,64 +173,63 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 		}
 	}
 
-	private void initMethodTypes() {
-		if (!parseSignature()) {
-			retType = mthInfo.getReturnType();
-			initArguments(mthInfo.getArgumentsTypes());
+	public void initMethodTypes() {
+		List<ArgType> types = parseSignature();
+		if (types == null) {
+			this.retType = mthInfo.getReturnType();
+			this.argTypes = mthInfo.getArgumentsTypes();
+		} else {
+			this.argTypes = types;
 		}
 	}
 
-	@Override
-	public void unload() {
-		if (noCode) {
-			return;
-		}
-		instructions = null;
-		blocks = null;
-		enterBlock = null;
-		exitBlocks = null;
-		exceptionHandlers = Collections.emptyList();
-		sVars.clear();
-		region = null;
-		loops = Collections.emptyList();
-	}
-
-	private boolean parseSignature() {
+	@Nullable
+	private List<ArgType> parseSignature() {
 		SignatureParser sp = SignatureParser.fromNode(this);
 		if (sp == null) {
-			return false;
+			return null;
 		}
 		try {
-			genericMap = sp.consumeGenericMap();
+			this.generics = sp.consumeGenericMap();
 			List<ArgType> argsTypes = sp.consumeMethodArgs();
-			retType = sp.consumeType();
+			this.retType = sp.consumeType();
 
 			List<ArgType> mthArgs = mthInfo.getArgumentsTypes();
 			if (argsTypes.size() != mthArgs.size()) {
 				if (argsTypes.isEmpty()) {
-					return false;
+					return null;
 				}
-				if (!mthInfo.isConstructor()) {
-					LOG.warn("Wrong signature parse result: {} -> {}, not generic version: {}", sp, argsTypes, mthArgs);
-					return false;
-				} else if (getParentClass().getAccessFlags().isEnum()) {
-					// TODO:
-					argsTypes.add(0, mthArgs.get(0));
-					argsTypes.add(1, mthArgs.get(1));
-				} else {
-					// add synthetic arg for outer class
-					argsTypes.add(0, mthArgs.get(0));
-				}
-				if (argsTypes.size() != mthArgs.size()) {
-					return false;
+				if (!tryFixArgsCounts(argsTypes, mthArgs)) {
+					if (LOG.isDebugEnabled()) {
+						LOG.debug("Incorrect method signature, types: ({}), method: {}", Utils.listToString(argsTypes), this);
+					}
+					return null;
 				}
 			}
-			initArguments(argsTypes);
-			return true;
-		} catch (JadxRuntimeException e) {
-			LOG.error("Method signature parse error: {}", this, e);
+			return argsTypes;
+		} catch (Exception e) {
+			addWarningComment("Failed to parse method signature: " + sp.getSignature(), e);
+			return null;
+		}
+	}
+
+	private boolean tryFixArgsCounts(List<ArgType> argsTypes, List<ArgType> mthArgs) {
+		if (!mthInfo.isConstructor()) {
 			return false;
 		}
+		if (getParentClass().getAccessFlags().isEnum()) {
+			if (mthArgs.size() >= 2) {
+				// TODO:
+				argsTypes.add(0, mthArgs.get(0));
+				argsTypes.add(1, mthArgs.get(1));
+			}
+		} else {
+			if (!mthArgs.isEmpty()) {
+				// add synthetic arg for outer class
+				argsTypes.add(0, mthArgs.get(0));
+			}
+		}
+		return argsTypes.size() == mthArgs.size();
 	}
 
 	private void initArguments(List<ArgType> args) {
@@ -214,8 +245,9 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 		if (accFlags.isStatic()) {
 			thisArg = null;
 		} else {
-			TypeImmutableArg arg = InsnArg.typeImmutableReg(pos - 1, parentClass.getClassInfo().getType());
+			RegisterArg arg = InsnArg.reg(pos - 1, parentClass.getClassInfo().getType());
 			arg.add(AFlag.THIS);
+			arg.add(AFlag.IMMUTABLE_TYPE);
 			thisArg = arg;
 		}
 		if (args.isEmpty()) {
@@ -223,25 +255,40 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 			return;
 		}
 		argsList = new ArrayList<>(args.size());
-		for (ArgType arg : args) {
-			argsList.add(InsnArg.typeImmutableReg(pos, arg));
-			pos += arg.getRegCount();
+		for (ArgType argType : args) {
+			RegisterArg regArg = InsnArg.reg(pos, argType);
+			regArg.add(AFlag.METHOD_ARGUMENT);
+			regArg.add(AFlag.IMMUTABLE_TYPE);
+			argsList.add(regArg);
+			pos += argType.getRegCount();
 		}
 	}
 
-	public List<RegisterArg> getArguments(boolean includeThis) {
-		if (includeThis && thisArg != null) {
-			List<RegisterArg> list = new ArrayList<>(argsList.size() + 1);
-			list.add(thisArg);
-			list.addAll(argsList);
-			return list;
+	@NotNull
+	public List<ArgType> getArgTypes() {
+		if (argTypes == null) {
+			throw new JadxRuntimeException("Method types not initialized: " + this);
+		}
+		return argTypes;
+	}
+
+	public List<RegisterArg> getArgRegs() {
+		if (argsList == null) {
+			throw new JadxRuntimeException("Method args not loaded: " + this
+					+ ", class status: " + parentClass.getTopParentClass().getState());
 		}
 		return argsList;
 	}
 
-	public RegisterArg removeFirstArgument() {
-		this.add(AFlag.SKIP_FIRST_ARG);
-		return argsList.remove(0);
+	public List<RegisterArg> getAllArgRegs() {
+		List<RegisterArg> argRegs = getArgRegs();
+		if (thisArg != null) {
+			List<RegisterArg> list = new ArrayList<>(argRegs.size() + 1);
+			list.add(thisArg);
+			list.addAll(argRegs);
+			return list;
+		}
+		return argRegs;
 	}
 
 	@Nullable
@@ -249,55 +296,57 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 		return thisArg;
 	}
 
+	public void skipFirstArgument() {
+		this.add(AFlag.SKIP_FIRST_ARG);
+	}
+
 	public ArgType getReturnType() {
 		return retType;
 	}
 
-	public Map<ArgType, List<ArgType>> getGenericMap() {
-		return genericMap;
+	public List<GenericInfo> getGenerics() {
+		return generics;
 	}
 
-	private void initTryCatches(Code mthCode) {
-		InsnNode[] insnByOffset = instructions;
+	private static void initTryCatches(MethodNode mth, Code mthCode, InsnNode[] insnByOffset) {
 		CatchHandler[] catchBlocks = mthCode.getCatchHandlers();
 		Try[] tries = mthCode.getTries();
 		if (catchBlocks.length == 0 && tries.length == 0) {
 			return;
 		}
 
-		int hc = 0;
+		int handlersCount = 0;
 		Set<Integer> addrs = new HashSet<>();
 		List<TryCatchBlock> catches = new ArrayList<>(catchBlocks.length);
 
 		for (CatchHandler handler : catchBlocks) {
 			TryCatchBlock tcBlock = new TryCatchBlock();
 			catches.add(tcBlock);
-			for (int i = 0; i < handler.getAddresses().length; i++) {
-				int addr = handler.getAddresses()[i];
-				ClassInfo type = ClassInfo.fromDex(parentClass.dex(), handler.getTypeIndexes()[i]);
-				tcBlock.addHandler(this, addr, type);
+			int[] handlerAddrArr = handler.getAddresses();
+			for (int i = 0; i < handlerAddrArr.length; i++) {
+				int addr = handlerAddrArr[i];
+				ClassInfo type = ClassInfo.fromDex(mth.dex(), handler.getTypeIndexes()[i]);
+				tcBlock.addHandler(mth, addr, type);
 				addrs.add(addr);
-				hc++;
+				handlersCount++;
 			}
 			int addr = handler.getCatchAllAddress();
 			if (addr >= 0) {
-				tcBlock.addHandler(this, addr, null);
+				tcBlock.addHandler(mth, addr, null);
 				addrs.add(addr);
-				hc++;
+				handlersCount++;
 			}
 		}
 
-		if (hc > 0 && hc != addrs.size()) {
+		if (handlersCount > 0 && handlersCount != addrs.size()) {
 			// resolve nested try blocks:
 			// inner block contains all handlers from outer block => remove these handlers from inner block
 			// each handler must be only in one try/catch block
-			for (TryCatchBlock ct1 : catches) {
-				for (TryCatchBlock ct2 : catches) {
-					if (ct1 != ct2 && ct2.containsAllHandlers(ct1)) {
-						for (ExceptionHandler h : ct1.getHandlers()) {
-							ct2.removeHandler(this, h);
-							h.setTryBlock(ct1);
-						}
+			for (TryCatchBlock outerTry : catches) {
+				for (TryCatchBlock innerTry : catches) {
+					if (outerTry != innerTry
+							&& innerTry.containsAllHandlers(outerTry)) {
+						innerTry.removeSameHandlers(outerTry);
 					}
 				}
 			}
@@ -309,6 +358,7 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 			for (ExceptionHandler eh : ct.getHandlers()) {
 				int addr = eh.getHandleOffset();
 				ExcHandlerAttr ehAttr = new ExcHandlerAttr(ct, eh);
+				// TODO: don't override existing attribute
 				insnByOffset[addr].addAttr(ehAttr);
 			}
 		}
@@ -320,23 +370,28 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 			int offset = aTry.getStartAddress();
 			int end = offset + aTry.getInstructionCount() - 1;
 
-			InsnNode insn = insnByOffset[offset];
-			insn.add(AFlag.TRY_ENTER);
+			boolean tryBlockStarted = false;
+			InsnNode insn = null;
 			while (offset <= end && offset >= 0) {
 				insn = insnByOffset[offset];
-				catchBlock.addInsn(insn);
+				if (insn != null && insn.getType() != InsnType.NOP) {
+					if (tryBlockStarted) {
+						catchBlock.addInsn(insn);
+					} else if (insn.canThrowException()) {
+						insn.add(AFlag.TRY_ENTER);
+						catchBlock.addInsn(insn);
+						tryBlockStarted = true;
+					}
+				}
 				offset = InsnDecoder.getNextInsnOffset(insnByOffset, offset);
 			}
-			if (insnByOffset[end] != null) {
-				insnByOffset[end].add(AFlag.TRY_LEAVE);
-			} else {
+			if (tryBlockStarted && insn != null) {
 				insn.add(AFlag.TRY_LEAVE);
 			}
 		}
 	}
 
-	private void initJumps() {
-		InsnNode[] insnByOffset = instructions;
+	private static void initJumps(InsnNode[] insnByOffset) {
 		for (int offset = 0; offset < insnByOffset.length; offset++) {
 			InsnNode insn = insnByOffset[offset];
 			if (insn == null) {
@@ -484,13 +539,28 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 			exceptionHandlers = new ArrayList<>(2);
 		} else {
 			for (ExceptionHandler h : exceptionHandlers) {
-				if (h == handler || h.getHandleOffset() == handler.getHandleOffset()) {
+				if (h.equals(handler)) {
+					return h;
+				}
+				if (h.getHandleOffset() == handler.getHandleOffset()) {
+					if (h.getTryBlock() == handler.getTryBlock()) {
+						for (ClassInfo catchType : handler.getCatchTypes()) {
+							h.addCatchType(catchType);
+						}
+					} else {
+						// same handlers from different try blocks
+						// will merge later
+					}
 					return h;
 				}
 			}
 		}
 		exceptionHandlers.add(handler);
 		return handler;
+	}
+
+	public boolean clearExceptionHandlers() {
+		return exceptionHandlers.removeIf(ExceptionHandler::isRemoved);
 	}
 
 	public Iterable<ExceptionHandler> getExceptionHandlers() {
@@ -526,22 +596,25 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 		return false;
 	}
 
+	public boolean isConstructor() {
+		return accFlags.isConstructor() && mthInfo.isConstructor();
+	}
+
 	public boolean isDefaultConstructor() {
-		boolean result = false;
-		if (accFlags.isConstructor() && mthInfo.isConstructor()) {
+		if (isConstructor()) {
 			int defaultArgCount = 0;
 			// workaround for non-static inner class constructor, that has synthetic argument
 			if (parentClass.getClassInfo().isInner()
 					&& !parentClass.getAccessFlags().isStatic()) {
 				ClassNode outerCls = parentClass.getParentClass();
 				if (argsList != null && !argsList.isEmpty()
-						&& argsList.get(0).getType().equals(outerCls.getClassInfo().getType())) {
+						&& argsList.get(0).getInitType().equals(outerCls.getClassInfo().getType())) {
 					defaultArgCount = 1;
 				}
 			}
-			result = argsList == null || argsList.size() == defaultArgCount;
+			return argsList == null || argsList.size() == defaultArgCount;
 		}
-		return result;
+		return false;
 	}
 
 	public boolean isVirtual() {
@@ -554,6 +627,10 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 
 	public int getDebugInfoOffset() {
 		return debugInfoOffset;
+	}
+
+	public SSAVar makeNewSVar(int regNum, @NotNull RegisterArg assignArg) {
+		return makeNewSVar(regNum, getNextSVarVersion(regNum), assignArg);
 	}
 
 	public SSAVar makeNewSVar(int regNum, int version, @NotNull RegisterArg assignArg) {
@@ -584,8 +661,14 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 		return sVars;
 	}
 
+	@Override
 	public AccessInfo getAccessFlags() {
 		return accFlags;
+	}
+
+	@Override
+	public void setAccessFlags(AccessInfo newAccessFlags) {
+		this.accFlags = newAccessFlags;
 	}
 
 	public Region getRegion() {
@@ -611,16 +694,57 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 		return "method";
 	}
 
-	public void addWarn(String errStr) {
-		ErrorsCounter.methodWarn(this, errStr);
+	public void addWarn(String warnStr) {
+		ErrorsCounter.methodWarn(this, warnStr);
 	}
 
-	public void addError(String errStr, Exception e) {
+	public void addWarningComment(String warn) {
+		addWarningComment(warn, null);
+	}
+
+	public void addWarningComment(String warn, @Nullable Throwable exc) {
+		String commentStr = "JADX WARN: " + warn;
+		addAttr(AType.COMMENTS, commentStr);
+		if (exc != null) {
+			LOG.warn("{} in {}", warn, this, exc);
+		} else {
+			LOG.warn("{} in {}", warn, this);
+		}
+	}
+
+	public void addComment(String commentStr) {
+		addAttr(AType.COMMENTS, commentStr);
+		LOG.info("{} in {}", commentStr, this);
+	}
+
+	public void addError(String errStr, Throwable e) {
 		ErrorsCounter.methodError(this, errStr, e);
 	}
 
 	public MethodInfo getMethodInfo() {
 		return mthInfo;
+	}
+
+	public long getMethodCodeOffset() {
+		return noCode ? 0 : methodData.getCodeOffset();
+	}
+
+	/**
+	 * Stat method.
+	 * Calculate instructions count as a measure of method size
+	 */
+	public long countInsns() {
+		if (instructions != null) {
+			return instructions.length;
+		}
+		if (blocks != null) {
+			return blocks.stream().mapToLong(block -> block.getInstructions().size()).sum();
+		}
+		return -1;
+	}
+
+	public boolean isLoaded() {
+		return loaded;
 	}
 
 	@Override
@@ -643,7 +767,7 @@ public class MethodNode extends LineAttrNode implements ILoadable, IDexNode {
 	@Override
 	public String toString() {
 		return parentClass + "." + mthInfo.getName()
-				+ "(" + Utils.listToString(mthInfo.getArgumentsTypes()) + "):"
+				+ '(' + Utils.listToString(mthInfo.getArgumentsTypes()) + "):"
 				+ retType;
 	}
 }

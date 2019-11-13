@@ -2,19 +2,20 @@ package jadx.core.dex.instructions.mods;
 
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.MethodInfo;
+import jadx.core.dex.instructions.CallMthInterface;
 import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.InvokeNode;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 
-public class ConstructorInsn extends InsnNode {
+public final class ConstructorInsn extends InsnNode implements CallMthInterface {
 
 	private final MethodInfo callMth;
 	private final CallType callType;
 	private final RegisterArg instanceArg;
 
-	private enum CallType {
+	public enum CallType {
 		CONSTRUCTOR, // just new instance
 		SUPER, // super call
 		THIS, // call constructor from other constructor
@@ -45,11 +46,10 @@ public class ConstructorInsn extends InsnNode {
 			instanceArg.getSVar().setAssign(instanceArg);
 		}
 		instanceArg.getSVar().removeUse(instanceArg);
-		for (int i = 1; i < invoke.getArgsCount(); i++) {
+		int argsCount = invoke.getArgsCount();
+		for (int i = 1; i < argsCount; i++) {
 			addArg(invoke.getArg(i));
 		}
-		offset = invoke.getOffset();
-		setSourceLine(invoke.getSourceLine());
 	}
 
 	public ConstructorInsn(MethodInfo callMth, CallType callType, RegisterArg instanceArg) {
@@ -63,6 +63,7 @@ public class ConstructorInsn extends InsnNode {
 		return callMth;
 	}
 
+	@Override
 	public RegisterArg getInstanceArg() {
 		return instanceArg;
 	}
@@ -92,6 +93,11 @@ public class ConstructorInsn extends InsnNode {
 	}
 
 	@Override
+	public int getFirstArgOffset() {
+		return 0;
+	}
+
+	@Override
 	public boolean isSame(InsnNode obj) {
 		if (this == obj) {
 			return true;
@@ -105,7 +111,12 @@ public class ConstructorInsn extends InsnNode {
 	}
 
 	@Override
+	public InsnNode copy() {
+		return copyCommonParams(new ConstructorInsn(callMth, callType, instanceArg));
+	}
+
+	@Override
 	public String toString() {
-		return super.toString() + " " + callMth + " " + callType;
+		return super.toString() + ' ' + callMth + ' ' + callType;
 	}
 }

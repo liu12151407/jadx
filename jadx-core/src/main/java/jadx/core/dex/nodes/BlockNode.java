@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
 
+import org.jetbrains.annotations.NotNull;
+
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.AttrNode;
@@ -16,7 +18,7 @@ import jadx.core.utils.exceptions.JadxRuntimeException;
 
 import static jadx.core.utils.Utils.lockList;
 
-public class BlockNode extends AttrNode implements IBlock {
+public final class BlockNode extends AttrNode implements IBlock, Comparable<BlockNode> {
 
 	private int id;
 	private final int startOffset;
@@ -186,12 +188,17 @@ public class BlockNode extends AttrNode implements IBlock {
 	}
 
 	@Override
+	public int compareTo(@NotNull BlockNode o) {
+		return Integer.compare(id, o.id);
+	}
+
+	@Override
 	public String baseString() {
 		return Integer.toString(id);
 	}
 
 	@Override
 	public String toString() {
-		return "B:" + id + ":" + InsnUtils.formatOffset(startOffset);
+		return "B:" + id + ':' + InsnUtils.formatOffset(startOffset);
 	}
 }

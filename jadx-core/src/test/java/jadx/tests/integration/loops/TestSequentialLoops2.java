@@ -1,6 +1,6 @@
 package jadx.tests.integration.loops;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
@@ -8,12 +8,12 @@ import jadx.tests.api.IntegrationTest;
 import static jadx.tests.api.utils.JadxMatchers.containsOne;
 import static jadx.tests.api.utils.JadxMatchers.countString;
 import static org.hamcrest.CoreMatchers.containsString;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestSequentialLoops2 extends IntegrationTest {
 
 	public static class TestCls {
-		private static char[] lowercases = new char[]{'a'};
+		private static char[] lowercases = new char[] { 'a' };
 
 		public static String asciiToLowerCase(String s) {
 			char[] c = null;
@@ -46,6 +46,17 @@ public class TestSequentialLoops2 extends IntegrationTest {
 		assertThat(code, countString(2, "while ("));
 		assertThat(code, containsString("break;"));
 		assertThat(code, containsOne("return c"));
+		assertThat(code, countString(2, "<= 127"));
+	}
+
+	@Test
+	public void testNoDebug() {
+		noDebugInfo();
+		ClassNode cls = getClassNode(TestCls.class);
+		String code = cls.getCode().toString();
+
+		assertThat(code, countString(2, "while ("));
+		assertThat(code, containsString("break;"));
 		assertThat(code, countString(2, "<= 127"));
 	}
 }

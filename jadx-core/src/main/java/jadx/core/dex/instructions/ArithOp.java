@@ -24,5 +24,4 @@ public enum ArithOp {
 	public String getSymbol() {
 		return this.symbol;
 	}
-
 }

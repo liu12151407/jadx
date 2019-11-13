@@ -1,13 +1,13 @@
 package jadx.tests.integration.inline;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.not;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestSyntheticInline extends IntegrationTest {
 
@@ -43,8 +43,8 @@ public class TestSyntheticInline extends IntegrationTest {
 		assertThat(code, not(containsString("x0")));
 		assertThat(code, containsString("f = v;"));
 
-//		assertThat(code, containsString("return f;"));
-//		assertThat(code, containsString("return func();"));
+		// assertThat(code, containsString("return f;"));
+		// assertThat(code, containsString("return func();"));
 		// Temporary solution
 		assertThat(code, containsString("return TestSyntheticInline$TestCls.this.f;"));
 		assertThat(code, containsString("return TestSyntheticInline$TestCls.this.func();"));

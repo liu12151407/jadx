@@ -96,8 +96,8 @@ public class DotGraphVisitor extends AbstractVisitor {
 			dot.startLine("MethodNode[shape=record,label=\"{");
 			dot.add(escape(mth.getAccessFlags().makeString()));
 			dot.add(escape(mth.getReturnType() + " "
-					+ mth.getParentClass() + "." + mth.getName()
-					+ "(" + Utils.listToString(mth.getArguments(true)) + ") "));
+					+ mth.getParentClass() + '.' + mth.getName()
+					+ '(' + Utils.listToString(mth.getAllArgRegs()) + ") "));
 
 			String attrs = attributesString(mth);
 			if (!attrs.isEmpty()) {
@@ -116,7 +116,7 @@ public class DotGraphVisitor extends AbstractVisitor {
 					+ (useRegions ? ".regions" : "")
 					+ (rawInsn ? ".raw" : "")
 					+ ".dot";
-			dot.save(dir, mth.getParentClass().getClassInfo().getFullPath() + "_graphs", fileName);
+			dot.save(dir, mth.getParentClass().getClassInfo().getAliasFullPath() + "_graphs", fileName);
 		}
 
 		private void processMethodRegion(MethodNode mth) {
@@ -185,9 +185,9 @@ public class DotGraphVisitor extends AbstractVisitor {
 			dot.add("}\"];");
 
 			BlockNode falsePath = null;
-			List<InsnNode> list = block.getInstructions();
-			if (!list.isEmpty() && list.get(0).getType() == InsnType.IF) {
-				falsePath = ((IfNode) list.get(0)).getElseBlock();
+			InsnNode lastInsn = BlockUtils.getLastInsn(block);
+			if (lastInsn != null && lastInsn.getType() == InsnType.IF) {
+				falsePath = ((IfNode) lastInsn).getElseBlock();
 			}
 			for (BlockNode next : block.getSuccessors()) {
 				String style = next == falsePath ? "[style=dashed]" : "";
@@ -241,9 +241,9 @@ public class DotGraphVisitor extends AbstractVisitor {
 			if (c instanceof BlockNode) {
 				name = "Node_" + ((BlockNode) c).getId();
 			} else if (c instanceof IBlock) {
-				name = "Node_" + c.getClass().getSimpleName() + "_" + c.hashCode();
+				name = "Node_" + c.getClass().getSimpleName() + '_' + c.hashCode();
 			} else {
-				name = "cluster_" + c.getClass().getSimpleName() + "_" + c.hashCode();
+				name = "cluster_" + c.getClass().getSimpleName() + '_' + c.hashCode();
 			}
 			return name;
 		}

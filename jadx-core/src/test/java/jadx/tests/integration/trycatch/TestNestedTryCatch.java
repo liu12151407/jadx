@@ -1,25 +1,25 @@
 package jadx.tests.integration.trycatch;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.not;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestNestedTryCatch extends IntegrationTest {
 
 	public static class TestCls {
-		private void f() {
+		public void f() {
 			try {
 				Thread.sleep(1);
 				try {
 					Thread.sleep(2);
-				} catch (InterruptedException e) {
+				} catch (InterruptedException ignored) {
 				}
-			} catch (Exception e) {
+			} catch (Exception ignored) {
 			}
 
 			return;

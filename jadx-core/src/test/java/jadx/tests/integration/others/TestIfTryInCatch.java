@@ -1,18 +1,18 @@
 package jadx.tests.integration.others;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
 import static jadx.tests.api.utils.JadxMatchers.containsOne;
 import static jadx.tests.api.utils.JadxMatchers.countString;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestIfTryInCatch extends IntegrationTest {
 
 	public static class TestCls {
-		private Exception exception;
+		public Exception exception;
 		private java.lang.Object data;
 
 		public java.lang.Object test(final Object obj) {
@@ -23,8 +23,8 @@ public class TestIfTryInCatch extends IntegrationTest {
 				if (a(e) && b(obj)) {
 					try {
 						return f();
-					} catch (Exception e2) {
-						e = e2;
+					} catch (Exception exc) {
+						e = exc;
 					}
 				}
 				System.out.println("Exception" + e);

@@ -1,12 +1,12 @@
 package jadx.tests.integration.switches;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
 import static jadx.tests.api.utils.JadxMatchers.countString;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestSwitchWithTryCatch extends IntegrationTest {
 	public static class TestCls {
@@ -62,7 +62,7 @@ public class TestSwitchWithTryCatch extends IntegrationTest {
 		ClassNode cls = getClassNode(TestCls.class);
 		String code = cls.getCode().toString();
 
-//		assertThat(code, countString(3, "break;"));
+		// assertThat(code, countString(3, "break;"));
 		assertThat(code, countString(4, "return;"));
 
 		// TODO: remove redundant break

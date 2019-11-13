@@ -3,22 +3,24 @@ package jadx.core.dex.nodes;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+
+import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.android.dex.ClassData;
 import com.android.dex.ClassData.Field;
 import com.android.dex.ClassData.Method;
 import com.android.dex.ClassDef;
 import com.android.dex.Dex;
-import org.jetbrains.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import jadx.api.ICodeCache;
+import jadx.api.ICodeInfo;
 import jadx.core.Consts;
-import jadx.core.codegen.CodeWriter;
+import jadx.core.ProcessClass;
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.annotations.Annotation;
 import jadx.core.dex.attributes.nodes.LineAttrNode;
 import jadx.core.dex.attributes.nodes.SourceFileAttr;
@@ -33,38 +35,42 @@ import jadx.core.dex.nodes.parser.AnnotationsParser;
 import jadx.core.dex.nodes.parser.FieldInitAttr;
 import jadx.core.dex.nodes.parser.SignatureParser;
 import jadx.core.dex.nodes.parser.StaticValuesParser;
+import jadx.core.utils.SmaliUtils;
 import jadx.core.utils.exceptions.DecodeException;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
+import static jadx.core.dex.nodes.ProcessState.LOADED;
 import static jadx.core.dex.nodes.ProcessState.UNLOADED;
 
-public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
+public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 	private static final Logger LOG = LoggerFactory.getLogger(ClassNode.class);
 
 	private final DexNode dex;
+	private final int clsDefOffset;
 	private final ClassInfo clsInfo;
-	private final AccessInfo accessFlags;
+	private AccessInfo accessFlags;
 	private ArgType superClass;
 	private List<ArgType> interfaces;
-	private Map<ArgType, List<ArgType>> genericMap;
+	private List<GenericInfo> generics = Collections.emptyList();
 
 	private final List<MethodNode> methods;
 	private final List<FieldNode> fields;
-	private List<ClassNode> innerClasses = new ArrayList<>();
+	private List<ClassNode> innerClasses = Collections.emptyList();
 
-	// store decompiled code
-	private CodeWriter code;
+	// store smali
+	private String smali;
 	// store parent for inner classes or 'this' otherwise
 	private ClassNode parentClass;
 
-	private ProcessState state = ProcessState.NOT_LOADED;
-	private final Set<ClassNode> dependencies = new HashSet<>();
+	private volatile ProcessState state = ProcessState.NOT_LOADED;
+	private List<ClassNode> dependencies = Collections.emptyList();
 
 	// cache maps
 	private Map<MethodInfo, MethodNode> mthInfoMap = Collections.emptyMap();
 
 	public ClassNode(DexNode dex, ClassDef cls) {
 		this.dex = dex;
+		this.clsDefOffset = cls.getOffset();
 		this.clsInfo = ClassInfo.fromDex(dex, cls.getTypeIndex());
 		try {
 			if (cls.getSupertypeIndex() == DexNode.NO_INDEX) {
@@ -104,9 +110,10 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 			}
 
 			loadAnnotations(cls);
-
+			initAccessFlags(cls);
 			parseClassSignature();
 			setFieldsTypesFromSignature();
+			methods.forEach(MethodNode::initMethodTypes);
 
 			int sfIdx = cls.getSourceFileIndex();
 			if (sfIdx != DexNode.NO_INDEX) {
@@ -114,25 +121,30 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 				addSourceFilenameAttr(fileName);
 			}
 
-			// restore original access flags from dalvik annotation if present
-			int accFlagsValue;
-			Annotation a = getAnnotation(Consts.DALVIK_INNER_CLASS);
-			if (a != null) {
-				accFlagsValue = (Integer) a.getValues().get("accessFlags");
-			} else {
-				accFlagsValue = cls.getAccessFlags();
-			}
-			this.accessFlags = new AccessInfo(accFlagsValue, AFType.CLASS);
-
 			buildCache();
 		} catch (Exception e) {
 			throw new JadxRuntimeException("Error decode class: " + clsInfo, e);
 		}
 	}
 
+	/**
+	 * Restore original access flags from Dalvik annotation if present
+	 */
+	private void initAccessFlags(ClassDef cls) {
+		int accFlagsValue;
+		Annotation a = getAnnotation(Consts.DALVIK_INNER_CLASS);
+		if (a != null) {
+			accFlagsValue = (Integer) a.getValues().get("accessFlags");
+		} else {
+			accFlagsValue = cls.getAccessFlags();
+		}
+		this.accessFlags = new AccessInfo(accFlagsValue, AFType.CLASS);
+	}
+
 	// empty synthetic class
 	public ClassNode(DexNode dex, String name, int accessFlags) {
 		this.dex = dex;
+		this.clsDefOffset = 0;
 		this.clsInfo = ClassInfo.fromName(dex.root(), name);
 		this.interfaces = new ArrayList<>();
 		this.methods = new ArrayList<>();
@@ -179,7 +191,7 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 		}
 		try {
 			// parse class generic map
-			genericMap = sp.consumeGenericMap();
+			generics = sp.consumeGenericMap();
 			// parse super class signature
 			superClass = sp.consumeType();
 			// parse interfaces signatures
@@ -230,15 +242,41 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 				return;
 			}
 			if (fileName.contains("$")
-					&& fileName.endsWith("$" + name)) {
+					&& fileName.endsWith('$' + name)) {
 				return;
 			}
-			ClassInfo parentClass = clsInfo.getTopParentClass();
-			if (parentClass != null && fileName.equals(parentClass.getShortName())) {
+			ClassInfo parentCls = clsInfo.getTopParentClass();
+			if (parentCls != null && fileName.equals(parentCls.getShortName())) {
 				return;
 			}
 		}
 		this.addAttr(new SourceFileAttr(fileName));
+	}
+
+	public void ensureProcessed() {
+		ClassNode topClass = getTopParentClass();
+		ProcessState topState = topClass.getState();
+		if (!topState.isProcessed()) {
+			throw new JadxRuntimeException("Expected class to be processed at this point,"
+					+ " class: " + topClass + ", state: " + topState);
+		}
+	}
+
+	public synchronized ICodeInfo decompile() {
+		ICodeCache codeCache = root().getCodeCache();
+		ClassNode topParentClass = getTopParentClass();
+		String clsRawName = topParentClass.getRawName();
+		ICodeInfo code = codeCache.get(clsRawName);
+		if (code != null) {
+			return code;
+		}
+		ICodeInfo codeInfo = ProcessClass.generateCode(topParentClass);
+		codeCache.add(clsRawName, codeInfo);
+		return codeInfo;
+	}
+
+	public ICodeInfo getCode() {
+		return decompile();
 	}
 
 	@Override
@@ -253,16 +291,15 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 		for (ClassNode innerCls : getInnerClasses()) {
 			innerCls.load();
 		}
+		setState(LOADED);
 	}
 
 	@Override
 	public void unload() {
-		for (MethodNode mth : getMethods()) {
-			mth.unload();
-		}
-		for (ClassNode innerCls : getInnerClasses()) {
-			innerCls.unload();
-		}
+		methods.forEach(MethodNode::unload);
+		innerClasses.forEach(ClassNode::unload);
+		fields.forEach(FieldNode::unloadAttributes);
+		unloadAttributes();
 		setState(UNLOADED);
 	}
 
@@ -282,8 +319,8 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 		return interfaces;
 	}
 
-	public Map<ArgType, List<ArgType>> getGenericMap() {
-		return genericMap;
+	public List<GenericInfo> getGenerics() {
+		return generics;
 	}
 
 	public List<MethodNode> getMethods() {
@@ -321,6 +358,15 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 		return null;
 	}
 
+	public FieldNode searchFieldByNameAndType(FieldInfo field) {
+		for (FieldNode f : fields) {
+			if (f.getFieldInfo().equalsNameAndType(field)) {
+				return f;
+			}
+		}
+		return null;
+	}
+
 	public FieldNode searchFieldByName(String name) {
 		for (FieldNode f : fields) {
 			if (f.getName().equals(name)) {
@@ -334,7 +380,7 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 		return mthInfoMap.get(mth);
 	}
 
-	public MethodNode searchMethodByName(String shortId) {
+	public MethodNode searchMethodByShortId(String shortId) {
 		for (MethodNode m : methods) {
 			if (m.getMethodInfo().getShortId().equals(shortId)) {
 				return m;
@@ -343,8 +389,23 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 		return null;
 	}
 
+	/**
+	 * Return first method by original short name
+	 * Note: methods are not unique by name (class can have several methods with same name but different
+	 * signature)
+	 */
+	@Nullable
+	public MethodNode searchMethodByShortName(String name) {
+		for (MethodNode m : methods) {
+			if (m.getMethodInfo().getName().equals(name)) {
+				return m;
+			}
+		}
+		return null;
+	}
+
 	public MethodNode searchMethodById(int id) {
-		return searchMethodByName(MethodInfo.fromDex(dex, id).getShortId());
+		return searchMethodByShortId(MethodInfo.fromDex(dex, id).getShortId());
 	}
 
 	public ClassNode getParentClass() {
@@ -364,11 +425,25 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 		return parent == this ? this : parent.getTopParentClass();
 	}
 
+	public boolean hasNotGeneratedParent() {
+		if (contains(AFlag.DONT_GENERATE)) {
+			return true;
+		}
+		ClassNode parent = getParentClass();
+		if (parent == this) {
+			return false;
+		}
+		return parent.hasNotGeneratedParent();
+	}
+
 	public List<ClassNode> getInnerClasses() {
 		return innerClasses;
 	}
 
 	public void addInnerClass(ClassNode cls) {
+		if (innerClasses.isEmpty()) {
+			innerClasses = new ArrayList<>(5);
+		}
 		innerClasses.add(cls);
 		cls.parentClass = this;
 	}
@@ -380,14 +455,12 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 	}
 
 	public boolean isAnonymous() {
-		return clsInfo.isInner()
-				&& clsInfo.getAlias().getShortName().startsWith(Consts.ANONYMOUS_CLASS_PREFIX)
-				&& getDefaultConstructor() != null;
+		return contains(AFlag.ANONYMOUS_CLASS);
 	}
 
 	@Nullable
 	public MethodNode getClassInitMth() {
-		return searchMethodByName("<clinit>()V");
+		return searchMethodByShortId("<clinit>()V");
 	}
 
 	@Nullable
@@ -400,8 +473,14 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 		return null;
 	}
 
+	@Override
 	public AccessInfo getAccessFlags() {
 		return accessFlags;
+	}
+
+	@Override
+	public void setAccessFlags(AccessInfo accessFlags) {
+		this.accessFlags = accessFlags;
 	}
 
 	@Override
@@ -430,31 +509,23 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 		return clsInfo;
 	}
 
-	/**
-	 * Class info for external usage (code generation and external api).
-	 */
-	public ClassInfo getAlias() {
-		return clsInfo.getAlias();
-	}
-
 	public String getShortName() {
-		return clsInfo.getAlias().getShortName();
+		return clsInfo.getAliasShortName();
 	}
 
 	public String getFullName() {
-		return clsInfo.getAlias().getFullName();
+		return clsInfo.getAliasFullName();
 	}
 
 	public String getPackage() {
-		return clsInfo.getAlias().getPackage();
+		return clsInfo.getAliasPkg();
 	}
 
-	public void setCode(CodeWriter code) {
-		this.code = code;
-	}
-
-	public CodeWriter getCode() {
-		return code;
+	public String getSmali() {
+		if (smali == null) {
+			smali = SmaliUtils.getSmaliCode(dex, clsDefOffset);
+		}
+		return smali;
 	}
 
 	public ProcessState getState() {
@@ -465,8 +536,12 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 		this.state = state;
 	}
 
-	public Set<ClassNode> getDependencies() {
+	public List<ClassNode> getDependencies() {
 		return dependencies;
+	}
+
+	public void setDependencies(List<ClassNode> dependencies) {
+		this.dependencies = dependencies;
 	}
 
 	@Override
@@ -490,4 +565,5 @@ public class ClassNode extends LineAttrNode implements ILoadable, IDexNode {
 	public String toString() {
 		return clsInfo.getFullName();
 	}
+
 }

@@ -15,12 +15,8 @@ public final class TernaryInsn extends InsnNode {
 
 	private IfCondition condition;
 
-	public TernaryInsn(IfCondition condition, RegisterArg result) {
-		this(condition, result, LiteralArg.TRUE, LiteralArg.FALSE);
-	}
-
 	public TernaryInsn(IfCondition condition, RegisterArg result, InsnArg th, InsnArg els) {
-		super(InsnType.TERNARY, 2);
+		this();
 		setResult(result);
 
 		if (th.equals(LiteralArg.FALSE) && els.equals(LiteralArg.TRUE)) {
@@ -33,6 +29,10 @@ public final class TernaryInsn extends InsnNode {
 			addArg(th);
 			addArg(els);
 		}
+	}
+
+	private TernaryInsn() {
+		super(InsnType.TERNARY, 2);
 	}
 
 	public IfCondition getCondition() {
@@ -69,6 +69,13 @@ public final class TernaryInsn extends InsnNode {
 		}
 		TernaryInsn that = (TernaryInsn) obj;
 		return condition.equals(that.condition);
+	}
+
+	@Override
+	public InsnNode copy() {
+		TernaryInsn copy = new TernaryInsn();
+		copy.condition = condition;
+		return copyCommonParams(copy);
 	}
 
 	@Override

@@ -2,6 +2,8 @@ package jadx.core.clsp;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,7 +30,7 @@ public class ConvertToClsSet {
 			usage();
 			System.exit(1);
 		}
-		File output = new File(args[0]);
+		Path output = Paths.get(args[0]);
 
 		List<InputFile> inputFiles = new ArrayList<>(args.length - 1);
 		for (int i = 1; i < args.length; i++) {
@@ -36,7 +38,7 @@ public class ConvertToClsSet {
 			if (f.isDirectory()) {
 				addFilesFromDirectory(f, inputFiles);
 			} else {
-				InputFile.addFilesFrom(f, inputFiles);
+				InputFile.addFilesFrom(f, inputFiles, false);
 			}
 		}
 		for (InputFile inputFile : inputFiles) {
@@ -47,7 +49,7 @@ public class ConvertToClsSet {
 		root.load(inputFiles);
 
 		ClsSet set = new ClsSet();
-		set.load(root);
+		set.loadFrom(root);
 		set.save(output);
 		LOG.info("Output: {}", output);
 		LOG.info("done");
@@ -63,7 +65,7 @@ public class ConvertToClsSet {
 				addFilesFromDirectory(file, inputFiles);
 			} else {
 				try {
-					InputFile.addFilesFrom(file, inputFiles);
+					InputFile.addFilesFrom(file, inputFiles, false);
 				} catch (Exception e) {
 					LOG.warn("Skip file: {}, load error: {}", file, e.getMessage());
 				}

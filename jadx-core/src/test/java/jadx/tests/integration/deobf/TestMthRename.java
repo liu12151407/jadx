@@ -1,19 +1,19 @@
 package jadx.tests.integration.deobf;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.not;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestMthRename extends IntegrationTest {
 
 	public static class TestCls {
 
-		public static abstract class TestAbstractCls {
+		public abstract static class TestAbstractCls {
 			public abstract void a();
 		}
 
@@ -30,10 +30,7 @@ public class TestMthRename extends IntegrationTest {
 		ClassNode cls = getClassNode(TestCls.class);
 		String code = cls.getCode().toString();
 
-		assertThat(code, containsString("public abstract void mo1a();"));
 		assertThat(code, not(containsString("public abstract void a();")));
-
-		assertThat(code, containsString(".mo1a();"));
 		assertThat(code, not(containsString(".a();")));
 	}
 }

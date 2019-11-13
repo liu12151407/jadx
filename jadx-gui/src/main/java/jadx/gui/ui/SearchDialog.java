@@ -1,8 +1,5 @@
 package jadx.gui.ui;
 
-import javax.swing.*;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
@@ -10,14 +7,19 @@ import java.util.EnumSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import hu.akarnokd.rxjava2.swing.SwingSchedulers;
 import io.reactivex.BackpressureStrategy;
 import io.reactivex.Emitter;
 import io.reactivex.Flowable;
 import io.reactivex.disposables.Disposable;
 import io.reactivex.schedulers.Schedulers;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import jadx.gui.treemodel.JNode;
 import jadx.gui.utils.NLS;
@@ -176,10 +178,12 @@ public class SearchDialog extends CommonSearchDialog {
 				.subscribeOn(Schedulers.single())
 				.doOnNext(r -> LOG.debug("search event: {}", r))
 				.switchMap(text -> prepareSearch(text)
+						.doOnError(e -> LOG.error("Error prepare search: {}", e.getMessage(), e))
 						.subscribeOn(Schedulers.single())
 						.toList()
 						.toFlowable(), 1)
 				.observeOn(SwingSchedulers.edt())
+				.doOnError(e -> LOG.error("Error while searching: {}", e.getMessage(), e))
 				.subscribe(this::processSearchResults);
 	}
 

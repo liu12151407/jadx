@@ -4,12 +4,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-import io.reactivex.BackpressureStrategy;
-import io.reactivex.Flowable;
-import io.reactivex.FlowableEmitter;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import io.reactivex.BackpressureStrategy;
+import io.reactivex.Flowable;
+import io.reactivex.FlowableEmitter;
 
 import jadx.api.JavaClass;
 import jadx.api.JavaField;
@@ -21,7 +22,7 @@ import jadx.gui.treemodel.JNode;
 import jadx.gui.ui.SearchDialog;
 import jadx.gui.utils.CodeLinesInfo;
 import jadx.gui.utils.JNodeCache;
-import jadx.gui.utils.Utils;
+import jadx.gui.utils.UiUtils;
 
 import static jadx.gui.ui.SearchDialog.SearchOptions.CLASS;
 import static jadx.gui.ui.SearchDialog.SearchOptions.CODE;
@@ -69,15 +70,17 @@ public class TextSearchIndex {
 			int count = lines.size();
 			for (int i = 0; i < count; i++) {
 				StringRef line = lines.get(i);
-				if (line.length() != 0 && line.charAt(0) != '}') {
-					int lineNum = i + 1;
-					JavaNode node = linesInfo.getJavaNodeByLine(lineNum);
-					CodeNode codeNode = new CodeNode(nodeCache.makeFrom(node == null ? cls : node), lineNum, line);
-					if (strRefSupported) {
-						codeIndex.put(line, codeNode);
-					} else {
-						codeIndex.put(line.toString(), codeNode);
-					}
+				int lineLength = line.length();
+				if (lineLength == 0 || (lineLength == 1 && line.charAt(0) == '}')) {
+					continue;
+				}
+				int lineNum = i + 1;
+				JavaNode node = linesInfo.getJavaNodeByLine(lineNum);
+				CodeNode codeNode = new CodeNode(nodeCache.makeFrom(node == null ? cls : node), lineNum, line);
+				if (strRefSupported) {
+					codeIndex.put(line, codeNode);
+				} else {
+					codeIndex.put(line.toString(), codeNode);
 				}
 			}
 		} catch (Exception e) {
@@ -123,19 +126,19 @@ public class TextSearchIndex {
 						return;
 					}
 				}
-				if (!Utils.isFreeMemoryAvailable()) {
-					LOG.warn("Skipped code search stopped due to memory limit: {}", Utils.memoryInfo());
+				if (!UiUtils.isFreeMemoryAvailable()) {
+					LOG.warn("Skipped code search stopped due to memory limit: {}", UiUtils.memoryInfo());
 					emitter.onComplete();
 					return;
 				}
 			}
-			LOG.debug("Skipped code search complete: {}, memory usage: {}", searchStr, Utils.memoryInfo());
+			LOG.debug("Skipped code search complete: {}, memory usage: {}", searchStr, UiUtils.memoryInfo());
 			emitter.onComplete();
 		}, BackpressureStrategy.LATEST);
 	}
 
 	private int searchNext(FlowableEmitter<CodeNode> emitter, String text, JavaNode javaClass, String code,
-	                       int startPos, boolean ignoreCase) {
+			int startPos, boolean ignoreCase) {
 		int pos;
 		if (ignoreCase) {
 			pos = StringUtils.indexOfIgnoreCase(code, text, startPos);
