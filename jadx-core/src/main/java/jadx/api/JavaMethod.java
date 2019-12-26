@@ -70,11 +70,15 @@ public final class JavaMethod implements JavaNode {
 		return mth.getMethodInfo().isClassInit();
 	}
 
+	@Override
 	public int getDecompiledLine() {
 		return mth.getDecompiledLine();
 	}
 
-	MethodNode getMethodNode() {
+	/**
+	 * Internal API. Not Stable!
+	 */
+	public MethodNode getMethodNode() {
 		return mth;
 	}
 

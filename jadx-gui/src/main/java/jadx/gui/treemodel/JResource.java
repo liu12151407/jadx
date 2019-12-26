@@ -16,7 +16,7 @@ import jadx.api.ResourceFile;
 import jadx.api.ResourceFileContent;
 import jadx.api.ResourceType;
 import jadx.api.ResourcesLoader;
-import jadx.core.codegen.CodeWriter;
+import jadx.api.impl.SimpleCodeInfo;
 import jadx.core.xmlgen.ResContainer;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.OverlayIcon;
@@ -71,7 +71,7 @@ public class JResource extends JLoadableNode implements Comparable<JResource> {
 		} else {
 			removeAllChildren();
 
-			Comparator<JResource> typeComparator = (r1, r2) -> r1.type.ordinal() - r2.type.ordinal();
+			Comparator<JResource> typeComparator = Comparator.comparingInt(r -> r.type.ordinal());
 			Comparator<JResource> nameComparator = Comparator.comparing(JResource::getName, String.CASE_INSENSITIVE_ORDER);
 
 			files.sort(typeComparator.thenComparing(nameComparator));
@@ -146,17 +146,17 @@ public class JResource extends JLoadableNode implements Comparable<JResource> {
 				try {
 					return ResourcesLoader.decodeStream(rc.getResLink(), (size, is) -> {
 						if (size > 10 * 1024 * 1024L) {
-							return new CodeWriter("File too large for view");
+							return new SimpleCodeInfo("File too large for view");
 						}
 						return ResourcesLoader.loadToCodeWriter(is);
 					});
 				} catch (Exception e) {
-					return new CodeWriter("Failed to load resource file: \n" + jadx.core.utils.Utils.getStackTrace(e));
+					return new SimpleCodeInfo("Failed to load resource file: \n" + jadx.core.utils.Utils.getStackTrace(e));
 				}
 
 			case DECODED_DATA:
 			default:
-				return new CodeWriter("Unexpected resource type: " + rc);
+				return new SimpleCodeInfo("Unexpected resource type: " + rc);
 		}
 	}
 
@@ -164,8 +164,8 @@ public class JResource extends JLoadableNode implements Comparable<JResource> {
 		String resName = rc.getName();
 		String[] path = resName.split("/");
 		String resShortName = path.length == 0 ? resName : path[path.length - 1];
-		CodeWriter cw = rc.getText();
-		ResourceFileContent fileContent = new ResourceFileContent(resShortName, ResourceType.XML, cw);
+		ICodeInfo code = rc.getText();
+		ResourceFileContent fileContent = new ResourceFileContent(resShortName, ResourceType.XML, code);
 		addPath(path, root, new JResource(fileContent, resName, resShortName, JResType.FILE));
 
 		for (ResContainer subFile : rc.getSubFiles()) {

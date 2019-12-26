@@ -19,6 +19,8 @@ public enum AFlag {
 	COMMENT_OUT, // process as usual, but comment insn in generated code
 	REMOVE, // can be completely removed
 
+	HIDDEN, // instruction used inside other instruction but not listed in args
+
 	RESTART_CODEGEN,
 	DONT_RENAME, // do not rename during deobfuscation
 	ADDED_TO_REGION,
@@ -42,6 +44,11 @@ public enum AFlag {
 	 */
 	IMMUTABLE_TYPE,
 
+	/**
+	 * Force inline instruction with inline assign
+	 */
+	FORCE_ASSIGN_INLINE,
+
 	CUSTOM_DECLARE, // variable for this register don't need declaration
 	DECLARE_VAR,
 
@@ -58,6 +65,7 @@ public enum AFlag {
 	 * Use constants with explicit type: cast '(byte) 1' or type letter '7L'
 	 */
 	EXPLICIT_PRIMITIVE_TYPE,
+	EXPLICIT_CAST,
 
 	INCONSISTENT_CODE, // warning about incorrect decompilation
 }
