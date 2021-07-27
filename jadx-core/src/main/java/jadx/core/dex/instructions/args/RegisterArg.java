@@ -7,10 +7,12 @@ import org.jetbrains.annotations.Nullable;
 
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.nodes.InsnNode;
+import jadx.core.dex.nodes.MethodNode;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
 public class RegisterArg extends InsnArg implements Named {
 	public static final String THIS_ARG_NAME = "this";
+	public static final String SUPER_ARG_NAME = "super";
 
 	protected final int regNum;
 	// not null after SSATransform pass
@@ -30,12 +32,8 @@ public class RegisterArg extends InsnArg implements Named {
 		return true;
 	}
 
-	@Override
-	public void setType(ArgType newType) {
-		if (sVar == null) {
-			throw new JadxRuntimeException("Can't change type for register without SSA variable: " + this);
-		}
-		sVar.setType(newType);
+	public ArgType getInitType() {
+		return type;
 	}
 
 	@Override
@@ -46,27 +44,35 @@ public class RegisterArg extends InsnArg implements Named {
 		return ArgType.UNKNOWN;
 	}
 
-	public ArgType getInitType() {
-		return type;
+	@Override
+	public void setType(ArgType newType) {
+		if (sVar == null) {
+			throw new JadxRuntimeException("Can't change type for register without SSA variable: " + this);
+		}
+		sVar.setType(newType);
+	}
+
+	public void forceSetInitType(ArgType type) {
+		this.type = type;
 	}
 
 	@Nullable
 	public ArgType getImmutableType() {
-		if (contains(AFlag.IMMUTABLE_TYPE)) {
-			return type;
-		}
 		if (sVar != null) {
 			return sVar.getImmutableType();
+		}
+		if (contains(AFlag.IMMUTABLE_TYPE)) {
+			return type;
 		}
 		return null;
 	}
 
 	@Override
 	public boolean isTypeImmutable() {
-		if (contains(AFlag.IMMUTABLE_TYPE)) {
-			return true;
+		if (sVar != null) {
+			return sVar.isTypeImmutable();
 		}
-		return sVar != null && sVar.isTypeImmutable();
+		return contains(AFlag.IMMUTABLE_TYPE);
 	}
 
 	public SSAVar getSVar() {
@@ -77,16 +83,15 @@ public class RegisterArg extends InsnArg implements Named {
 		this.sVar = sVar;
 	}
 
-	@Override
-	public void add(AFlag flag) {
-		if (flag == AFlag.IMMUTABLE_TYPE && !type.isTypeKnown()) {
-			throw new JadxRuntimeException("Can't mark unknown type as immutable, type: " + type + ", reg: " + this);
-		}
-		super.add(flag);
+	public void resetSSAVar() {
+		this.sVar = null;
 	}
 
 	@Override
 	public String getName() {
+		if (isSuper()) {
+			return SUPER_ARG_NAME;
+		}
 		if (isThis()) {
 			return THIS_ARG_NAME;
 		}
@@ -94,6 +99,10 @@ public class RegisterArg extends InsnArg implements Named {
 			return null;
 		}
 		return sVar.getName();
+	}
+
+	private boolean isSuper() {
+		return contains(AFlag.SUPER);
 	}
 
 	@Override
@@ -119,11 +128,25 @@ public class RegisterArg extends InsnArg implements Named {
 
 	@Override
 	public RegisterArg duplicate() {
-		return duplicate(getRegNum(), sVar);
+		return duplicate(getRegNum(), getInitType(), sVar);
+	}
+
+	public RegisterArg duplicate(ArgType initType) {
+		return duplicate(getRegNum(), initType, sVar);
+	}
+
+	public RegisterArg duplicateWithNewSSAVar(MethodNode mth) {
+		RegisterArg duplicate = duplicate(regNum, getInitType(), null);
+		mth.makeNewSVar(duplicate);
+		return duplicate;
 	}
 
 	public RegisterArg duplicate(int regNum, @Nullable SSAVar sVar) {
-		RegisterArg dup = new RegisterArg(regNum, getInitType());
+		return duplicate(regNum, getInitType(), sVar);
+	}
+
+	public RegisterArg duplicate(int regNum, ArgType initType, @Nullable SSAVar sVar) {
+		RegisterArg dup = new RegisterArg(regNum, initType);
 		if (sVar != null) {
 			// only 'set' here, 'assign' or 'use' will binds later
 			dup.setSVar(sVar);

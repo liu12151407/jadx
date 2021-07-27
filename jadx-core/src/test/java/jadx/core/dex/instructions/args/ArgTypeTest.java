@@ -24,10 +24,10 @@ class ArgTypeTest {
 	@Test
 	void testContainsGenericType() {
 		ArgType wildcard = ArgType.wildcard(ArgType.genericType("T"), ArgType.WildcardBound.SUPER);
-		assertTrue(wildcard.containsGenericType());
+		assertTrue(wildcard.containsTypeVariable());
 
 		ArgType type = ArgType.generic("java.lang.List", wildcard);
-		assertTrue(type.containsGenericType());
+		assertTrue(type.containsTypeVariable());
 	}
 
 	@Test
@@ -36,11 +36,11 @@ class ArgTypeTest {
 		ArgType base = ArgType.generic("java.util.Map", genericTypes);
 
 		ArgType genericInner = ArgType.outerGeneric(base, ArgType.generic("Entry", genericTypes));
-		LOG.debug("genericInner : {}", genericInner);
+		assertThat(genericInner.toString(), is("java.util.Map<K, V>$Entry<K, V>"));
+		assertTrue(genericInner.containsTypeVariable());
 
 		ArgType genericInner2 = ArgType.outerGeneric(base, ArgType.object("Entry"));
-		LOG.debug("genericInner2: {}", genericInner2);
-
-		assertThat(genericInner.toString(), is("java.util.Map<K, V>$Entry<K, V>"));
+		assertThat(genericInner2.toString(), is("java.util.Map<K, V>$Entry"));
+		assertTrue(genericInner2.containsTypeVariable());
 	}
 }

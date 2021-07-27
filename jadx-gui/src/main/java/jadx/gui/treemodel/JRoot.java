@@ -1,12 +1,17 @@
 package jadx.gui.treemodel;
 
 import java.io.File;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.regex.Pattern;
 
-import javax.swing.*;
+import javax.swing.Icon;
+import javax.swing.ImageIcon;
+
+import org.jetbrains.annotations.Nullable;
 
 import jadx.api.ResourceFile;
 import jadx.gui.JadxWrapper;
@@ -23,9 +28,10 @@ public class JRoot extends JNode {
 
 	private transient boolean flatPackages = false;
 
+	private final List<JNode> customNodes = new ArrayList<>();
+
 	public JRoot(JadxWrapper wrapper) {
 		this.wrapper = wrapper;
-		update();
 	}
 
 	public final void update() {
@@ -37,10 +43,8 @@ public class JRoot extends JNode {
 			jRes.update();
 			add(jRes);
 		}
-
-		ApkSignature signature = ApkSignature.getApkSignature(wrapper);
-		if (signature != null) {
-			add(signature);
+		for (JNode customNode : customNodes) {
+			add(customNode);
 		}
 	}
 
@@ -53,9 +57,9 @@ public class JRoot extends JNode {
 		for (ResourceFile rf : resources) {
 			String rfName;
 			if (rf.getZipRef() != null) {
-				rfName = rf.getName();
+				rfName = rf.getDeobfName();
 			} else {
-				rfName = new File(rf.getName()).getName();
+				rfName = new File(rf.getDeobfName()).getName();
 			}
 			String[] parts = new File(rfName).getPath().split(splitPathStr);
 			JResource curRf = root;
@@ -108,6 +112,19 @@ public class JRoot extends JNode {
 		}
 	}
 
+	public void replaceCustomNode(@Nullable JNode node) {
+		if (node == null) {
+			return;
+		}
+		Class<?> nodeCls = node.getClass();
+		customNodes.removeIf(n -> n.getClass().equals(nodeCls));
+		customNodes.add(node);
+	}
+
+	public List<JNode> getCustomNodes() {
+		return customNodes;
+	}
+
 	@Override
 	public Icon getIcon() {
 		return ROOT_ICON;
@@ -125,7 +142,14 @@ public class JRoot extends JNode {
 
 	@Override
 	public String makeString() {
-		File file = wrapper.getOpenFile();
-		return file != null ? file.getName() : "File not open";
+		List<Path> paths = wrapper.getOpenPaths();
+		int count = paths.size();
+		if (count == 0) {
+			return "File not open";
+		}
+		if (count == 1) {
+			return paths.get(0).getFileName().toString();
+		}
+		return count + " files";
 	}
 }

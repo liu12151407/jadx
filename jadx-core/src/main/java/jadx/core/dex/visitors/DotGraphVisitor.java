@@ -5,7 +5,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import jadx.core.codegen.CodeWriter;
+import jadx.api.ICodeWriter;
+import jadx.api.impl.SimpleCodeWriter;
 import jadx.core.codegen.MethodGen;
 import jadx.core.dex.attributes.IAttributeNode;
 import jadx.core.dex.instructions.IfNode;
@@ -23,10 +24,13 @@ import jadx.core.utils.RegionUtils;
 import jadx.core.utils.StringUtils;
 import jadx.core.utils.Utils;
 
+import static jadx.core.codegen.MethodGen.FallbackOption.BLOCK_DUMP;
+
 public class DotGraphVisitor extends AbstractVisitor {
 
 	private static final String NL = "\\l";
 	private static final boolean PRINT_DOMINATORS = false;
+	private static final boolean PRINT_DOMINATORS_INFO = false;
 
 	private final boolean useRegions;
 	private final boolean rawInsn;
@@ -69,8 +73,8 @@ public class DotGraphVisitor extends AbstractVisitor {
 	}
 
 	private class DumpDotGraph {
-		private final CodeWriter dot = new CodeWriter();
-		private final CodeWriter conn = new CodeWriter();
+		private final ICodeWriter dot = new SimpleCodeWriter();
+		private final ICodeWriter conn = new SimpleCodeWriter();
 		private final File dir;
 
 		public DumpDotGraph(File dir) {
@@ -182,6 +186,14 @@ public class DotGraphVisitor extends AbstractVisitor {
 			if (!attrs.isEmpty()) {
 				dot.add('|').add(attrs);
 			}
+			if (PRINT_DOMINATORS_INFO) {
+				dot.add('|');
+				dot.startLine("doms: ").add(escape(block.getDoms()));
+				dot.startLine("\\lidom: ").add(escape(block.getIDom()));
+				dot.startLine("\\ldom-f: ").add(escape(block.getDomFrontier()));
+				dot.startLine("\\ldoms-on: ").add(escape(Utils.listToString(block.getDominatesOn())));
+				dot.startLine("\\l");
+			}
 			String insns = insertInsns(mth, block);
 			if (!insns.isEmpty()) {
 				dot.add('|').add(insns);
@@ -261,15 +273,22 @@ public class DotGraphVisitor extends AbstractVisitor {
 				}
 				return str.toString();
 			} else {
-				CodeWriter code = new CodeWriter();
+				ICodeWriter code = new SimpleCodeWriter();
 				List<InsnNode> instructions = block.getInstructions();
-				MethodGen.addFallbackInsns(code, mth, instructions.toArray(new InsnNode[0]), false);
+				MethodGen.addFallbackInsns(code, mth, instructions.toArray(new InsnNode[0]), BLOCK_DUMP);
 				String str = escape(code.newLine().toString());
 				if (str.startsWith(NL)) {
 					str = str.substring(NL.length());
 				}
 				return str;
 			}
+		}
+
+		private String escape(Object obj) {
+			if (obj == null) {
+				return "null";
+			}
+			return escape(obj.toString());
 		}
 
 		private String escape(String string) {
@@ -281,6 +300,7 @@ public class DotGraphVisitor extends AbstractVisitor {
 					.replace("\"", "\\\"")
 					.replace("-", "\\-")
 					.replace("|", "\\|")
+					.replace(ICodeWriter.NL, NL)
 					.replace("\n", NL);
 		}
 	}

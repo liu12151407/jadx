@@ -10,7 +10,11 @@ import jadx.api.JavaClass;
 import jadx.api.JavaField;
 import jadx.api.JavaMethod;
 import jadx.api.JavaNode;
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.info.AccessInfo;
+import jadx.gui.ui.ContentPanel;
+import jadx.gui.ui.TabbedPane;
+import jadx.gui.ui.codearea.ClassCodeContentPanel;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.UiUtils;
 
@@ -50,12 +54,23 @@ public class JClass extends JLoadableNode {
 		getRootClass().load();
 	}
 
+	@Override
+	public boolean canRename() {
+		return !cls.getClassNode().contains(AFlag.DONT_RENAME);
+	}
+
 	public synchronized void load() {
-		if (!loaded) {
-			cls.decompile();
-			cls.unload();
-			loaded = true;
+		if (loaded) {
+			return;
 		}
+		cls.decompile();
+		loaded = true;
+		update();
+	}
+
+	public synchronized void reload() {
+		cls.reload();
+		loaded = true;
 		update();
 	}
 
@@ -80,13 +95,17 @@ public class JClass extends JLoadableNode {
 
 	@Override
 	public @Nullable ICodeInfo getCodeInfo() {
-		load();
-		return cls.getClassNode().getCode();
+		return cls.getCodeInfo();
 	}
 
 	@Override
 	public String getContent() {
 		return cls.getCode();
+	}
+
+	@Override
+	public ContentPanel getContentPanel(TabbedPane tabbedPane) {
+		return new ClassCodeContentPanel(tabbedPane, this);
 	}
 
 	@Override

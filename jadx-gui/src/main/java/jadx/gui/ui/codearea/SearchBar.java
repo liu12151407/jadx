@@ -15,6 +15,7 @@ import org.fife.ui.rtextarea.SearchResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.core.utils.StringUtils;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.TextStandardActions;
 import jadx.gui.utils.UiUtils;
@@ -40,7 +41,6 @@ class SearchBar extends JToolBar {
 
 	private final JCheckBox wholeWordCB;
 	private final JCheckBox matchCaseCB;
-	private ActionListener forwardListener = e -> search(0);
 
 	public SearchBar(RSyntaxTextArea textArea) {
 		rTextArea = textArea;
@@ -81,6 +81,8 @@ class SearchBar extends JToolBar {
 		nextButton.setBorderPainted(false);
 		add(nextButton);
 
+		ActionListener forwardListener = e -> search(0);
+
 		markAllCB = new JCheckBox(NLS.str("search.mark_all"));
 		markAllCB.addActionListener(forwardListener);
 		add(markAllCB);
@@ -112,6 +114,10 @@ class SearchBar extends JToolBar {
 		setVisible(visible);
 
 		if (visible) {
+			String preferText = rTextArea.getSelectedText();
+			if (!StringUtils.isEmpty(preferText)) {
+				searchField.setText(preferText);
+			}
 			searchField.requestFocus();
 			searchField.selectAll();
 		} else {

@@ -35,6 +35,7 @@ public class NLS {
 		LANG_LOCALES.add(new LangLocale("zh", "CN"));
 		LANG_LOCALES.add(new LangLocale("es", "ES"));
 		LANG_LOCALES.add(new LangLocale("de", "DE"));
+		LANG_LOCALES.add(new LangLocale("ko", "KR"));
 
 		LANG_LOCALES.forEach(NLS::load);
 
@@ -71,13 +72,7 @@ public class NLS {
 	}
 
 	public static String str(String key, Object... parameters) {
-		String value;
-		try {
-			value = localizedMessagesMap.getString(key);
-		} catch (MissingResourceException e) {
-			value = FALLBACK_MESSAGES_MAP.getString(key); // definitely exists
-		}
-		return String.format(value, parameters);
+		return String.format(str(key), parameters);
 	}
 
 	public static String str(String key, LangLocale locale) {

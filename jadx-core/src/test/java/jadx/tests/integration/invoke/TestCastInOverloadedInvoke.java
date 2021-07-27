@@ -29,24 +29,33 @@ public class TestCastInOverloadedInvoke extends IntegrationTest {
 			}
 		}
 
+		public void test3() {
+			call((String) null);
+			call((List<String>) null);
+			call((ArrayList<String>) null);
+		}
+
 		public void call(String str) {
 			c += 1;
 		}
 
 		public void call(List<String> list) {
-			c += 2;
+			c += 10;
 		}
 
 		public void call(ArrayList<String> list) {
-			c += 4;
+			c += 100;
 		}
 
 		public void check() {
 			test();
-			assertThat(c, is(2 + 4));
+			assertThat(c, is(10 + 100));
 			c = 0;
 			test2("str");
 			assertThat(c, is(1));
+			c = 0;
+			test3();
+			assertThat(c, is(111));
 		}
 	}
 
@@ -55,7 +64,7 @@ public class TestCastInOverloadedInvoke extends IntegrationTest {
 		ClassNode cls = getClassNode(TestCls.class);
 		String code = cls.getCode().toString();
 
-		assertThat(code, containsOne("call((ArrayList<String>) new ArrayList());"));
+		assertThat(code, containsOne("call(new ArrayList<>());"));
 		assertThat(code, containsOne("call((List<String>) new ArrayList());"));
 
 		assertThat(code, containsOne("call((String) obj);"));
@@ -63,13 +72,10 @@ public class TestCastInOverloadedInvoke extends IntegrationTest {
 
 	@NotYetImplemented
 	@Test
-	public void test2() {
+	public void testNYI() {
 		ClassNode cls = getClassNode(TestCls.class);
 		String code = cls.getCode().toString();
 
-		assertThat(code, containsOne("call(new ArrayList<>());"));
 		assertThat(code, containsOne("call((List<String>) new ArrayList<String>());"));
-
-		assertThat(code, containsOne("call((String) obj);"));
 	}
 }

@@ -3,6 +3,7 @@ package jadx.core.utils;
 import java.util.ArrayList;
 import java.util.List;
 
+import jadx.api.ICodeWriter;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.PhiListAttr;
@@ -86,7 +87,8 @@ public class DebugChecks {
 		List<RegisterArg> useList = sVar.getUseList();
 		boolean assignReg = insn.getResult() == reg;
 		if (!assignReg && !Utils.containsInListByRef(useList, reg)) {
-			throw new JadxRuntimeException("Incorrect use list in ssa var: " + sVar + ", register not listed.\n insn: " + insn);
+			throw new JadxRuntimeException("Incorrect use list in ssa var: " + sVar + ", register not listed."
+					+ ICodeWriter.NL + " insn: " + insn);
 		}
 		for (RegisterArg useArg : useList) {
 			checkRegisterArg(mth, useArg);
@@ -107,8 +109,8 @@ public class DebugChecks {
 			}
 			BlockNode parentInsnBlock = BlockUtils.getBlockByInsn(mth, parentInsn);
 			if (parentInsnBlock == null) {
-				parentInsnBlock = BlockUtils.getBlockByInsn(mth, parentInsn);
-				throw new JadxRuntimeException("Parent insn not found in blocks tree for: " + reg + ",\n insn: " + parentInsn);
+				throw new JadxRuntimeException("Parent insn not found in blocks tree for: " + reg
+						+ ICodeWriter.NL + " insn: " + parentInsn);
 			}
 		}
 	}
@@ -157,6 +159,7 @@ public class DebugChecks {
 					InsnNode parentInsn = useArg.getParentInsn();
 					if (parentInsn != null && parentInsn == usedInPhi) {
 						found = true;
+						break;
 					}
 				}
 				if (!found) {
@@ -165,5 +168,4 @@ public class DebugChecks {
 			}
 		}
 	}
-
 }

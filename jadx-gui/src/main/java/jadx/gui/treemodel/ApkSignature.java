@@ -10,12 +10,18 @@ import javax.swing.ImageIcon;
 
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.text.StringEscapeUtils;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.android.apksig.ApkVerifier;
 
+import jadx.api.ResourceFile;
+import jadx.api.ResourceType;
 import jadx.gui.JadxWrapper;
+import jadx.gui.ui.ContentPanel;
+import jadx.gui.ui.HtmlPanel;
+import jadx.gui.ui.TabbedPane;
 import jadx.gui.utils.CertificateManager;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.UiUtils;
@@ -30,14 +36,24 @@ public class ApkSignature extends JNode {
 	private final transient File openFile;
 	private String content;
 
+	@Nullable
 	public static ApkSignature getApkSignature(JadxWrapper wrapper) {
 		// Only show the ApkSignature node if an AndroidManifest.xml is present.
 		// Without a manifest the Google ApkVerifier refuses to work.
-		if (wrapper.getResources().stream().noneMatch(r -> "AndroidManifest.xml".equals(r.getName()))) {
+		File apkFile = null;
+		for (ResourceFile resFile : wrapper.getResources()) {
+			if (resFile.getType() == ResourceType.MANIFEST) {
+				ResourceFile.ZipRef zipRef = resFile.getZipRef();
+				if (zipRef != null) {
+					apkFile = zipRef.getZipFile();
+					break;
+				}
+			}
+		}
+		if (apkFile == null) {
 			return null;
 		}
-		File openFile = wrapper.getOpenFile();
-		return new ApkSignature(openFile);
+		return new ApkSignature(apkFile);
 	}
 
 	public ApkSignature(File openFile) {
@@ -57,6 +73,11 @@ public class ApkSignature extends JNode {
 	@Override
 	public String makeString() {
 		return "APK signature";
+	}
+
+	@Override
+	public ContentPanel getContentPanel(TabbedPane tabbedPane) {
+		return new HtmlPanel(tabbedPane, this);
 	}
 
 	@Override
@@ -179,7 +200,8 @@ public class ApkSignature extends JNode {
 			builder.append("<blockquote>");
 			// Unprotected Zip entry issues are very common, handle them separately
 			List<ApkVerifier.IssueWithParams> unprotIssues = issueList.stream()
-					.filter(i -> i.getIssue() == ApkVerifier.Issue.JAR_SIG_UNPROTECTED_ZIP_ENTRY).collect(Collectors.toList());
+					.filter(i -> i.getIssue() == ApkVerifier.Issue.JAR_SIG_UNPROTECTED_ZIP_ENTRY)
+					.collect(Collectors.toList());
 			if (!unprotIssues.isEmpty()) {
 				builder.append("<h4>");
 				builder.escape(NLS.str("apkSignature.unprotectedEntry"));
@@ -191,7 +213,8 @@ public class ApkSignature extends JNode {
 				builder.append("</blockquote>");
 			}
 			List<ApkVerifier.IssueWithParams> remainingIssues = issueList.stream()
-					.filter(i -> i.getIssue() != ApkVerifier.Issue.JAR_SIG_UNPROTECTED_ZIP_ENTRY).collect(Collectors.toList());
+					.filter(i -> i.getIssue() != ApkVerifier.Issue.JAR_SIG_UNPROTECTED_ZIP_ENTRY)
+					.collect(Collectors.toList());
 			if (!remainingIssues.isEmpty()) {
 				builder.append("<pre>\n");
 				for (ApkVerifier.IssueWithParams issue : remainingIssues) {

@@ -4,14 +4,19 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Function;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import jadx.core.Consts;
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.nodes.ClassNode;
-import jadx.core.dex.nodes.DexNode;
 import jadx.core.dex.nodes.RootNode;
-import jadx.core.dex.nodes.parser.SignatureParser;
+import jadx.core.dex.visitors.typeinference.TypeCompareEnum;
 import jadx.core.utils.Utils;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 
 public abstract class ArgType {
 	public static final ArgType INT = primitive(PrimitiveType.INT);
@@ -24,12 +29,14 @@ public abstract class ArgType {
 	public static final ArgType LONG = primitive(PrimitiveType.LONG);
 	public static final ArgType VOID = primitive(PrimitiveType.VOID);
 
-	public static final ArgType OBJECT = object(Consts.CLASS_OBJECT);
-	public static final ArgType CLASS = object(Consts.CLASS_CLASS);
-	public static final ArgType STRING = object(Consts.CLASS_STRING);
-	public static final ArgType ENUM = object(Consts.CLASS_ENUM);
-	public static final ArgType THROWABLE = object(Consts.CLASS_THROWABLE);
+	public static final ArgType OBJECT = objectNoCache(Consts.CLASS_OBJECT);
+	public static final ArgType CLASS = objectNoCache(Consts.CLASS_CLASS);
+	public static final ArgType STRING = objectNoCache(Consts.CLASS_STRING);
+	public static final ArgType ENUM = objectNoCache(Consts.CLASS_ENUM);
+	public static final ArgType THROWABLE = objectNoCache(Consts.CLASS_THROWABLE);
+	public static final ArgType EXCEPTION = objectNoCache(Consts.CLASS_EXCEPTION);
 	public static final ArgType OBJECT_ARRAY = array(OBJECT);
+	public static final ArgType WILDCARD = wildcard();
 
 	public static final ArgType UNKNOWN = unknown(PrimitiveType.values());
 	public static final ArgType UNKNOWN_OBJECT = unknown(PrimitiveType.OBJECT, PrimitiveType.ARRAY);
@@ -59,6 +66,7 @@ public abstract class ArgType {
 	public static final ArgType WIDE = unknown(PrimitiveType.LONG, PrimitiveType.DOUBLE);
 
 	public static final ArgType INT_FLOAT = unknown(PrimitiveType.INT, PrimitiveType.FLOAT);
+	public static final ArgType INT_BOOLEAN = unknown(PrimitiveType.INT, PrimitiveType.BOOLEAN);
 
 	protected int hash;
 
@@ -66,12 +74,39 @@ public abstract class ArgType {
 		return new PrimitiveArg(stype);
 	}
 
-	public static ArgType object(String obj) {
+	private static ArgType objectNoCache(String obj) {
 		return new ObjectType(obj);
+	}
+
+	public static ArgType object(String obj) {
+		// TODO: add caching
+		String cleanObjectName = Utils.cleanObjectName(obj);
+		switch (cleanObjectName) {
+			case Consts.CLASS_OBJECT:
+				return OBJECT;
+			case Consts.CLASS_STRING:
+				return STRING;
+			case Consts.CLASS_CLASS:
+				return CLASS;
+			case Consts.CLASS_THROWABLE:
+				return THROWABLE;
+			case Consts.CLASS_EXCEPTION:
+				return EXCEPTION;
+			default:
+				return new ObjectType(cleanObjectName);
+		}
 	}
 
 	public static ArgType genericType(String type) {
 		return new GenericType(type);
+	}
+
+	public static ArgType genericType(String type, ArgType extendType) {
+		return new GenericType(type, extendType);
+	}
+
+	public static ArgType genericType(String type, List<ArgType> extendTypes) {
+		return new GenericType(type, extendTypes);
 	}
 
 	public static ArgType wildcard() {
@@ -82,19 +117,35 @@ public abstract class ArgType {
 		return new WildcardType(obj, bound);
 	}
 
-	public static ArgType parseGenericSignature(String sign) {
-		return new SignatureParser(sign).consumeType();
+	public static ArgType generic(ArgType obj, List<ArgType> generics) {
+		if (!obj.isObject()) {
+			throw new IllegalArgumentException("Expected Object as ArgType, got: " + obj);
+		}
+		return new GenericObject(obj.getObject(), generics);
 	}
 
+	public static ArgType generic(ArgType obj, ArgType... generics) {
+		return generic(obj, Arrays.asList(generics));
+	}
+
+	public static ArgType generic(String obj, List<ArgType> generics) {
+		return new GenericObject(Utils.cleanObjectName(obj), generics);
+	}
+
+	public static ArgType generic(String obj, ArgType generic) {
+		return generic(obj, Collections.singletonList(generic));
+	}
+
+	@TestOnly
 	public static ArgType generic(String obj, ArgType... generics) {
-		return new GenericObject(obj, generics);
+		return generic(obj, Arrays.asList(generics));
 	}
 
 	public static ArgType outerGeneric(ArgType genericOuterType, ArgType innerType) {
-		return new OuterGenericObject((GenericObject) genericOuterType, (ObjectType) innerType);
+		return new OuterGenericObject((ObjectType) genericOuterType, (ObjectType) innerType);
 	}
 
-	public static ArgType array(ArgType vtype) {
+	public static ArgType array(@NotNull ArgType vtype) {
 		return new ArrayArg(vtype);
 	}
 
@@ -160,7 +211,7 @@ public abstract class ArgType {
 		protected final String objName;
 
 		public ObjectType(String obj) {
-			this.objName = Utils.cleanObjectName(obj);
+			this.objName = obj;
 			this.hash = objName.hashCode();
 		}
 
@@ -194,7 +245,16 @@ public abstract class ArgType {
 		private List<ArgType> extendTypes;
 
 		public GenericType(String obj) {
+			this(obj, Collections.emptyList());
+		}
+
+		public GenericType(String obj, ArgType extendType) {
+			this(obj, Collections.singletonList(extendType));
+		}
+
+		public GenericType(String obj, List<ArgType> extendTypes) {
 			super(obj);
+			this.extendTypes = extendTypes;
 		}
 
 		@Override
@@ -210,6 +270,21 @@ public abstract class ArgType {
 		@Override
 		public void setExtendTypes(List<ArgType> extendTypes) {
 			this.extendTypes = extendTypes;
+		}
+
+		@Override
+		boolean internalEquals(Object obj) {
+			return super.internalEquals(obj)
+					&& extendTypes.equals(((GenericType) obj).extendTypes);
+		}
+
+		@Override
+		public String toString() {
+			List<ArgType> extTypes = this.extendTypes;
+			if (extTypes.isEmpty()) {
+				return objName;
+			}
+			return objName + " extends " + Utils.listToString(extTypes, " & ");
 		}
 	}
 
@@ -250,6 +325,11 @@ public abstract class ArgType {
 		}
 
 		@Override
+		public boolean isWildcard() {
+			return true;
+		}
+
+		@Override
 		public boolean isGeneric() {
 			return true;
 		}
@@ -281,16 +361,16 @@ public abstract class ArgType {
 	}
 
 	private static class GenericObject extends ObjectType {
-		private final ArgType[] generics;
+		private final List<ArgType> generics;
 
-		public GenericObject(String obj, ArgType[] generics) {
+		public GenericObject(String obj, List<ArgType> generics) {
 			super(obj);
 			this.generics = Objects.requireNonNull(generics);
 			this.hash = calcHash();
 		}
 
 		private int calcHash() {
-			return objName.hashCode() + 31 * Arrays.hashCode(generics);
+			return objName.hashCode() + 31 * generics.hashCode();
 		}
 
 		@Override
@@ -299,27 +379,27 @@ public abstract class ArgType {
 		}
 
 		@Override
-		public ArgType[] getGenericTypes() {
+		public List<ArgType> getGenericTypes() {
 			return generics;
 		}
 
 		@Override
 		boolean internalEquals(Object obj) {
 			return super.internalEquals(obj)
-					&& Arrays.equals(generics, ((GenericObject) obj).generics);
+					&& Objects.equals(generics, ((GenericObject) obj).generics);
 		}
 
 		@Override
 		public String toString() {
-			return super.toString() + '<' + Utils.arrayToStr(generics) + '>';
+			return super.toString() + '<' + Utils.listToString(generics) + '>';
 		}
 	}
 
 	private static class OuterGenericObject extends ObjectType {
-		private final GenericObject outerType;
+		private final ObjectType outerType;
 		private final ObjectType innerType;
 
-		public OuterGenericObject(GenericObject outerType, ObjectType innerType) {
+		public OuterGenericObject(ObjectType outerType, ObjectType innerType) {
 			super(outerType.getObject() + '$' + innerType.getObject());
 			this.outerType = outerType;
 			this.innerType = innerType;
@@ -336,7 +416,7 @@ public abstract class ArgType {
 		}
 
 		@Override
-		public ArgType[] getGenericTypes() {
+		public List<ArgType> getGenericTypes() {
 			return innerType.getGenericTypes();
 		}
 
@@ -471,9 +551,9 @@ public abstract class ArgType {
 		@Override
 		public String toString() {
 			if (possibleTypes.length == PrimitiveType.values().length) {
-				return "?";
+				return "??";
 			} else {
-				return "?[" + Utils.arrayToStr(possibleTypes) + ']';
+				return "??[" + Utils.arrayToStr(possibleTypes) + ']';
 			}
 		}
 	}
@@ -506,7 +586,7 @@ public abstract class ArgType {
 		return false;
 	}
 
-	public ArgType[] getGenericTypes() {
+	public List<ArgType> getGenericTypes() {
 		return null;
 	}
 
@@ -523,6 +603,10 @@ public abstract class ArgType {
 
 	public WildcardBound getWildcardBound() {
 		return null;
+	}
+
+	public boolean isWildcard() {
+		return false;
 	}
 
 	public ArgType getOuterType() {
@@ -555,15 +639,12 @@ public abstract class ArgType {
 
 	public abstract PrimitiveType[] getPossibleTypes();
 
-	public static boolean isCastNeeded(DexNode dex, ArgType from, ArgType to) {
+	public static boolean isCastNeeded(RootNode root, ArgType from, ArgType to) {
 		if (from.equals(to)) {
 			return false;
 		}
-		if (from.isObject() && to.isObject()
-				&& dex.root().getClsp().isImplements(from.getObject(), to.getObject())) {
-			return false;
-		}
-		return true;
+		TypeCompareEnum result = root.getTypeUpdate().getTypeCompare().compareTypes(from, to);
+		return !result.isNarrow();
 	}
 
 	public static boolean isInstanceOf(RootNode root, ArgType type, ArgType of) {
@@ -596,6 +677,18 @@ public abstract class ArgType {
 				|| (!isTypeKnown() && contains(primitiveType));
 	}
 
+	public boolean canBeAnyNumber() {
+		if (isPrimitive()) {
+			return !getPrimitiveType().isObjectOrArray();
+		}
+		for (PrimitiveType primitiveType : getPossibleTypes()) {
+			if (!primitiveType.isObjectOrArray()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public static ArgType convertFromPrimitiveType(PrimitiveType primitiveType) {
 		switch (primitiveType) {
 			case BOOLEAN:
@@ -625,6 +718,9 @@ public abstract class ArgType {
 	}
 
 	public static ArgType parse(String type) {
+		if (type == null || type.isEmpty()) {
+			throw new JadxRuntimeException("Failed to parse type string: " + type);
+		}
 		char f = type.charAt(0);
 		switch (f) {
 			case 'L':
@@ -679,34 +775,98 @@ public abstract class ArgType {
 		return 1;
 	}
 
-	public boolean containsGenericType() {
+	public boolean containsGeneric() {
+		if (isGeneric() || isGenericType()) {
+			return true;
+		}
+		if (isArray()) {
+			ArgType arrayElement = getArrayElement();
+			if (arrayElement != null) {
+				return arrayElement.containsGeneric();
+			}
+		}
+		return false;
+	}
+
+	public boolean containsTypeVariable() {
 		if (isGenericType()) {
 			return true;
 		}
 		ArgType wildcardType = getWildcardType();
 		if (wildcardType != null) {
-			return wildcardType.containsGenericType();
+			return wildcardType.containsTypeVariable();
 		}
 		if (isGeneric()) {
-			ArgType[] genericTypes = getGenericTypes();
+			List<ArgType> genericTypes = getGenericTypes();
 			if (genericTypes != null) {
 				for (ArgType genericType : genericTypes) {
-					if (genericType.containsGenericType()) {
+					if (genericType.containsTypeVariable()) {
 						return true;
 					}
 				}
 			}
+			ArgType outerType = getOuterType();
+			if (outerType != null) {
+				return outerType.containsTypeVariable();
+			}
 			return false;
+		}
+		if (isArray()) {
+			ArgType arrayElement = getArrayElement();
+			if (arrayElement != null) {
+				return arrayElement.containsTypeVariable();
+			}
 		}
 		return false;
 	}
 
-	public static ArgType tryToResolveClassAlias(DexNode dex, ArgType type) {
+	public boolean isVoid() {
+		return isPrimitive() && getPrimitiveType() == PrimitiveType.VOID;
+	}
+
+	/**
+	 * Recursively visit all subtypes of this type.
+	 * To exit return non-null value.
+	 */
+	@Nullable
+	public <R> R visitTypes(Function<ArgType, R> visitor) {
+		R r = visitor.apply(this);
+		if (r != null) {
+			return r;
+		}
+		if (isArray()) {
+			ArgType arrayElement = getArrayElement();
+			if (arrayElement != null) {
+				return arrayElement.visitTypes(visitor);
+			}
+		}
+		ArgType wildcardType = getWildcardType();
+		if (wildcardType != null) {
+			R res = wildcardType.visitTypes(visitor);
+			if (res != null) {
+				return res;
+			}
+		}
+		if (isGeneric()) {
+			List<ArgType> genericTypes = getGenericTypes();
+			if (genericTypes != null) {
+				for (ArgType genericType : genericTypes) {
+					R res = genericType.visitTypes(visitor);
+					if (res != null) {
+						return res;
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	public static ArgType tryToResolveClassAlias(RootNode root, ArgType type) {
 		if (!type.isObject() || type.isGenericType()) {
 			return type;
 		}
 
-		ClassNode cls = dex.resolveClass(type);
+		ClassNode cls = root.resolveClass(type);
 		if (cls == null) {
 			return type;
 		}

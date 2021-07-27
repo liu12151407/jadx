@@ -1,6 +1,6 @@
 package jadx.gui.treemodel;
 
-import javax.swing.*;
+import javax.swing.Icon;
 import javax.swing.tree.DefaultMutableTreeNode;
 
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
@@ -9,6 +9,8 @@ import org.jetbrains.annotations.Nullable;
 import jadx.api.ICodeInfo;
 import jadx.api.JadxDecompiler;
 import jadx.api.JavaNode;
+import jadx.gui.ui.ContentPanel;
+import jadx.gui.ui.TabbedPane;
 
 public abstract class JNode extends DefaultMutableTreeNode {
 
@@ -28,6 +30,11 @@ public abstract class JNode extends DefaultMutableTreeNode {
 	}
 
 	public String getContent() {
+		return null;
+	}
+
+	@Nullable
+	public ContentPanel getContentPanel(TabbedPane tabbedPane) {
 		return null;
 	}
 
@@ -75,7 +82,15 @@ public abstract class JNode extends DefaultMutableTreeNode {
 		return javaNode.getName();
 	}
 
+	public boolean canRename() {
+		return false;
+	}
+
 	public abstract String makeString();
+
+	public String makeStringHtml() {
+		return makeString();
+	}
 
 	public String makeDescString() {
 		return null;
@@ -87,6 +102,18 @@ public abstract class JNode extends DefaultMutableTreeNode {
 
 	public String makeLongString() {
 		return makeString();
+	}
+
+	public String makeLongStringHtml() {
+		return makeLongString();
+	}
+
+	public int getPos() {
+		JavaNode javaNode = getJavaNode();
+		if (javaNode == null) {
+			return -1;
+		}
+		return javaNode.getDefPos();
 	}
 
 	@Override

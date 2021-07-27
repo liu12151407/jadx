@@ -10,6 +10,7 @@ import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 
 import hu.kazocsaba.imageviewer.ImageViewer;
 
+import jadx.api.ICodeWriter;
 import jadx.api.ResourceFile;
 import jadx.api.ResourcesLoader;
 import jadx.core.utils.Utils;
@@ -21,7 +22,7 @@ import jadx.gui.ui.codearea.AbstractCodeArea;
 public class ImagePanel extends ContentPanel {
 	private static final long serialVersionUID = 4071356367073142688L;
 
-	ImagePanel(TabbedPane panel, JResource res) {
+	public ImagePanel(TabbedPane panel, JResource res) {
 		super(panel, res);
 		setLayout(new BorderLayout());
 		try {
@@ -30,7 +31,7 @@ public class ImagePanel extends ContentPanel {
 			add(imageViewer.getComponent());
 		} catch (Exception e) {
 			RSyntaxTextArea textArea = AbstractCodeArea.getDefaultArea(panel.getMainWindow());
-			textArea.setText("Image load error: \n" + Utils.getStackTrace(e));
+			textArea.setText("Image load error:" + ICodeWriter.NL + Utils.getStackTrace(e));
 			add(textArea);
 		}
 	}

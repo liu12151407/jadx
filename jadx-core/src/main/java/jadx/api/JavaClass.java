@@ -57,13 +57,13 @@ public final class JavaClass implements JavaNode {
 		cls.decompile();
 	}
 
-	public synchronized String getSmali() {
-		return cls.getSmali();
+	public synchronized void reload() {
+		listsLoaded = false;
+		cls.reloadCode();
 	}
 
-	public synchronized void unload() {
-		cls.unload();
-		listsLoaded = false;
+	public synchronized String getSmali() {
+		return cls.getSmali();
 	}
 
 	/**
@@ -119,19 +119,23 @@ public final class JavaClass implements JavaNode {
 		}
 	}
 
-	private JadxDecompiler getRootDecompiler() {
+	protected JadxDecompiler getRootDecompiler() {
 		if (parent != null) {
 			return parent.getRootDecompiler();
 		}
 		return decompiler;
 	}
 
-	private Map<CodePosition, Object> getCodeAnnotations() {
+	public Map<CodePosition, Object> getCodeAnnotations() {
 		ICodeInfo code = getCodeInfo();
 		if (code == null) {
 			return Collections.emptyMap();
 		}
 		return code.getAnnotations();
+	}
+
+	public Object getAnnotationAt(CodePosition pos) {
+		return getCodeAnnotations().get(pos);
 	}
 
 	public Map<CodePosition, JavaNode> getUsageMap() {
@@ -149,6 +153,11 @@ public final class JavaClass implements JavaNode {
 			}
 		}
 		return resultMap;
+	}
+
+	@Override
+	public List<JavaNode> getUseIn() {
+		return getRootDecompiler().convertNodes(cls.getUseIn());
 	}
 
 	@Nullable
@@ -214,9 +223,23 @@ public final class JavaClass implements JavaNode {
 		return methods;
 	}
 
+	@Nullable
+	public JavaMethod searchMethodByShortId(String shortId) {
+		MethodNode methodNode = cls.searchMethodByShortId(shortId);
+		if (methodNode == null) {
+			return null;
+		}
+		return new JavaMethod(this, methodNode);
+	}
+
 	@Override
 	public int getDecompiledLine() {
 		return cls.getDecompiledLine();
+	}
+
+	@Override
+	public int getDefPos() {
+		return cls.getDefPosition();
 	}
 
 	@Override

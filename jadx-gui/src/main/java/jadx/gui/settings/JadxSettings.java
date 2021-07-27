@@ -1,10 +1,15 @@
 package jadx.gui.settings;
 
-import java.awt.*;
+import java.awt.Font;
+import java.awt.GraphicsDevice;
+import java.awt.GraphicsEnvironment;
+import java.awt.Rectangle;
+import java.awt.Window;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -12,7 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
-import javax.swing.*;
+import javax.swing.JFrame;
 
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.jetbrains.annotations.Nullable;
@@ -24,6 +29,7 @@ import com.beust.jcommander.Parameter;
 import jadx.api.JadxArgs;
 import jadx.cli.JadxCLIArgs;
 import jadx.cli.LogHelper;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.codearea.EditorTheme;
 import jadx.gui.utils.FontUtils;
@@ -35,12 +41,13 @@ public class JadxSettings extends JadxCLIArgs {
 
 	private static final Path USER_HOME = Paths.get(System.getProperty("user.home"));
 	private static final int RECENT_PROJECTS_COUNT = 15;
-	private static final int CURRENT_SETTINGS_VERSION = 9;
+	private static final int CURRENT_SETTINGS_VERSION = 12;
 
 	private static final Font DEFAULT_FONT = new RSyntaxTextArea().getFont();
 
 	static final Set<String> SKIP_FIELDS = new HashSet<>(Arrays.asList(
 			"files", "input", "outDir", "outDirSrc", "outDirRes", "outputFormat",
+			"deobfuscationMapFile",
 			"verbose", "quiet", "logLevel",
 			"printVersion", "printHelp"));
 
@@ -51,16 +58,31 @@ public class JadxSettings extends JadxCLIArgs {
 	private boolean checkForUpdates = false;
 	private List<Path> recentProjects = new ArrayList<>();
 	private String fontStr = "";
+	private String smaliFontStr = "";
 	private String editorThemePath = "";
 	private LangLocale langLocale = NLS.defaultLocale();
 	private boolean autoStartJobs = false;
 	protected String excludedPackages = "";
 	private boolean autoSaveProject = false;
 
-	private boolean showHeapUsageBar = true;
+	private boolean showHeapUsageBar = false;
 
 	private Map<String, WindowLocation> windowPos = new HashMap<>();
 	private int mainWindowExtendedState = JFrame.NORMAL;
+	private boolean codeAreaLineWrap = false;
+	private int srhResourceSkipSize = 1000;
+	private String srhResourceFileExt = ".xml|.html|.js|.json|.txt";
+	private boolean keepCommonDialogOpen = false;
+	private boolean smaliAreaShowBytecode = false;
+
+	private int mainWindowVerticalSplitterLoc = 300;
+	private int debuggerStackFrameSplitterLoc = 300;
+	private int debuggerVarTreeSplitterLoc = 700;
+
+	private String adbDialogPath = "";
+	private String adbDialogHost = "localhost";
+	private String adbDialogPort = "5037";
+
 	/**
 	 * UI setting: the width of the tree showing the classes, resources, ...
 	 */
@@ -152,11 +174,14 @@ public class JadxSettings extends JadxCLIArgs {
 		sync();
 	}
 
-	public Iterable<Path> getRecentProjects() {
-		return recentProjects;
+	public List<Path> getRecentProjects() {
+		return Collections.unmodifiableList(recentProjects);
 	}
 
-	public void addRecentProject(Path projectPath) {
+	public void addRecentProject(@Nullable Path projectPath) {
+		if (projectPath == null) {
+			return;
+		}
 		recentProjects.remove(projectPath);
 		recentProjects.add(0, projectPath);
 		int count = recentProjects.size();
@@ -194,11 +219,15 @@ public class JadxSettings extends JadxCLIArgs {
 	}
 
 	private static boolean isContainedInAnyScreen(WindowLocation pos) {
-		for (GraphicsDevice gd : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
-			if (gd.getDefaultConfiguration().getBounds().contains(pos.getBounds())) {
-				return true;
+		Rectangle bounds = pos.getBounds();
+		if (bounds.getX() > 0 && bounds.getY() > 0) {
+			for (GraphicsDevice gd : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
+				if (gd.getDefaultConfiguration().getBounds().contains(bounds)) {
+					return true;
+				}
 			}
 		}
+		LOG.debug("Window saved position was ignored: {}", pos);
 		return false;
 	}
 
@@ -279,6 +308,10 @@ public class JadxSettings extends JadxCLIArgs {
 		this.deobfuscationUseSourceNameAsAlias = deobfuscationUseSourceNameAsAlias;
 	}
 
+	public void setDeobfuscationParseKotlinMetadata(boolean deobfuscationParseKotlinMetadata) {
+		this.deobfuscationParseKotlinMetadata = deobfuscationParseKotlinMetadata;
+	}
+
 	public void updateRenameFlag(JadxArgs.RenameEnum flag, boolean enabled) {
 		if (enabled) {
 			renameFlags.add(flag);
@@ -305,6 +338,10 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setInlineAnonymousClasses(boolean inlineAnonymousClasses) {
 		this.inlineAnonymousClasses = inlineAnonymousClasses;
+	}
+
+	public void setInlineMethods(boolean inlineMethods) {
+		this.inlineMethods = inlineMethods;
 	}
 
 	public void setFsCaseSensitive(boolean fsCaseSensitive) {
@@ -361,6 +398,27 @@ public class JadxSettings extends JadxCLIArgs {
 		}
 	}
 
+	public Font getSmaliFont() {
+		if (smaliFontStr.isEmpty()) {
+			return DEFAULT_FONT;
+		}
+		try {
+			return FontUtils.loadByStr(smaliFontStr);
+		} catch (Exception e) {
+			LOG.warn("Failed to load font: {} for smali, reset to default", smaliFontStr, e);
+			setSmaliFont(DEFAULT_FONT);
+			return DEFAULT_FONT;
+		}
+	}
+
+	public void setSmaliFont(@Nullable Font font) {
+		if (font == null) {
+			this.smaliFontStr = "";
+		} else {
+			this.smaliFontStr = FontUtils.convertToStr(font);
+		}
+	}
+
 	public void setLogLevel(LogHelper.LogLevelEnum level) {
 		this.logLevel = level;
 	}
@@ -382,16 +440,110 @@ public class JadxSettings extends JadxCLIArgs {
 		partialSync(settings -> settings.mainWindowExtendedState = mainWindowExtendedState);
 	}
 
+	public void setCodeAreaLineWrap(boolean lineWrap) {
+		this.codeAreaLineWrap = lineWrap;
+	}
+
+	public boolean isCodeAreaLineWrap() {
+		return this.codeAreaLineWrap;
+	}
+
+	public int getSrhResourceSkipSize() {
+		return srhResourceSkipSize;
+	}
+
+	public void setSrhResourceSkipSize(int size) {
+		srhResourceSkipSize = size;
+	}
+
+	public String getSrhResourceFileExt() {
+		return srhResourceFileExt;
+	}
+
+	public void setSrhResourceFileExt(String all) {
+		srhResourceFileExt = all.trim();
+	}
+
+	public void setKeepCommonDialogOpen(boolean yes) {
+		keepCommonDialogOpen = yes;
+	}
+
+	public boolean getKeepCommonDialogOpen() {
+		return keepCommonDialogOpen;
+	}
+
+	public void setSmaliAreaShowBytecode(boolean yes) {
+		smaliAreaShowBytecode = yes;
+	}
+
+	public boolean getSmaliAreaShowBytecode() {
+		return smaliAreaShowBytecode;
+	}
+
+	public void setMainWindowVerticalSplitterLoc(int location) {
+		mainWindowVerticalSplitterLoc = location;
+		partialSync(settings -> settings.mainWindowVerticalSplitterLoc = location);
+	}
+
+	public int getMainWindowVerticalSplitterLoc() {
+		return mainWindowVerticalSplitterLoc;
+	}
+
+	public void setDebuggerStackFrameSplitterLoc(int location) {
+		debuggerStackFrameSplitterLoc = location;
+		partialSync(settings -> settings.debuggerStackFrameSplitterLoc = location);
+	}
+
+	public int getDebuggerStackFrameSplitterLoc() {
+		return debuggerStackFrameSplitterLoc;
+	}
+
+	public void setDebuggerVarTreeSplitterLoc(int location) {
+		debuggerVarTreeSplitterLoc = location;
+		partialSync(settings -> debuggerVarTreeSplitterLoc = location);
+	}
+
+	public int getDebuggerVarTreeSplitterLoc() {
+		return debuggerVarTreeSplitterLoc;
+	}
+
+	public String getAdbDialogPath() {
+		return adbDialogPath;
+	}
+
+	public void setAdbDialogPath(String path) {
+		this.adbDialogPath = path;
+	}
+
+	public String getAdbDialogHost() {
+		return adbDialogHost;
+	}
+
+	public void setAdbDialogHost(String host) {
+		this.adbDialogHost = host;
+	}
+
+	public String getAdbDialogPort() {
+		return adbDialogPort;
+	}
+
+	public void setAdbDialogPort(String port) {
+		this.adbDialogPort = port;
+	}
+
 	private void upgradeSettings(int fromVersion) {
 		LOG.debug("upgrade settings from version: {} to {}", fromVersion, CURRENT_SETTINGS_VERSION);
 		if (fromVersion == 0) {
 			setDeobfuscationMinLength(3);
+			setDeobfuscationMaxLength(64);
 			setDeobfuscationUseSourceNameAsAlias(true);
-			setDeobfuscationForceSave(true);
-			setThreadsCount(1);
+			setDeobfuscationParseKotlinMetadata(true);
+			setDeobfuscationForceSave(false);
+			setThreadsCount(JadxArgs.DEFAULT_THREADS_COUNT);
 			setReplaceConsts(true);
 			setSkipResources(false);
 			setAutoStartJobs(false);
+			setAutoSaveProject(true);
 			fromVersion++;
 		}
 		if (fromVersion == 1) {
@@ -430,6 +582,23 @@ public class JadxSettings extends JadxCLIArgs {
 		}
 		if (fromVersion == 8) {
 			fromVersion++;
+		}
+		if (fromVersion == 9) {
+			showHeapUsageBar = false;
+			fromVersion++;
+		}
+		if (fromVersion == 10) {
+			srhResourceSkipSize = 3;
+			srhResourceFileExt = ".xml|.html|.js|.json|.txt";
+			fontStr = fontStr.replace('-', '/');
+			fromVersion++;
+		}
+		if (fromVersion == 11) {
+			inlineMethods = true;
+			fromVersion++;
+		}
+		if (fromVersion != CURRENT_SETTINGS_VERSION) {
+			throw new JadxRuntimeException("Incorrect settings upgrade");
 		}
 		settingsVersion = CURRENT_SETTINGS_VERSION;
 		sync();

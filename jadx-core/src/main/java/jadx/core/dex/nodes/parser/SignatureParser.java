@@ -5,19 +5,21 @@ import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.api.plugins.input.data.annotations.EncodedValue;
+import jadx.api.plugins.input.data.annotations.IAnnotation;
 import jadx.core.Consts;
 import jadx.core.dex.attributes.IAttributeNode;
-import jadx.core.dex.attributes.annotations.Annotation;
 import jadx.core.dex.instructions.args.ArgType;
-import jadx.core.dex.nodes.GenericInfo;
+import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
 public class SignatureParser {
-
 	private static final Logger LOG = LoggerFactory.getLogger(SignatureParser.class);
+
 	private static final char STOP_CHAR = 0;
 
 	private final String sign;
@@ -32,14 +34,25 @@ public class SignatureParser {
 		mark = 0;
 	}
 
-	@SuppressWarnings("unchecked")
+	@Nullable
 	public static SignatureParser fromNode(IAttributeNode node) {
-		Annotation a = node.getAnnotation(Consts.DALVIK_SIGNATURE);
+		String signature = getSignature(node);
+		if (signature == null) {
+			return null;
+		}
+		return new SignatureParser(signature);
+	}
+
+	@SuppressWarnings("unchecked")
+	@Nullable
+	public static String getSignature(IAttributeNode node) {
+		IAnnotation a = node.getAnnotation(Consts.DALVIK_SIGNATURE);
 		if (a == null) {
 			return null;
 		}
-		String signature = mergeSignature((List<String>) a.getDefaultValue());
-		return new SignatureParser(signature);
+		List<EncodedValue> values = (List<EncodedValue>) a.getDefaultValue().getValue();
+		List<String> strings = Utils.collectionMap(values, ev -> ((String) ev.getValue()));
+		return mergeSignature(strings);
 	}
 
 	private char next() {
@@ -65,32 +78,40 @@ public class SignatureParser {
 	 * @return string from 'mark' to current position (not including current character)
 	 */
 	private String slice() {
-		if (mark >= pos) {
+		int start = mark == -1 ? 0 : mark;
+		if (start >= pos) {
 			return "";
 		}
-		return sign.substring(mark, pos);
+		return sign.substring(start, pos);
 	}
 
 	/**
 	 * Inclusive slice (includes current character)
 	 */
 	private String inclusiveSlice() {
-		if (mark >= pos) {
+		int start = mark;
+		if (start == -1) {
+			start = 0;
+		}
+		int last = pos + 1;
+		if (start >= last) {
 			return "";
 		}
-		return sign.substring(mark, pos + 1);
+		return sign.substring(start, last);
 	}
 
-	private boolean forwardTo(char lastChar) {
+	private boolean skipUntil(char untilChar) {
 		int startPos = pos;
-		char ch;
-		while ((ch = next()) != STOP_CHAR) {
-			if (ch == lastChar) {
+		while (true) {
+			if (lookAhead(untilChar)) {
 				return true;
 			}
+			char ch = next();
+			if (ch == STOP_CHAR) {
+				pos = startPos;
+				return false;
+			}
 		}
-		pos = startPos;
-		return false;
 	}
 
 	private void consume(char exp) {
@@ -109,14 +130,14 @@ public class SignatureParser {
 		return false;
 	}
 
-	private String consumeUntil(char lastChar) {
+	@Nullable
+	public String consumeUntil(char lastChar) {
 		mark();
-		return forwardTo(lastChar) ? slice() : null;
+		return skipUntil(lastChar) ? inclusiveSlice() : null;
 	}
 
 	public ArgType consumeType() {
 		char ch = next();
-		mark();
 		switch (ch) {
 			case 'L':
 				ArgType obj = consumeObjectType(false);
@@ -127,10 +148,16 @@ public class SignatureParser {
 			case 'T':
 				next();
 				mark();
-				if (forwardTo(';')) {
-					return ArgType.genericType(slice());
+				String typeVarName = consumeUntil(';');
+				if (typeVarName != null) {
+					consume(';');
+					if (typeVarName.contains(")")) {
+						throw new JadxRuntimeException("Bad name for type variable: " + typeVarName);
+					}
+					return ArgType.genericType(typeVarName);
 				}
 				break;
+
 			case '[':
 				return ArgType.array(consumeType());
 
@@ -145,13 +172,17 @@ public class SignatureParser {
 				}
 				break;
 		}
-		throw new JadxRuntimeException("Can't parse type: " + debugString());
+		throw new JadxRuntimeException("Can't parse type: " + debugString() + ", unexpected: " + ch);
 	}
 
-	private ArgType consumeObjectType(boolean incompleteType) {
+	private ArgType consumeObjectType(boolean innerType) {
 		mark();
 		int ch;
 		do {
+			if (innerType && lookAhead('.')) {
+				// stop before next nested inner class
+				return ArgType.object(inclusiveSlice());
+			}
 			ch = next();
 			if (ch == STOP_CHAR) {
 				return null;
@@ -160,39 +191,47 @@ public class SignatureParser {
 
 		if (ch == ';') {
 			String obj;
-			if (incompleteType) {
+			if (innerType) {
 				obj = slice().replace('/', '.');
 			} else {
 				obj = inclusiveSlice();
 			}
 			return ArgType.object(obj);
-		} else {
-			// generic type start ('<')
-			String obj = slice();
-			if (!incompleteType) {
-				obj += ';';
-			}
-			ArgType[] genArr = consumeGenericArgs();
-			consume('>');
+		}
+		// generic type start ('<')
+		String obj = slice();
+		if (!innerType) {
+			obj += ';';
+		}
+		List<ArgType> typeVars = consumeGenericArgs();
+		consume('>');
 
-			ArgType genericType = ArgType.generic(obj, genArr);
-			if (lookAhead('.')) {
-				consume('.');
-				next();
-				// type parsing not completed, proceed to inner class
-				ArgType inner = consumeObjectType(true);
-				if (inner == null) {
-					throw new JadxRuntimeException("No inner type found: " + debugString());
-				}
-				return ArgType.outerGeneric(genericType, inner);
-			} else {
-				consume(';');
-				return genericType;
+		ArgType genericType = ArgType.generic(obj, typeVars);
+		if (!lookAhead('.')) {
+			consume(';');
+			return genericType;
+		}
+		consume('.');
+		next();
+		// type parsing not completed, proceed to inner class
+		ArgType inner = consumeObjectType(true);
+		if (inner == null) {
+			throw new JadxRuntimeException("No inner type found: " + debugString());
+		}
+		// for every nested inner type create nested type object
+		while (lookAhead('.')) {
+			genericType = ArgType.outerGeneric(genericType, inner);
+			consume('.');
+			next();
+			inner = consumeObjectType(true);
+			if (inner == null) {
+				throw new JadxRuntimeException("Unexpected inner type found: " + debugString());
 			}
 		}
+		return ArgType.outerGeneric(genericType, inner);
 	}
 
-	private ArgType[] consumeGenericArgs() {
+	private List<ArgType> consumeGenericArgs() {
 		List<ArgType> list = new LinkedList<>();
 		ArgType type;
 		do {
@@ -212,7 +251,7 @@ public class SignatureParser {
 				list.add(type);
 			}
 		} while (type != null && !lookAhead('>'));
-		return list.toArray(new ArgType[0]);
+		return list;
 	}
 
 	/**
@@ -220,11 +259,12 @@ public class SignatureParser {
 	 * <p/>
 	 * Example: "<T:Ljava/lang/Exception;:Ljava/lang/Object;>"
 	 */
-	public List<GenericInfo> consumeGenericMap() {
+	@SuppressWarnings("ConditionalBreakInInfiniteLoop")
+	public List<ArgType> consumeGenericTypeParameters() {
 		if (!lookAhead('<')) {
 			return Collections.emptyList();
 		}
-		List<GenericInfo> list = new ArrayList<>();
+		List<ArgType> list = new ArrayList<>();
 		consume('<');
 		while (true) {
 			if (lookAhead('>') || next() == STOP_CHAR) {
@@ -232,12 +272,12 @@ public class SignatureParser {
 			}
 			String id = consumeUntil(':');
 			if (id == null) {
-				LOG.error("Failed to parse generic map: {}", sign);
-				return Collections.emptyList();
+				throw new JadxRuntimeException("Failed to parse generic types map");
 			}
+			consume(':');
 			tryConsume(':');
 			List<ArgType> types = consumeExtendsTypesList();
-			list.add(new GenericInfo(ArgType.genericType(id), types));
+			list.add(ArgType.genericType(id, types));
 		}
 		consume('>');
 		return list;
@@ -253,9 +293,12 @@ public class SignatureParser {
 		boolean next;
 		do {
 			ArgType argType = consumeType();
+			if (argType == null) {
+				throw new JadxRuntimeException("Unexpected end of signature");
+			}
 			if (!argType.equals(ArgType.OBJECT)) {
 				if (types.isEmpty()) {
-					types = new LinkedList<>();
+					types = new ArrayList<>();
 				}
 				types.add(argType);
 			}
@@ -267,15 +310,23 @@ public class SignatureParser {
 		return types;
 	}
 
-	public List<ArgType> consumeMethodArgs() {
+	public List<ArgType> consumeMethodArgs(int argsCount) {
 		consume('(');
 		if (lookAhead(')')) {
 			consume(')');
 			return Collections.emptyList();
 		}
-		List<ArgType> args = new LinkedList<>();
+		List<ArgType> args = new ArrayList<>(argsCount);
+		int limit = argsCount + 10; // just prevent endless loop, args count can be different for synthetic methods
 		do {
-			args.add(consumeType());
+			ArgType type = consumeType();
+			if (type == null) {
+				throw new JadxRuntimeException("Unexpected end of signature");
+			}
+			args.add(type);
+			if (args.size() > limit) {
+				throw new JadxRuntimeException("Arguments count limit reached: " + args.size());
+			}
 		} while (!lookAhead(')'));
 		consume(')');
 		return args;

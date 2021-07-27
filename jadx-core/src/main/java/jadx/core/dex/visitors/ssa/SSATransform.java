@@ -41,11 +41,16 @@ public class SSATransform extends AbstractVisitor {
 		process(mth);
 	}
 
+	public static void rerun(MethodNode mth) {
+		mth.remove(AFlag.RERUN_SSA_TRANSFORM);
+		resetSSAVars(mth);
+		process(mth);
+	}
+
 	private static void process(MethodNode mth) {
 		if (!mth.getSVars().isEmpty()) {
 			return;
 		}
-
 		LiveVarAnalysis la = new LiveVarAnalysis(mth);
 		la.runAnalysis();
 		int regsCount = mth.getRegsCount();
@@ -413,6 +418,7 @@ public class SSATransform extends AbstractVisitor {
 			return;
 		}
 		arg.add(AFlag.THIS);
+		arg.add(AFlag.IMMUTABLE_TYPE);
 		// mark all moved 'this'
 		InsnNode parentInsn = arg.getParentInsn();
 		if (parentInsn != null
@@ -431,5 +437,16 @@ public class SSATransform extends AbstractVisitor {
 		for (BlockNode block : mth.getBasicBlocks()) {
 			block.getInstructions().removeIf(insn -> insn.getType() == InsnType.PHI);
 		}
+	}
+
+	private static void resetSSAVars(MethodNode mth) {
+		for (SSAVar ssaVar : mth.getSVars()) {
+			ssaVar.getAssign().resetSSAVar();
+			ssaVar.getUseList().forEach(RegisterArg::resetSSAVar);
+		}
+		for (BlockNode block : mth.getBasicBlocks()) {
+			block.remove(AType.PHI_LIST);
+		}
+		mth.getSVars().clear();
 	}
 }

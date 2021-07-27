@@ -8,6 +8,7 @@ import java.awt.DisplayMode;
 import java.awt.Font;
 import java.awt.GraphicsDevice;
 import java.awt.GraphicsEnvironment;
+import java.awt.HeadlessException;
 import java.awt.Toolkit;
 import java.awt.dnd.DnDConstants;
 import java.awt.dnd.DropTarget;
@@ -19,26 +20,32 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.stream.Collectors;
 
 import javax.swing.AbstractAction;
 import javax.swing.Action;
 import javax.swing.Box;
 import javax.swing.ImageIcon;
 import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JDialog;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JMenu;
@@ -52,7 +59,6 @@ import javax.swing.JSplitPane;
 import javax.swing.JToggleButton;
 import javax.swing.JToolBar;
 import javax.swing.JTree;
-import javax.swing.ProgressMonitor;
 import javax.swing.SwingUtilities;
 import javax.swing.WindowConstants;
 import javax.swing.event.MenuEvent;
@@ -77,35 +83,49 @@ import jadx.api.JadxArgs;
 import jadx.api.JavaClass;
 import jadx.api.JavaNode;
 import jadx.api.ResourceFile;
+import jadx.core.utils.StringUtils;
+import jadx.core.utils.Utils;
+import jadx.core.utils.files.FileUtils;
 import jadx.gui.JadxWrapper;
+import jadx.gui.device.debugger.BreakpointManager;
 import jadx.gui.jobs.BackgroundExecutor;
-import jadx.gui.jobs.BackgroundWorker;
-import jadx.gui.jobs.DecompileJob;
-import jadx.gui.jobs.IndexJob;
+import jadx.gui.jobs.DecompileTask;
+import jadx.gui.jobs.ExportTask;
+import jadx.gui.jobs.IndexService;
+import jadx.gui.jobs.TaskStatus;
+import jadx.gui.plugins.quark.QuarkDialog;
 import jadx.gui.settings.JadxProject;
 import jadx.gui.settings.JadxSettings;
 import jadx.gui.settings.JadxSettingsWindow;
 import jadx.gui.treemodel.ApkSignature;
 import jadx.gui.treemodel.JClass;
+import jadx.gui.treemodel.JField;
 import jadx.gui.treemodel.JLoadableNode;
+import jadx.gui.treemodel.JMethod;
 import jadx.gui.treemodel.JNode;
 import jadx.gui.treemodel.JPackage;
 import jadx.gui.treemodel.JResource;
 import jadx.gui.treemodel.JRoot;
+import jadx.gui.ui.codearea.AbstractCodeContentPanel;
 import jadx.gui.update.JadxUpdate;
 import jadx.gui.update.JadxUpdate.IUpdateCallback;
 import jadx.gui.update.data.Release;
 import jadx.gui.utils.CacheObject;
+import jadx.gui.utils.CodeUsageInfo;
 import jadx.gui.utils.FontUtils;
 import jadx.gui.utils.JumpPosition;
 import jadx.gui.utils.Link;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.SystemInfo;
 import jadx.gui.utils.UiUtils;
+import jadx.gui.utils.search.CommentsIndex;
+import jadx.gui.utils.search.TextSearchIndex;
 
+import static io.reactivex.internal.functions.Functions.EMPTY_RUNNABLE;
+import static jadx.gui.utils.FileUtils.fileNamesToPaths;
+import static jadx.gui.utils.FileUtils.toPaths;
 import static javax.swing.KeyStroke.getKeyStroke;
 
-@SuppressWarnings("serial")
 public class MainWindow extends JFrame {
 	private static final Logger LOG = LoggerFactory.getLogger(MainWindow.class);
 
@@ -113,9 +133,10 @@ public class MainWindow extends JFrame {
 
 	private static final double BORDER_RATIO = 0.15;
 	private static final double WINDOW_RATIO = 1 - BORDER_RATIO * 2;
-	private static final double SPLIT_PANE_RESIZE_WEIGHT = 0.15;
+	public static final double SPLIT_PANE_RESIZE_WEIGHT = 0.15;
 
 	private static final ImageIcon ICON_OPEN = UiUtils.openIcon("folder");
+	private static final ImageIcon ICON_ADD_FILES = UiUtils.openIcon("folder_add");
 	private static final ImageIcon ICON_SAVE_ALL = UiUtils.openIcon("disk_multiple");
 	private static final ImageIcon ICON_EXPORT = UiUtils.openIcon("database_save");
 	private static final ImageIcon ICON_CLOSE = UiUtils.openIcon("cross");
@@ -123,16 +144,20 @@ public class MainWindow extends JFrame {
 	private static final ImageIcon ICON_FLAT_PKG = UiUtils.openIcon("empty_logical_package_obj");
 	private static final ImageIcon ICON_SEARCH = UiUtils.openIcon("wand");
 	private static final ImageIcon ICON_FIND = UiUtils.openIcon("magnifier");
+	private static final ImageIcon ICON_COMMENT_SEARCH = UiUtils.openIcon("table_edit");
 	private static final ImageIcon ICON_BACK = UiUtils.openIcon("icon_back");
 	private static final ImageIcon ICON_FORWARD = UiUtils.openIcon("icon_forward");
+	private static final ImageIcon ICON_QUARK = UiUtils.openIcon("icon_quark");
 	private static final ImageIcon ICON_PREF = UiUtils.openIcon("wrench");
 	private static final ImageIcon ICON_DEOBF = UiUtils.openIcon("lock_edit");
 	private static final ImageIcon ICON_LOG = UiUtils.openIcon("report");
 	private static final ImageIcon ICON_JADX = UiUtils.openIcon("jadx-logo");
+	private static final ImageIcon ICON_DEBUGGER = UiUtils.openIcon("debugger");
 
 	private final transient JadxWrapper wrapper;
 	private final transient JadxSettings settings;
 	private final transient CacheObject cacheObject;
+	private final transient BackgroundExecutor backgroundExecutor;
 	private transient JadxProject project;
 	private transient Action newProjectAction;
 	private transient Action saveProjectAction;
@@ -156,9 +181,10 @@ public class MainWindow extends JFrame {
 
 	private transient Link updateLink;
 	private transient ProgressPanel progressPane;
-	private transient BackgroundWorker backgroundWorker;
-	private transient BackgroundExecutor backgroundExecutor;
 	private transient Theme editorTheme;
+
+	private JDebuggerPanel debuggerPanel;
+	private JSplitPane verticalSplitter;
 
 	public MainWindow(JadxSettings settings) {
 		this.wrapper = new JadxWrapper(settings);
@@ -172,10 +198,11 @@ public class MainWindow extends JFrame {
 		registerMouseNavigationButtons();
 		UiUtils.setWindowIcons(this);
 		loadSettings();
-		checkForUpdate();
-		newProject();
 
 		this.backgroundExecutor = new BackgroundExecutor(this);
+
+		checkForUpdate();
+		newProject();
 	}
 
 	public void init() {
@@ -199,18 +226,24 @@ public class MainWindow extends JFrame {
 		if (settings.getFiles().isEmpty()) {
 			openFileOrProject();
 		} else {
-			open(Paths.get(settings.getFiles().get(0)));
-			if (settings.getCmdSelectClass() != null) {
-				JavaNode javaNode = wrapper.searchJavaClassByClassName(settings.getCmdSelectClass());
-				if (javaNode == null) {
-					JOptionPane.showMessageDialog(this,
-							NLS.str("msg.cmd_select_class_error", settings.getCmdSelectClass()),
-							NLS.str("error_dialog.title"), JOptionPane.ERROR_MESSAGE);
-				} else {
-					JNode node = cacheObject.getNodeCache().makeFrom(javaNode);
-					tabbedPane.codeJump(new JumpPosition(node.getRootClass(), node.getLine()));
-				}
+			open(fileNamesToPaths(settings.getFiles()), this::handleSelectClassOption);
+		}
+	}
+
+	private void handleSelectClassOption() {
+		if (settings.getCmdSelectClass() != null) {
+			JavaNode javaNode = wrapper.searchJavaClassByFullAlias(settings.getCmdSelectClass());
+			if (javaNode == null) {
+				javaNode = wrapper.searchJavaClassByOrigClassName(settings.getCmdSelectClass());
 			}
+			if (javaNode == null) {
+				JOptionPane.showMessageDialog(this,
+						NLS.str("msg.cmd_select_class_error", settings.getCmdSelectClass()),
+						NLS.str("error_dialog.title"), JOptionPane.ERROR_MESSAGE);
+				return;
+			}
+			JNode node = cacheObject.getNodeCache().makeFrom(javaNode);
+			tabbedPane.codeJump(new JumpPosition(node.getRootClass(), node.getLine(), JumpPosition.getDefPos(node)));
 		}
 	}
 
@@ -230,30 +263,70 @@ public class MainWindow extends JFrame {
 	}
 
 	public void openFileOrProject() {
-		JFileChooser fileChooser = new JFileChooser();
+		String title = NLS.str("file.open_title");
+		JFileChooser fileChooser = buildFileChooser(false, title);
+		int ret = fileChooser.showDialog(this, title);
+		if (ret == JFileChooser.APPROVE_OPTION) {
+			settings.setLastOpenFilePath(fileChooser.getCurrentDirectory().toPath());
+			open(toPaths(fileChooser.getSelectedFiles()));
+		}
+	}
+
+	public void addFiles() {
+		String title = NLS.str("file.add_files_action");
+		JFileChooser fileChooser = buildFileChooser(true, title);
+		int ret = fileChooser.showDialog(this, title);
+		if (ret == JFileChooser.APPROVE_OPTION) {
+			List<Path> paths = new ArrayList<>(wrapper.getOpenPaths());
+			paths.addAll(toPaths(fileChooser.getSelectedFiles()));
+			open(paths);
+		}
+	}
+
+	private JFileChooser buildFileChooser(boolean addFiles, String toolTipText) {
+		String[] exts;
+		if (addFiles) {
+			exts = new String[] { "apk", "dex", "jar", "class", "smali", "zip", "aar", "arsc" };
+		} else {
+			exts = new String[] { JadxProject.PROJECT_EXTENSION, "apk", "dex", "jar", "class", "smali", "zip", "aar", "arsc", "aab" };
+		}
+		String description = "Supported files: (" + Utils.arrayToStr(exts) + ')';
+
+		JFileChooser fileChooser = new JFileChooser() {
+			@Override
+			protected JDialog createDialog(Component parent) throws HeadlessException {
+				JDialog dialog = super.createDialog(parent);
+				dialog.setLocationRelativeTo(null);
+				settings.loadWindowPos(dialog);
+				dialog.addWindowListener(new WindowAdapter() {
+					@Override
+					public void windowClosed(WindowEvent e) {
+						settings.saveWindowPos(dialog);
+						super.windowClosed(e);
+					}
+				});
+				return dialog;
+			}
+		};
 		fileChooser.setAcceptAllFileFilterUsed(true);
-		String[] exts = { JadxProject.PROJECT_EXTENSION, "apk", "dex", "jar", "class", "smali", "zip", "aar", "arsc" };
-		String description = "supported files: " + Arrays.toString(exts).replace('[', '(').replace(']', ')');
 		fileChooser.setFileFilter(new FileNameExtensionFilter(description, exts));
-		fileChooser.setToolTipText(NLS.str("file.open_action"));
+		fileChooser.setMultiSelectionEnabled(true);
+		fileChooser.setToolTipText(toolTipText);
 		Path currentDirectory = settings.getLastOpenFilePath();
 		if (currentDirectory != null) {
 			fileChooser.setCurrentDirectory(currentDirectory.toFile());
 		}
-		int ret = fileChooser.showDialog(mainPanel, NLS.str("file.open_title"));
-		if (ret == JFileChooser.APPROVE_OPTION) {
-			settings.setLastOpenFilePath(fileChooser.getCurrentDirectory().toPath());
-			open(fileChooser.getSelectedFile().toPath());
-		}
+		return fileChooser;
 	}
 
 	private void newProject() {
 		if (!ensureProjectIsSaved()) {
 			return;
 		}
-		project = new JadxProject(settings);
-		update();
+		cancelBackgroundJobs();
 		clearTree();
+		wrapper.close();
+		updateProject(new JadxProject());
 	}
 
 	private void saveProject() {
@@ -296,26 +369,53 @@ public class MainWindow extends JFrame {
 				}
 			}
 			project.saveAs(path);
+			settings.addRecentProject(path);
 			update();
 		}
 	}
 
-	void open(Path path) {
-		if (path.getFileName().toString().toLowerCase(Locale.ROOT)
-				.endsWith(JadxProject.PROJECT_EXTENSION)) {
-			openProject(path);
-		} else {
-			project.setFilePath(path);
-			clearTree();
-			backgroundExecutor.execute(NLS.str("progress.load"),
-					() -> wrapper.openFile(path.toFile()),
-					() -> {
-						deobfToggleBtn.setSelected(settings.isDeobfuscationOn());
-						initTree();
-						update();
-						runBackgroundJobs();
-					});
+	void open(List<Path> paths) {
+		open(paths, EMPTY_RUNNABLE);
+	}
+
+	void open(List<Path> paths, Runnable onFinish) {
+		if (paths.size() == 1) {
+			Path singleFile = paths.get(0);
+			if (singleFile.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(JadxProject.PROJECT_EXTENSION)) {
+				openProject(singleFile);
+				onFinish.run();
+				return;
+			}
 		}
+		project.setFilePath(paths);
+		clearTree();
+		BreakpointManager.saveAndExit();
+		if (paths.isEmpty()) {
+			return;
+		}
+		backgroundExecutor.execute(NLS.str("progress.load"),
+				() -> wrapper.openFile(paths),
+				status -> {
+					if (status == TaskStatus.CANCEL_BY_MEMORY) {
+						showHeapUsageBar();
+						UiUtils.errorMessage(this, NLS.str("message.memoryLow"));
+						return;
+					}
+					onOpen(paths);
+					onFinish.run();
+				});
+	}
+
+	private void onOpen(List<Path> paths) {
+		deobfToggleBtn.setSelected(settings.isDeobfuscationOn());
+		initTree();
+		update();
+		runInitialBackgroundJobs();
+		BreakpointManager.init(paths.get(0).getParent());
+	}
+
+	private void addTreeCustomNodes() {
+		treeRoot.replaceCustomNode(ApkSignature.getApkSignature(wrapper));
 	}
 
 	private boolean ensureProjectIsSaved() {
@@ -339,23 +439,32 @@ public class MainWindow extends JFrame {
 		if (!ensureProjectIsSaved()) {
 			return;
 		}
-		project = JadxProject.from(path, settings);
-		if (project == null) {
+		JadxProject jadxProject = JadxProject.from(path);
+		if (jadxProject == null) {
 			JOptionPane.showMessageDialog(
 					this,
 					NLS.str("msg.project_error"),
 					NLS.str("msg.project_error_title"),
 					JOptionPane.INFORMATION_MESSAGE);
-			return;
+			jadxProject = new JadxProject();
 		}
-		update();
+		updateProject(jadxProject);
 		settings.addRecentProject(path);
-		Path filePath = project.getFilePath();
-		if (filePath == null) {
+		List<Path> filePaths = jadxProject.getFilePaths();
+		if (filePaths == null) {
 			clearTree();
 		} else {
-			open(filePath);
+			open(filePaths);
 		}
+	}
+
+	public void updateProject(JadxProject jadxProject) {
+		jadxProject.setSettings(settings);
+		jadxProject.setMainWindow(this);
+		this.project = jadxProject;
+		this.wrapper.setProject(jadxProject);
+		this.cacheObject.setCommentsIndex(new CommentsIndex(wrapper, cacheObject, jadxProject));
+		update();
 	}
 
 	private void update() {
@@ -371,46 +480,55 @@ public class MainWindow extends JFrame {
 		}
 		setTitle((project.isSaved() ? "" : '*')
 				+ project.getName() + pathString + " - " + DEFAULT_TITLE);
-
 	}
 
 	protected void resetCache() {
 		cacheObject.reset();
-		// TODO: decompilation freezes sometime with several threads
-		int threadsCount = settings.getThreadsCount();
-		cacheObject.setDecompileJob(new DecompileJob(wrapper, threadsCount));
-		cacheObject.setIndexJob(new IndexJob(wrapper, cacheObject, threadsCount));
+		cacheObject.setJRoot(treeRoot);
+		cacheObject.setJadxSettings(settings);
+
+		cacheObject.setIndexService(new IndexService(cacheObject));
+		cacheObject.setUsageInfo(new CodeUsageInfo(cacheObject.getNodeCache()));
+		cacheObject.setTextIndex(new TextSearchIndex(this));
 	}
 
-	private synchronized void runBackgroundJobs() {
-		cancelBackgroundJobs();
-		backgroundWorker = new BackgroundWorker(cacheObject, progressPane);
+	synchronized void runInitialBackgroundJobs() {
 		if (settings.isAutoStartJobs()) {
 			new Timer().schedule(new TimerTask() {
 				@Override
 				public void run() {
-					backgroundWorker.exec();
+					waitDecompileTask();
 				}
 			}, 1000);
 		}
 	}
 
-	public synchronized void cancelBackgroundJobs() {
-		backgroundExecutor.cancelAll();
-		if (backgroundWorker != null) {
-			backgroundWorker.stop();
-			backgroundWorker = new BackgroundWorker(cacheObject, progressPane);
-			resetCache();
+	private static final Object DECOMPILER_TASK_SYNC = new Object();
+
+	public void waitDecompileTask() {
+		synchronized (DECOMPILER_TASK_SYNC) {
+			try {
+				DecompileTask decompileTask = new DecompileTask(this, wrapper);
+				Future<TaskStatus> task = backgroundExecutor.execute(decompileTask);
+				task.get();
+			} catch (Exception e) {
+				LOG.error("Decompile task execution failed", e);
+			}
 		}
 	}
 
+	public void cancelBackgroundJobs() {
+		ExecutorService worker = Executors.newSingleThreadExecutor();
+		worker.execute(backgroundExecutor::cancelAll);
+		worker.shutdown();
+	}
+
 	public void reOpenFile() {
-		File openedFile = wrapper.getOpenFile();
+		List<Path> openedFile = wrapper.getOpenPaths();
 		Map<String, Integer> openTabs = storeOpenTabs();
 		if (openedFile != null) {
-			open(openedFile.toPath());
+			open(openedFile, () -> restoreOpenTabs(openTabs));
 		}
-		restoreOpenTabs(openTabs);
 	}
 
 	@NotNull
@@ -444,7 +562,7 @@ public class MainWindow extends JFrame {
 				continue;
 			}
 			JNode newNode = cacheObject.getNodeCache().makeFrom(newClass);
-			tabbedPane.codeJump(new JumpPosition(newNode, position));
+			tabbedPane.codeJump(new JumpPosition(newNode, position, JumpPosition.getDefPos(newNode)));
 		}
 	}
 
@@ -478,28 +596,30 @@ public class MainWindow extends JFrame {
 				decompilerArgs.setSkipResources(settings.isSkipResources());
 			}
 			settings.setLastSaveFilePath(fileChooser.getCurrentDirectory().toPath());
-			ProgressMonitor progressMonitor = new ProgressMonitor(mainPanel, NLS.str("msg.saving_sources"), "", 0, 100);
-			progressMonitor.setMillisToPopup(0);
-			wrapper.saveAll(fileChooser.getSelectedFile(), progressMonitor);
+			backgroundExecutor.execute(new ExportTask(this, wrapper, fileChooser.getSelectedFile()));
 		}
 	}
 
-	private void initTree() {
+	public void initTree() {
 		treeRoot = new JRoot(wrapper);
+		cacheObject.setJRoot(treeRoot);
 		treeRoot.setFlatPackages(isFlattenPackage);
 		treeModel.setRoot(treeRoot);
+		addTreeCustomNodes();
+		treeRoot.update();
 		reloadTree();
+		cacheObject.setJadxSettings(settings);
 	}
 
 	private void clearTree() {
-		tabbedPane.closeAllTabs();
+		tabbedPane.reset();
 		resetCache();
 		treeRoot = null;
-		treeModel.setRoot(treeRoot);
+		treeModel.setRoot(null);
 		treeModel.reload();
 	}
 
-	private void reloadTree() {
+	public void reloadTree() {
 		treeReloading = true;
 
 		treeModel.reload();
@@ -568,15 +688,14 @@ public class MainWindow extends JFrame {
 				JResource res = (JResource) obj;
 				ResourceFile resFile = res.getResFile();
 				if (resFile != null && JResource.isSupportedForView(resFile.getType())) {
-					tabbedPane.showResource(res);
+					tabbedPane.showNode(res);
 				}
-			} else if (obj instanceof ApkSignature) {
-				tabbedPane.showSimpleNode((JNode) obj);
 			} else if (obj instanceof JNode) {
 				JNode node = (JNode) obj;
-				JClass cls = node.getRootClass();
-				if (cls != null) {
-					tabbedPane.codeJump(new JumpPosition(cls, node.getLine()));
+				if (node.getRootClass() != null) {
+					tabbedPane.codeJump(new JumpPosition(node));
+				} else {
+					tabbedPane.showNode(node);
 				}
 			}
 		} catch (Exception e) {
@@ -584,10 +703,20 @@ public class MainWindow extends JFrame {
 		}
 	}
 
+	private void rename(JNode node) {
+		RenameDialog.rename(this, node);
+	}
+
 	private void treeRightClickAction(MouseEvent e) {
-		Object obj = getJNodeUnderMouse(e);
+		JNode obj = getJNodeUnderMouse(e);
 		if (obj instanceof JPackage) {
-			JPackagePopUp menu = new JPackagePopUp((JPackage) obj);
+			JPackagePopupMenu menu = new JPackagePopupMenu(this, (JPackage) obj);
+			menu.show(e.getComponent(), e.getX(), e.getY());
+		} else if (obj instanceof JClass || obj instanceof JField || obj instanceof JMethod) {
+			JPopupMenu menu = new JPopupMenu();
+			JMenuItem jmi = new JMenuItem(NLS.str("popup.rename"));
+			jmi.addActionListener(action -> rename(obj));
+			menu.add(jmi);
 			menu.show(e.getComponent(), e.getX(), e.getY());
 		}
 	}
@@ -638,6 +767,14 @@ public class MainWindow extends JFrame {
 		};
 		openAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("file.open_action"));
 		openAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_O, UiUtils.ctrlButton()));
+
+		Action addFilesAction = new AbstractAction(NLS.str("file.add_files_action"), ICON_ADD_FILES) {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				addFiles();
+			}
+		};
+		addFilesAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("file.add_files_action"));
 
 		newProjectAction = new AbstractAction(NLS.str("file.new_project")) {
 			@Override
@@ -724,7 +861,15 @@ public class MainWindow extends JFrame {
 		Action textSearchAction = new AbstractAction(NLS.str("menu.text_search"), ICON_SEARCH) {
 			@Override
 			public void actionPerformed(ActionEvent e) {
-				new SearchDialog(MainWindow.this, true).setVisible(true);
+				ContentPanel panel = tabbedPane.getSelectedCodePanel();
+				if (panel instanceof AbstractCodeContentPanel) {
+					String preferText = ((AbstractCodeContentPanel) panel).getCodeArea().getSelectedText();
+					if (!StringUtils.isEmpty(preferText)) {
+						SearchDialog.searchText(MainWindow.this, preferText);
+						return;
+					}
+				}
+				SearchDialog.search(MainWindow.this, SearchDialog.SearchPreset.TEXT);
 			}
 		};
 		textSearchAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("menu.text_search"));
@@ -734,11 +879,21 @@ public class MainWindow extends JFrame {
 		Action clsSearchAction = new AbstractAction(NLS.str("menu.class_search"), ICON_FIND) {
 			@Override
 			public void actionPerformed(ActionEvent e) {
-				new SearchDialog(MainWindow.this, false).setVisible(true);
+				SearchDialog.search(MainWindow.this, SearchDialog.SearchPreset.CLASS);
 			}
 		};
 		clsSearchAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("menu.class_search"));
 		clsSearchAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_N, UiUtils.ctrlButton()));
+
+		Action commentSearchAction = new AbstractAction(NLS.str("menu.comment_search"), ICON_COMMENT_SEARCH) {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				SearchDialog.search(MainWindow.this, SearchDialog.SearchPreset.COMMENT);
+			}
+		};
+		commentSearchAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("menu.comment_search"));
+		commentSearchAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_SEMICOLON,
+				UiUtils.ctrlButton() | KeyEvent.SHIFT_DOWN_MASK));
 
 		Action deobfAction = new AbstractAction(NLS.str("menu.deobfuscation"), ICON_DEOBF) {
 			@Override
@@ -781,8 +936,7 @@ public class MainWindow extends JFrame {
 			}
 		};
 		backAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("nav.back"));
-		backAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_LEFT,
-				UiUtils.ctrlButton() | KeyEvent.ALT_DOWN_MASK));
+		backAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_ESCAPE, 0));
 
 		Action forwardAction = new AbstractAction(NLS.str("nav.forward"), ICON_FORWARD) {
 			@Override
@@ -791,12 +945,29 @@ public class MainWindow extends JFrame {
 			}
 		};
 		forwardAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("nav.forward"));
-		forwardAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_RIGHT,
-				UiUtils.ctrlButton() | KeyEvent.ALT_DOWN_MASK));
+		forwardAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_RIGHT, KeyEvent.ALT_DOWN_MASK));
+
+		Action quarkAction = new AbstractAction("Quark Engine", ICON_QUARK) {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				new QuarkDialog(MainWindow.this).setVisible(true);
+			}
+		};
+		quarkAction.putValue(Action.SHORT_DESCRIPTION, "Quark Engine");
+
+		Action openDeviceAction = new AbstractAction(NLS.str("debugger.process_selector"), ICON_DEBUGGER) {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				ADBDialog dialog = new ADBDialog(MainWindow.this);
+				dialog.setVisible(true);
+			}
+		};
+		openDeviceAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("debugger.process_selector"));
 
 		JMenu file = new JMenu(NLS.str("menu.file"));
 		file.setMnemonic(KeyEvent.VK_F);
 		file.add(openAction);
+		file.add(addFilesAction);
 		file.addSeparator();
 		file.add(newProjectAction);
 		file.add(saveProjectAction);
@@ -821,6 +992,7 @@ public class MainWindow extends JFrame {
 		nav.setMnemonic(KeyEvent.VK_N);
 		nav.add(textSearchAction);
 		nav.add(clsSearchAction);
+		nav.add(commentSearchAction);
 		nav.addSeparator();
 		nav.add(backAction);
 		nav.add(forwardAction);
@@ -828,10 +1000,12 @@ public class MainWindow extends JFrame {
 		JMenu tools = new JMenu(NLS.str("menu.tools"));
 		tools.setMnemonic(KeyEvent.VK_T);
 		tools.add(deobfMenuItem);
-		tools.add(logAction);
+		tools.add(quarkAction);
+		tools.add(openDeviceAction);
 
 		JMenu help = new JMenu(NLS.str("menu.help"));
 		help.setMnemonic(KeyEvent.VK_H);
+		help.add(logAction);
 		help.add(aboutAction);
 
 		JMenuBar menuBar = new JMenuBar();
@@ -855,6 +1029,8 @@ public class MainWindow extends JFrame {
 		JToolBar toolbar = new JToolBar();
 		toolbar.setFloatable(false);
 		toolbar.add(openAction);
+		toolbar.add(addFilesAction);
+		toolbar.addSeparator();
 		toolbar.add(saveAllAction);
 		toolbar.add(exportAction);
 		toolbar.addSeparator();
@@ -863,11 +1039,14 @@ public class MainWindow extends JFrame {
 		toolbar.addSeparator();
 		toolbar.add(textSearchAction);
 		toolbar.add(clsSearchAction);
+		toolbar.add(commentSearchAction);
 		toolbar.addSeparator();
 		toolbar.add(backAction);
 		toolbar.add(forwardAction);
 		toolbar.addSeparator();
 		toolbar.add(deobfToggleBtn);
+		toolbar.add(quarkAction);
+		toolbar.add(openDeviceAction);
 		toolbar.addSeparator();
 		toolbar.add(logAction);
 		toolbar.addSeparator();
@@ -965,6 +1144,11 @@ public class MainWindow extends JFrame {
 		heapUsageBar = new HeapUsageBar();
 		mainPanel.add(heapUsageBar, BorderLayout.SOUTH);
 
+		verticalSplitter = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+		verticalSplitter.setTopComponent(splitPane);
+		verticalSplitter.setResizeWeight(SPLIT_PANE_RESIZE_WEIGHT);
+
+		mainPanel.add(verticalSplitter, BorderLayout.CENTER);
 		setContentPane(mainPanel);
 		setTitle(DEFAULT_TITLE);
 	}
@@ -1018,7 +1202,7 @@ public class MainWindow extends JFrame {
 			pathList.add(name);
 			path = path.getParentPath();
 		}
-		return pathList.toArray(new String[pathList.size()]);
+		return pathList.toArray(new String[0]);
 	}
 
 	public static void getExpandedPaths(JTree tree, TreePath path, List<TreePath> list) {
@@ -1083,13 +1267,31 @@ public class MainWindow extends JFrame {
 		settings.setTreeWidth(splitPane.getDividerLocation());
 		settings.saveWindowPos(this);
 		settings.setMainWindowExtendedState(getExtendedState());
+		if (debuggerPanel != null) {
+			saveSplittersInfo();
+		}
 		cancelBackgroundJobs();
+		wrapper.close();
+		heapUsageBar.reset();
 		dispose();
+
+		BreakpointManager.saveAndExit();
+		FileUtils.deleteTempRootDir();
 		System.exit(0);
+	}
+
+	private void saveSplittersInfo() {
+		settings.setMainWindowVerticalSplitterLoc(verticalSplitter.getDividerLocation());
+		settings.setDebuggerStackFrameSplitterLoc(debuggerPanel.getLeftSplitterLocation());
+		settings.setDebuggerVarTreeSplitterLoc(debuggerPanel.getRightSplitterLocation());
 	}
 
 	public JadxWrapper getWrapper() {
 		return wrapper;
+	}
+
+	public JadxProject getProject() {
+		return project;
 	}
 
 	public TabbedPane getTabbedPane() {
@@ -1104,35 +1306,75 @@ public class MainWindow extends JFrame {
 		return cacheObject;
 	}
 
-	public BackgroundWorker getBackgroundWorker() {
-		return backgroundWorker;
+	public BackgroundExecutor getBackgroundExecutor() {
+		return backgroundExecutor;
 	}
 
 	public ProgressPanel getProgressPane() {
 		return progressPane;
 	}
 
-	private class RecentProjectsMenuListener implements MenuListener {
-		private final JMenu recentProjects;
+	public JRoot getTreeRoot() {
+		return treeRoot;
+	}
 
-		public RecentProjectsMenuListener(JMenu recentProjects) {
-			this.recentProjects = recentProjects;
+	public JDebuggerPanel getDebuggerPanel() {
+		initDebuggerPanel();
+		return debuggerPanel;
+	}
+
+	public void showDebuggerPanel() {
+		initDebuggerPanel();
+	}
+
+	public void destroyDebuggerPanel() {
+		saveSplittersInfo();
+		debuggerPanel.setVisible(false);
+		debuggerPanel = null;
+	}
+
+	public void showHeapUsageBar() {
+		settings.setShowHeapUsageBar(true);
+		heapUsageBar.setVisible(true);
+	}
+
+	private void initDebuggerPanel() {
+		if (debuggerPanel == null) {
+			debuggerPanel = new JDebuggerPanel(this);
+			debuggerPanel.loadSettings();
+			verticalSplitter.setBottomComponent(debuggerPanel);
+			int loc = settings.getMainWindowVerticalSplitterLoc();
+			if (loc == 0) {
+				loc = 300;
+			}
+			verticalSplitter.setDividerLocation(loc);
+		}
+	}
+
+	private class RecentProjectsMenuListener implements MenuListener {
+		private final JMenu menu;
+
+		public RecentProjectsMenuListener(JMenu menu) {
+			this.menu = menu;
 		}
 
 		@Override
 		public void menuSelected(MenuEvent menuEvent) {
-			recentProjects.removeAll();
-			File openFile = wrapper.getOpenFile();
-			Path currentPath = openFile == null ? null : openFile.toPath();
-			for (Path path : settings.getRecentProjects()) {
-				if (!path.equals(currentPath)) {
-					JMenuItem menuItem = new JMenuItem(path.toAbsolutePath().toString());
-					recentProjects.add(menuItem);
-					menuItem.addActionListener(e -> open(path));
-				}
-			}
-			if (recentProjects.getItemCount() == 0) {
-				recentProjects.add(new JMenuItem(NLS.str("menu.no_recent_projects")));
+			Set<Path> current = new HashSet<>(wrapper.getOpenPaths());
+			List<JMenuItem> items = settings.getRecentProjects()
+					.stream()
+					.filter(path -> !current.contains(path))
+					.map(path -> {
+						JMenuItem menuItem = new JMenuItem(path.toAbsolutePath().toString());
+						menuItem.addActionListener(e -> open(Collections.singletonList(path)));
+						return menuItem;
+					}).collect(Collectors.toList());
+
+			menu.removeAll();
+			if (items.isEmpty()) {
+				menu.add(new JMenuItem(NLS.str("menu.no_recent_projects")));
+			} else {
+				items.forEach(menu::add);
 			}
 		}
 
@@ -1142,24 +1384,6 @@ public class MainWindow extends JFrame {
 
 		@Override
 		public void menuCanceled(MenuEvent e) {
-		}
-	}
-
-	private class JPackagePopUp extends JPopupMenu {
-		JMenuItem excludeItem = new JCheckBoxMenuItem(NLS.str("popup.exclude"));
-
-		public JPackagePopUp(JPackage pkg) {
-			excludeItem.setSelected(!pkg.isEnabled());
-			add(excludeItem);
-			excludeItem.addItemListener(e -> {
-				String fullName = pkg.getFullName();
-				if (excludeItem.isSelected()) {
-					wrapper.addExcludedPackage(fullName);
-				} else {
-					wrapper.removeExcludedPackage(fullName);
-				}
-				reOpenFile();
-			});
 		}
 	}
 }

@@ -1,21 +1,15 @@
 package jadx.gui.utils;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
-import jadx.api.JavaClass;
-import jadx.api.JavaField;
-import jadx.api.JavaMethod;
-import jadx.api.JavaNode;
+import jadx.api.*;
 import jadx.core.utils.exceptions.JadxRuntimeException;
-import jadx.gui.treemodel.JClass;
-import jadx.gui.treemodel.JField;
-import jadx.gui.treemodel.JMethod;
-import jadx.gui.treemodel.JNode;
+import jadx.gui.treemodel.*;
 
 public class JNodeCache {
 
-	private final Map<JavaNode, JNode> cache = new HashMap<>();
+	private final Map<JavaNode, JNode> cache = new ConcurrentHashMap<>();
 
 	public JNode makeFrom(JavaNode javaNode) {
 		if (javaNode == null) {
@@ -44,6 +38,10 @@ public class JNodeCache {
 		if (node instanceof JavaField) {
 			JavaField fld = (JavaField) node;
 			return new JField(fld, (JClass) makeFrom(fld.getDeclaringClass()));
+		}
+		if (node instanceof JavaVariable) {
+			JavaVariable var = (JavaVariable) node;
+			return new JVariable(var, (JClass) makeFrom(var.getDeclaringClass()));
 		}
 		throw new JadxRuntimeException("Unknown type for JavaNode: " + node.getClass());
 	}

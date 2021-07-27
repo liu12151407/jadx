@@ -1,49 +1,47 @@
 package jadx.gui.utils;
 
-import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 
 import org.jetbrains.annotations.Nullable;
 
-import jadx.gui.jobs.DecompileJob;
-import jadx.gui.jobs.IndexJob;
+import jadx.gui.jobs.IndexService;
+import jadx.gui.settings.JadxSettings;
+import jadx.gui.treemodel.JRoot;
 import jadx.gui.ui.SearchDialog;
+import jadx.gui.utils.search.CommentsIndex;
 import jadx.gui.utils.search.TextSearchIndex;
 
 public class CacheObject {
 
-	private DecompileJob decompileJob;
-	private IndexJob indexJob;
+	private IndexService indexService;
 
 	private TextSearchIndex textIndex;
 	private CodeUsageInfo usageInfo;
+	private CommentsIndex commentsIndex;
 	private String lastSearch;
 	private JNodeCache jNodeCache;
-	private Set<SearchDialog.SearchOptions> lastSearchOptions;
+	private Map<SearchDialog.SearchPreset, Set<SearchDialog.SearchOptions>> lastSearchOptions;
+
+	private JRoot jRoot;
+	private JadxSettings settings;
 
 	public CacheObject() {
 		reset();
 	}
 
 	public void reset() {
-		decompileJob = null;
-		indexJob = null;
+		jRoot = null;
+		settings = null;
+		indexService = null;
 		textIndex = null;
 		lastSearch = null;
 		jNodeCache = new JNodeCache();
 		usageInfo = null;
-		lastSearchOptions = EnumSet.noneOf(SearchDialog.SearchOptions.class);
+		lastSearchOptions = new HashMap<>();
 	}
 
-	public DecompileJob getDecompileJob() {
-		return decompileJob;
-	}
-
-	public void setDecompileJob(DecompileJob decompileJob) {
-		this.decompileJob = decompileJob;
-	}
-
-	@Nullable
 	public TextSearchIndex getTextIndex() {
 		return textIndex;
 	}
@@ -70,23 +68,43 @@ public class CacheObject {
 		this.usageInfo = usageInfo;
 	}
 
-	public IndexJob getIndexJob() {
-		return indexJob;
+	public CommentsIndex getCommentsIndex() {
+		return commentsIndex;
 	}
 
-	public void setIndexJob(IndexJob indexJob) {
-		this.indexJob = indexJob;
+	public void setCommentsIndex(CommentsIndex commentsIndex) {
+		this.commentsIndex = commentsIndex;
+	}
+
+	public IndexService getIndexService() {
+		return indexService;
+	}
+
+	public void setIndexService(IndexService indexService) {
+		this.indexService = indexService;
 	}
 
 	public JNodeCache getNodeCache() {
 		return jNodeCache;
 	}
 
-	public void setLastSearchOptions(Set<SearchDialog.SearchOptions> lastSearchOptions) {
-		this.lastSearchOptions = lastSearchOptions;
+	public Map<SearchDialog.SearchPreset, Set<SearchDialog.SearchOptions>> getLastSearchOptions() {
+		return lastSearchOptions;
 	}
 
-	public Set<SearchDialog.SearchOptions> getLastSearchOptions() {
-		return lastSearchOptions;
+	public void setJadxSettings(JadxSettings settings) {
+		this.settings = settings;
+	}
+
+	public JadxSettings getJadxSettings() {
+		return this.settings;
+	}
+
+	public JRoot getJRoot() {
+		return jRoot;
+	}
+
+	public void setJRoot(JRoot jRoot) {
+		this.jRoot = jRoot;
 	}
 }

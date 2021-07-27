@@ -1,9 +1,13 @@
 package jadx.gui.treemodel;
 
-import javax.swing.*;
+import javax.swing.Icon;
+import javax.swing.ImageIcon;
+
+import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 
 import jadx.api.JavaField;
 import jadx.api.JavaNode;
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.info.AccessInfo;
 import jadx.gui.utils.OverlayIcon;
 import jadx.gui.utils.UiUtils;
@@ -27,6 +31,10 @@ public class JField extends JNode {
 		this.jParent = jClass;
 	}
 
+	public JavaField getJavaField() {
+		return (JavaField) getJavaNode();
+	}
+
 	@Override
 	public JavaNode getJavaNode() {
 		return field;
@@ -40,6 +48,11 @@ public class JField extends JNode {
 	@Override
 	public JClass getRootClass() {
 		return jParent.getRootClass();
+	}
+
+	@Override
+	public boolean canRename() {
+		return !field.getFieldNode().contains(AFlag.DONT_RENAME);
 	}
 
 	@Override
@@ -61,13 +74,38 @@ public class JField extends JNode {
 	}
 
 	@Override
+	public String getSyntaxName() {
+		return SyntaxConstants.SYNTAX_STYLE_JAVA;
+	}
+
+	@Override
 	public String makeString() {
 		return UiUtils.typeFormat(field.getName(), field.getType());
 	}
 
 	@Override
+	public String makeStringHtml() {
+		return UiUtils.typeFormatHtml(field.getName(), field.getType());
+	}
+
+	@Override
 	public String makeLongString() {
 		return UiUtils.typeFormat(field.getFullName(), field.getType());
+	}
+
+	@Override
+	public String makeLongStringHtml() {
+		return UiUtils.typeFormatHtml(field.getFullName(), field.getType());
+	}
+
+	@Override
+	public String makeDescString() {
+		return UiUtils.typeStr(field.getType()) + " " + field.getName();
+	}
+
+	@Override
+	public boolean hasDescString() {
+		return true;
 	}
 
 	@Override

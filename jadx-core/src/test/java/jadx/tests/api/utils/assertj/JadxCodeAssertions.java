@@ -2,12 +2,16 @@ package jadx.tests.api.utils.assertj;
 
 import org.assertj.core.api.AbstractStringAssert;
 
-import jadx.core.codegen.CodeWriter;
+import jadx.api.ICodeWriter;
 import jadx.tests.api.utils.TestUtils;
 
 public class JadxCodeAssertions extends AbstractStringAssert<JadxCodeAssertions> {
 	public JadxCodeAssertions(String code) {
 		super(code, JadxCodeAssertions.class);
+	}
+
+	public JadxCodeAssertions containsOne(String substring) {
+		return countString(1, substring);
 	}
 
 	public JadxCodeAssertions countString(int count, String substring) {
@@ -42,14 +46,24 @@ public class JadxCodeAssertions extends AbstractStringAssert<JadxCodeAssertions>
 		}
 		String indent = TestUtils.indent(commonIndent);
 		StringBuilder sb = new StringBuilder();
+		boolean first = true;
 		for (String line : lines) {
 			if (!line.isEmpty()) {
+				if (first) {
+					first = false;
+				} else {
+					sb.append(ICodeWriter.NL);
+				}
 				sb.append(indent);
 				sb.append(line);
 			}
-			sb.append(CodeWriter.NL);
 		}
-		return countString(1, sb.toString());
+		return containsOnlyOnce(sb.toString());
+	}
+
+	public JadxCodeAssertions removeBlockComments() {
+		String code = actual.replaceAll("/\\*.*\\*/", "");
+		return new JadxCodeAssertions(code);
 	}
 
 	public JadxCodeAssertions print() {
