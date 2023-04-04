@@ -30,13 +30,15 @@ public class MoveInlineVisitor extends AbstractVisitor {
 		moveInline(mth);
 	}
 
-	private static void moveInline(MethodNode mth) {
+	public static void moveInline(MethodNode mth) {
 		InsnRemover remover = new InsnRemover(mth);
 		for (BlockNode block : mth.getBasicBlocks()) {
 			remover.setBlock(block);
 			for (InsnNode insn : block.getInstructions()) {
-				if (insn.getType() == InsnType.MOVE
-						&& processMove(mth, insn)) {
+				if (insn.getType() != InsnType.MOVE) {
+					continue;
+				}
+				if (processMove(mth, insn)) {
 					remover.addAndUnbind(insn);
 				}
 			}
@@ -50,9 +52,18 @@ public class MoveInlineVisitor extends AbstractVisitor {
 		if (resultArg.sameRegAndSVar(moveArg)) {
 			return true;
 		}
+		if (moveArg.isRegister()) {
+			RegisterArg moveReg = (RegisterArg) moveArg;
+			if (moveReg.getSVar().isAssignInPhi()) {
+				// don't mix already merged variables
+				return false;
+			}
+		}
 		SSAVar ssaVar = resultArg.getSVar();
 		if (ssaVar.isUsedInPhi()) {
 			return false;
+			// TODO: review conditions of 'up' move inline (test TestMoveInline)
+			// return deleteMove(mth, move);
 		}
 		RegDebugInfoAttr debugInfo = moveArg.get(AType.REG_DEBUG_INFO);
 		for (RegisterArg useArg : ssaVar.getUseList()) {
@@ -80,6 +91,7 @@ public class MoveInlineVisitor extends AbstractVisitor {
 			} else {
 				replaceArg = moveArg.duplicate();
 			}
+			useInsn.inheritMetadata(move);
 			replaceArg.copyAttributesFrom(useArg);
 			if (debugInfo != null) {
 				replaceArg.addAttr(debugInfo);
@@ -88,6 +100,37 @@ public class MoveInlineVisitor extends AbstractVisitor {
 				mth.addWarnComment("Failed to replace arg in insn: " + useInsn);
 			}
 		}
+		return true;
+	}
+
+	private static boolean deleteMove(MethodNode mth, InsnNode move) {
+		InsnArg moveArg = move.getArg(0);
+		if (!moveArg.isRegister()) {
+			return false;
+		}
+		RegisterArg moveReg = (RegisterArg) moveArg;
+		SSAVar ssaVar = moveReg.getSVar();
+		if (ssaVar.getUseCount() != 1 || ssaVar.isUsedInPhi()) {
+			return false;
+		}
+		RegisterArg assignArg = ssaVar.getAssign();
+		InsnNode parentInsn = assignArg.getParentInsn();
+		if (parentInsn == null) {
+			return false;
+		}
+		if (parentInsn.getSourceLine() != move.getSourceLine()
+				|| moveArg.contains(AType.REG_DEBUG_INFO)) {
+			// preserve debug info
+			return false;
+		}
+		// set move result into parent insn result
+		InsnRemover.unbindAllArgs(mth, move);
+		InsnRemover.unbindResult(mth, parentInsn);
+
+		RegisterArg resArg = parentInsn.getResult();
+		RegisterArg newResArg = move.getResult().duplicate(resArg.getInitType());
+		newResArg.copyAttributesFrom(resArg);
+		parentInsn.setResult(newResArg);
 		return true;
 	}
 }

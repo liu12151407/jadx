@@ -1,14 +1,30 @@
 package jadx.gui.jobs;
 
 import java.util.List;
+import java.util.function.Consumer;
 
-public interface IBackgroundTask {
+import org.jetbrains.annotations.Nullable;
+
+public interface IBackgroundTask extends Cancelable {
 
 	String getTitle();
 
-	List<Runnable> scheduleJobs();
+	/**
+	 * Jobs to run in parallel
+	 */
+	List<? extends Runnable> scheduleJobs();
 
-	void onFinish(TaskStatus status, long skipped);
+	/**
+	 * Called on executor thread after the all jobs finished.
+	 */
+	default void onDone(ITaskInfo taskInfo) {
+	}
+
+	/**
+	 * Executed on the Event Dispatch Thread after the all jobs finished.
+	 */
+	default void onFinish(ITaskInfo taskInfo) {
+	}
 
 	default boolean canBeCanceled() {
 		return false;
@@ -26,5 +42,19 @@ public interface IBackgroundTask {
 	 */
 	default boolean checkMemoryUsage() {
 		return false;
+	}
+
+	/**
+	 * Get task progress (Optional)
+	 */
+	default @Nullable ITaskProgress getTaskProgress() {
+		return null;
+	}
+
+	/**
+	 * Return progress notifications listener (use executor tick rate and thread) (Optional)
+	 */
+	default @Nullable Consumer<ITaskProgress> getProgressListener() {
+		return null;
 	}
 }

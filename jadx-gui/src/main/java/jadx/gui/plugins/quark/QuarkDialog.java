@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import jadx.gui.settings.JadxSettings;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.utils.UiUtils;
+import jadx.gui.utils.ui.NodeLabel;
 
 public class QuarkDialog extends JDialog {
 	private static final long serialVersionUID = 4855753773520368215L;
@@ -39,7 +40,7 @@ public class QuarkDialog extends JDialog {
 		this.files = filterOpenFiles(mainWindow);
 		if (files.isEmpty()) {
 			UiUtils.errorMessage(mainWindow, "Quark is unable to analyze loaded files");
-			LOG.error("Quark: The files cannot be analyzed: {}", mainWindow.getWrapper().getOpenPaths());
+			LOG.error("Quark: The files cannot be analyzed: {}", mainWindow.getProject().getFilePaths());
 			return;
 		}
 		initUI();
@@ -47,7 +48,7 @@ public class QuarkDialog extends JDialog {
 
 	private List<Path> filterOpenFiles(MainWindow mainWindow) {
 		PathMatcher matcher = FileSystems.getDefault().getPathMatcher("glob:**.{apk,dex}");
-		return mainWindow.getWrapper().getOpenPaths()
+		return mainWindow.getProject().getFilePaths()
 				.stream()
 				.filter(matcher::matches)
 				.collect(Collectors.toList());
@@ -59,7 +60,7 @@ public class QuarkDialog extends JDialog {
 		description.setAlignmentX(0.5f);
 
 		fileSelectCombo = new JComboBox<>(files.toArray(new Path[0]));
-		fileSelectCombo.setRenderer((list, value, index, isSelected, cellHasFocus) -> new JLabel(value.getFileName().toString()));
+		fileSelectCombo.setRenderer((list, value, index, isSelected, cellHasFocus) -> new NodeLabel(value.getFileName().toString()));
 
 		JPanel textPane = new JPanel();
 		textPane.add(description);

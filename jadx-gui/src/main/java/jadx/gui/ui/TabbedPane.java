@@ -10,26 +10,29 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 import javax.swing.JTabbedPane;
 import javax.swing.SwingUtilities;
-import javax.swing.text.BadLocationException;
 
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import jadx.core.utils.StringUtils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JNode;
 import jadx.gui.ui.codearea.AbstractCodeArea;
 import jadx.gui.ui.codearea.AbstractCodeContentPanel;
 import jadx.gui.ui.codearea.ClassCodeContentPanel;
+import jadx.gui.ui.codearea.EditorViewState;
 import jadx.gui.ui.codearea.SmaliArea;
+import jadx.gui.ui.panel.ContentPanel;
+import jadx.gui.ui.panel.HtmlPanel;
+import jadx.gui.ui.panel.IViewStateSupport;
+import jadx.gui.ui.panel.ImagePanel;
 import jadx.gui.utils.JumpManager;
 import jadx.gui.utils.JumpPosition;
+import jadx.gui.utils.NLS;
 
 public class TabbedPane extends JTabbedPane {
 	private static final long serialVersionUID = -8833600618794570904L;
@@ -48,22 +51,29 @@ public class TabbedPane extends JTabbedPane {
 
 		setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
 
-		addMouseWheelListener(e -> {
-			if (openTabs.isEmpty()) {
+		addMouseWheelListener(event -> {
+			int direction = event.getWheelRotation();
+			if (openTabs.isEmpty() || direction == 0) {
 				return;
 			}
-			int direction = e.getWheelRotation();
+			direction = (direction < 0) ? -1 : 1; // normalize direction
 			int index = getSelectedIndex();
 			int maxIndex = getTabCount() - 1;
-			if ((index == 0 && direction < 0)
-					|| (index == maxIndex && direction > 0)) {
-				index = maxIndex - index;
-			} else {
-				index += direction;
+			index += direction;
+			// switch between first tab <-> last tab
+			if (index < 0) {
+				index = maxIndex;
+			} else if (index > maxIndex) {
+				index = 0;
 			}
-			setSelectedIndex(index);
+			try {
+				setSelectedIndex(index);
+			} catch (IndexOutOfBoundsException e) {
+				// ignore error
+			}
 		});
 		interceptTabKey();
+		interceptCloseKey();
 		enableSwitchingTabs();
 	}
 
@@ -97,7 +107,7 @@ public class TabbedPane extends JTabbedPane {
 							}
 						}
 						if (doSwitch) {
-							setSelectedComponent(lastTab);
+							selectTab(lastTab);
 						}
 					}
 				} else if (consume && (e.getModifiersEx() & ctrlDown) == 0) {
@@ -107,6 +117,34 @@ public class TabbedPane extends JTabbedPane {
 					}
 				}
 				return consume;
+			}
+		});
+	}
+
+	private void interceptCloseKey() {
+		KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(new KeyEventDispatcher() {
+			private static final int closeKey = KeyEvent.VK_W;
+			private boolean canClose = true;
+
+			@Override
+			public boolean dispatchKeyEvent(KeyEvent e) {
+				if (!FocusManager.isActive()) {
+					return false; // do nothing when tab is not on focus.
+				}
+				if (e.getKeyCode() != closeKey) {
+					return false; // only intercept the events of the close key
+				}
+				if (e.getID() == KeyEvent.KEY_RELEASED) {
+					canClose = true; // after the close key is lifted we allow to use it again
+					return false;
+				}
+				if (e.isControlDown() && canClose) {
+					// close the current tab
+					closeCodePanel(curTab);
+					canClose = false; // make sure we dont close more tabs until the close key is lifted
+					return true;
+				}
+				return false;
 			}
 		});
 	}
@@ -156,79 +194,83 @@ public class TabbedPane extends JTabbedPane {
 		return mainWindow;
 	}
 
-	private void showCode(final JumpPosition jumpPos) {
-		JNode jumpNode = jumpPos.getNode();
-		Objects.requireNonNull(jumpNode, "Null node in JumpPosition");
-
-		final AbstractCodeContentPanel contentPanel = (AbstractCodeContentPanel) getContentPanel(jumpNode);
-		if (contentPanel == null) {
-			return;
-		}
-		SwingUtilities.invokeLater(() -> {
-			setSelectedComponent(contentPanel);
-			AbstractCodeArea codeArea = contentPanel.getCodeArea();
-			int pos = jumpPos.getPos();
-			if (pos > 0) {
-				codeArea.scrollToPos(pos);
-			} else {
-				int line = jumpPos.getLine();
-				if (line < 0) {
-					try {
-						line = 1 + codeArea.getLineOfOffset(-line);
-					} catch (BadLocationException e) {
-						LOG.error("Can't get line for: {}", jumpPos, e);
-						line = jumpNode.getLine();
-					}
-				}
-				int lineNum = Math.max(0, line - 1);
-				try {
-					int offs = codeArea.getLineStartOffset(lineNum);
-					while (StringUtils.isWhite(codeArea.getText(offs, 1).charAt(0))) {
-						offs += 1;
-					}
-					offs += pos;
-					jumpPos.setPos(offs);
-					codeArea.scrollToPos(offs);
-				} catch (BadLocationException e) {
-					e.printStackTrace();
-					codeArea.scrollToLine(line);
-				}
-			}
-			codeArea.requestFocus();
-		});
-	}
-
-	public void showNode(JNode node) {
-		final ContentPanel contentPanel = getContentPanel(node);
-		if (contentPanel == null) {
-			return;
-		}
-		SwingUtilities.invokeLater(() -> setSelectedComponent(contentPanel));
-	}
-
+	/**
+	 * Jump to node definition
+	 */
 	public void codeJump(JNode node) {
-		codeJump(new JumpPosition(node));
+		if (node.getPos() != 0 || node.getRootClass() == null) {
+			codeJump(new JumpPosition(node));
+			return;
+		}
+		// node need loading
+		mainWindow.getBackgroundExecutor().execute(
+				NLS.str("progress.load"),
+				() -> node.getRootClass().getCodeInfo(), // run heavy loading in background
+				status -> codeJump(new JumpPosition(node)));
 	}
 
+	/**
+	 * Prefer {@link TabbedPane#codeJump(JNode)} method
+	 */
 	public void codeJump(JumpPosition pos) {
+		saveJump(pos);
+		showCode(pos);
+	}
+
+	private void saveJump(JumpPosition pos) {
 		JumpPosition curPos = getCurrentPosition();
 		if (curPos != null) {
 			jumps.addPosition(curPos);
 			jumps.addPosition(pos);
 		}
-		showCode(pos);
+	}
+
+	private void showCode(JumpPosition jumpPos) {
+		ContentPanel contentPanel = getContentPanel(jumpPos.getNode());
+		if (contentPanel != null) {
+			scrollToPos(contentPanel, jumpPos.getPos());
+			selectTab(contentPanel);
+		}
+	}
+
+	public boolean showNode(JNode node) {
+		final ContentPanel contentPanel = getContentPanel(node);
+		if (contentPanel == null) {
+			return false;
+		}
+		selectTab(contentPanel);
+		return true;
+	}
+
+	private void scrollToPos(ContentPanel contentPanel, int pos) {
+		if (pos == 0) {
+			LOG.warn("Ignore zero jump!", new JadxRuntimeException());
+			return;
+		}
+		if (contentPanel instanceof AbstractCodeContentPanel) {
+			AbstractCodeArea codeArea = ((AbstractCodeContentPanel) contentPanel).getCodeArea();
+			codeArea.scrollToPos(pos);
+			codeArea.requestFocus();
+		}
+	}
+
+	public void selectTab(ContentPanel contentPanel) {
+		setSelectedComponent(contentPanel);
+		if (mainWindow.getSettings().isAlwaysSelectOpened()) {
+			mainWindow.syncWithEditor();
+		}
 	}
 
 	public void smaliJump(JClass cls, int pos, boolean debugMode) {
 		ContentPanel panel = getOpenTabs().get(cls);
 		if (panel == null) {
-			showCode(new JumpPosition(cls, 0, 1));
+			showCode(new JumpPosition(cls, 1));
 			panel = getOpenTabs().get(cls);
 			if (panel == null) {
 				throw new JadxRuntimeException("Failed to open panel for JClass: " + cls);
 			}
 		} else {
-			setSelectedComponent(panel);
+			selectTab(panel);
 		}
 		ClassCodeContentPanel codePane = ((ClassCodeContentPanel) panel);
 		codePane.showSmaliPane();
@@ -247,6 +289,25 @@ public class TabbedPane extends JTabbedPane {
 			return ((AbstractCodeContentPanel) selectedCodePanel).getCodeArea().getCurrentPosition();
 		}
 		return null;
+	}
+
+	public List<EditorViewState> getEditorViewStates() {
+		List<EditorViewState> states = new ArrayList<>();
+		for (ContentPanel panel : openTabs.values()) {
+			if (panel instanceof IViewStateSupport) {
+				states.add(((IViewStateSupport) panel).getEditorViewState());
+			} else {
+				states.add(new EditorViewState(panel.getNode(), "", 0, EditorViewState.ZERO));
+			}
+		}
+		return states;
+	}
+
+	public void restoreEditorViewState(EditorViewState viewState) {
+		ContentPanel contentPanel = getContentPanel(viewState.getNode());
+		if (contentPanel instanceof IViewStateSupport) {
+			((IViewStateSupport) contentPanel).restoreEditorViewState(viewState);
+		}
 	}
 
 	public void navBack() {
@@ -277,6 +338,7 @@ public class TabbedPane extends JTabbedPane {
 	public void closeCodePanel(ContentPanel contentPanel) {
 		openTabs.remove(contentPanel.getNode());
 		remove(contentPanel);
+		contentPanel.dispose();
 	}
 
 	@Nullable
@@ -303,7 +365,7 @@ public class TabbedPane extends JTabbedPane {
 	}
 
 	@Nullable
-	ContentPanel getSelectedCodePanel() {
+	public ContentPanel getSelectedCodePanel() {
 		return (ContentPanel) getSelectedComponent();
 	}
 
@@ -341,49 +403,56 @@ public class TabbedPane extends JTabbedPane {
 		jumps.reset();
 		curTab = null;
 		lastTab = null;
+		FocusManager.reset();
 	}
 
 	@Nullable
 	public Component getFocusedComp() {
-		return FocusManager.isActive() ? FocusManager.focusedComp : null;
+		return FocusManager.getFocusedComp();
 	}
 
 	private static class FocusManager implements FocusListener {
-		static boolean active = false;
-		static FocusManager listener = new FocusManager();
-		static Component focusedComp;
+		private static final FocusManager INSTANCE = new FocusManager();
+		private static @Nullable Component focusedComp;
 
 		static boolean isActive() {
-			return active;
+			return focusedComp != null;
+		}
+
+		static void reset() {
+			focusedComp = null;
+		}
+
+		static Component getFocusedComp() {
+			return focusedComp;
 		}
 
 		@Override
 		public void focusGained(FocusEvent e) {
-			active = true;
 			focusedComp = (Component) e.getSource();
 		}
 
 		@Override
 		public void focusLost(FocusEvent e) {
-			active = false;
+			focusedComp = null;
 		}
 
 		static void listen(ContentPanel pane) {
 			if (pane instanceof ClassCodeContentPanel) {
-				((ClassCodeContentPanel) pane).getCodeArea().addFocusListener(listener);
-				((ClassCodeContentPanel) pane).getSmaliCodeArea().addFocusListener(listener);
+				((ClassCodeContentPanel) pane).getCodeArea().addFocusListener(INSTANCE);
+				((ClassCodeContentPanel) pane).getSmaliCodeArea().addFocusListener(INSTANCE);
 				return;
 			}
 			if (pane instanceof AbstractCodeContentPanel) {
-				((AbstractCodeContentPanel) pane).getCodeArea().addFocusListener(listener);
+				((AbstractCodeContentPanel) pane).getCodeArea().addFocusListener(INSTANCE);
 				return;
 			}
 			if (pane instanceof HtmlPanel) {
-				((HtmlPanel) pane).getHtmlArea().addFocusListener(listener);
+				((HtmlPanel) pane).getHtmlArea().addFocusListener(INSTANCE);
 				return;
 			}
 			if (pane instanceof ImagePanel) {
-				pane.addFocusListener(listener);
+				pane.addFocusListener(INSTANCE);
 				return;
 			}
 			// throw new JadxRuntimeException("Add the new ContentPanel to TabbedPane.FocusManager: " + pane);
@@ -391,21 +460,15 @@ public class TabbedPane extends JTabbedPane {
 
 		static void focusOnCodePanel(ContentPanel pane) {
 			if (pane instanceof ClassCodeContentPanel) {
-				SwingUtilities.invokeLater(() -> {
-					((ClassCodeContentPanel) pane).getCurrentCodeArea().requestFocus();
-				});
+				SwingUtilities.invokeLater(() -> ((ClassCodeContentPanel) pane).getCurrentCodeArea().requestFocus());
 				return;
 			}
 			if (pane instanceof AbstractCodeContentPanel) {
-				SwingUtilities.invokeLater(() -> {
-					((AbstractCodeContentPanel) pane).getCodeArea().requestFocus();
-				});
+				SwingUtilities.invokeLater(() -> ((AbstractCodeContentPanel) pane).getCodeArea().requestFocus());
 				return;
 			}
 			if (pane instanceof HtmlPanel) {
-				SwingUtilities.invokeLater(() -> {
-					((HtmlPanel) pane).getHtmlArea().requestFocusInWindow();
-				});
+				SwingUtilities.invokeLater(() -> ((HtmlPanel) pane).getHtmlArea().requestFocusInWindow());
 				return;
 			}
 			if (pane instanceof ImagePanel) {

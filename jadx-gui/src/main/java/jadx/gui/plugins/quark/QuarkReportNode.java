@@ -1,5 +1,6 @@
 package jadx.gui.plugins.quark;
 
+import java.io.BufferedReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -14,11 +15,13 @@ import org.slf4j.LoggerFactory;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
+import jadx.api.ICodeInfo;
+import jadx.api.impl.SimpleCodeInfo;
 import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JNode;
-import jadx.gui.ui.ContentPanel;
-import jadx.gui.ui.HtmlPanel;
 import jadx.gui.ui.TabbedPane;
+import jadx.gui.ui.panel.ContentPanel;
+import jadx.gui.ui.panel.HtmlPanel;
 import jadx.gui.utils.UiUtils;
 
 public class QuarkReportNode extends JNode {
@@ -29,13 +32,14 @@ public class QuarkReportNode extends JNode {
 
 	private static final Gson GSON = new GsonBuilder().create();
 
-	private static final ImageIcon ICON = UiUtils.openIcon("icon_quark");
-	private final Path apkFile;
+	private static final ImageIcon ICON = UiUtils.openSvgIcon("ui/quark");
 
-	private String errorContent;
+	private final Path reportFile;
 
-	public QuarkReportNode(Path apkFile) {
-		this.apkFile = apkFile;
+	private ICodeInfo errorContent;
+
+	public QuarkReportNode(Path reportFile) {
+		this.reportFile = reportFile;
 	}
 
 	@Override
@@ -55,25 +59,32 @@ public class QuarkReportNode extends JNode {
 
 	@Override
 	public ContentPanel getContentPanel(TabbedPane tabbedPane) {
-		QuarkReportData data;
 		try {
-			data = GSON.fromJson(Files.newBufferedReader(apkFile), QuarkReportData.class);
+			QuarkReportData data;
+			try (BufferedReader reader = Files.newBufferedReader(reportFile)) {
+				data = GSON.fromJson(reader, QuarkReportData.class);
+			}
+			data.validate();
+			return new QuarkReportPanel(tabbedPane, this, data);
 		} catch (Exception e) {
 			LOG.error("Quark report parse error", e);
 			StringEscapeUtils.Builder builder = StringEscapeUtils.builder(StringEscapeUtils.ESCAPE_HTML4);
 			builder.append("<h2>");
 			builder.escape("Quark analysis failed!");
-			builder.append("</h2><pre>");
+			builder.append("</h2>");
+			builder.append("<h3>");
+			builder.append("Error: ").escape(e.getMessage());
+			builder.append("</h3>");
+			builder.append("<pre>");
 			builder.escape(ExceptionUtils.getStackTrace(e));
 			builder.append("</pre>");
-			errorContent = builder.toString();
+			errorContent = new SimpleCodeInfo(builder.toString());
 			return new HtmlPanel(tabbedPane, this);
 		}
-		return new QuarkReportPanel(tabbedPane, this, data);
 	}
 
 	@Override
-	public String getContent() {
-		return this.errorContent;
+	public ICodeInfo getCodeInfo() {
+		return errorContent;
 	}
 }

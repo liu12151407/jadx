@@ -1,9 +1,12 @@
 package jadx.gui.treemodel;
 
+import java.util.Comparator;
+
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
 
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
+import org.jetbrains.annotations.NotNull;
 
 import jadx.api.JavaField;
 import jadx.api.JavaNode;
@@ -15,14 +18,10 @@ import jadx.gui.utils.UiUtils;
 public class JField extends JNode {
 	private static final long serialVersionUID = 1712572192106793359L;
 
-	private static final ImageIcon ICON_FLD_DEF = UiUtils.openIcon("field_default_obj");
-	private static final ImageIcon ICON_FLD_PRI = UiUtils.openIcon("field_private_obj");
-	private static final ImageIcon ICON_FLD_PRO = UiUtils.openIcon("field_protected_obj");
-	private static final ImageIcon ICON_FLD_PUB = UiUtils.openIcon("field_public_obj");
-
-	private static final ImageIcon ICON_TRANSIENT = UiUtils.openIcon("transient_co");
-	private static final ImageIcon ICON_VOLATILE = UiUtils.openIcon("volatile_co");
-
+	private static final ImageIcon ICON_FLD_DEF = UiUtils.openSvgIcon("nodes/field");
+	private static final ImageIcon ICON_FLD_PRI = UiUtils.openSvgIcon("nodes/privateField");
+	private static final ImageIcon ICON_FLD_PRO = UiUtils.openSvgIcon("nodes/protectedField");
+	private static final ImageIcon ICON_FLD_PUB = UiUtils.openSvgIcon("nodes/publicField");
 	private final transient JavaField field;
 	private final transient JClass jParent;
 
@@ -56,20 +55,9 @@ public class JField extends JNode {
 	}
 
 	@Override
-	public int getLine() {
-		return field.getDecompiledLine();
-	}
-
-	@Override
 	public Icon getIcon() {
 		AccessInfo af = field.getAccessFlags();
 		OverlayIcon icon = UiUtils.makeIcon(af, ICON_FLD_PUB, ICON_FLD_PRI, ICON_FLD_PRO, ICON_FLD_DEF);
-		if (af.isTransient()) {
-			icon.add(ICON_TRANSIENT);
-		}
-		if (af.isVolatile()) {
-			icon.add(ICON_VOLATILE);
-		}
 		return icon;
 	}
 
@@ -99,13 +87,24 @@ public class JField extends JNode {
 	}
 
 	@Override
+	public String getTooltip() {
+		String fullType = UiUtils.escapeHtml(field.getType().toString());
+		return UiUtils.wrapHtml(fullType + ' ' + UiUtils.escapeHtml(field.getName()));
+	}
+
+	@Override
 	public String makeDescString() {
 		return UiUtils.typeStr(field.getType()) + " " + field.getName();
 	}
 
 	@Override
+	public boolean disableHtml() {
+		return false;
+	}
+
+	@Override
 	public boolean hasDescString() {
-		return true;
+		return false;
 	}
 
 	@Override
@@ -116,5 +115,22 @@ public class JField extends JNode {
 	@Override
 	public boolean equals(Object o) {
 		return this == o || o instanceof JField && field.equals(((JField) o).field);
+	}
+
+	private static final Comparator<JField> COMPARATOR = Comparator
+			.comparing(JField::getJParent)
+			.thenComparing(JNode::getName)
+			.thenComparingInt(JField::getPos);
+
+	public int compareToFld(@NotNull JField other) {
+		return COMPARATOR.compare(this, other);
+	}
+
+	@Override
+	public int compareTo(@NotNull JNode other) {
+		if (other instanceof JField) {
+			return compareToFld(((JField) other));
+		}
+		return super.compareTo(other);
 	}
 }

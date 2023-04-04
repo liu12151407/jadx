@@ -1,10 +1,10 @@
 package jadx.core.dex.visitors.ssa;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Deque;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 
 import jadx.core.dex.attributes.AFlag;
@@ -20,7 +20,7 @@ import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.visitors.AbstractVisitor;
 import jadx.core.dex.visitors.JadxVisitor;
-import jadx.core.dex.visitors.blocksmaker.BlockFinish;
+import jadx.core.dex.visitors.blocks.BlockProcessor;
 import jadx.core.utils.InsnList;
 import jadx.core.utils.InsnRemover;
 import jadx.core.utils.exceptions.JadxException;
@@ -29,7 +29,7 @@ import jadx.core.utils.exceptions.JadxRuntimeException;
 @JadxVisitor(
 		name = "SSATransform",
 		desc = "Calculate Single Side Assign (SSA) variables",
-		runAfter = BlockFinish.class
+		runAfter = BlockProcessor.class
 )
 public class SSATransform extends AbstractVisitor {
 
@@ -73,6 +73,7 @@ public class SSATransform extends AbstractVisitor {
 		} while (repeatFix);
 
 		hidePhiInsns(mth);
+		removeUnusedInvokeResults(mth);
 	}
 
 	private static void placePhi(MethodNode mth, int regNum, LiveVarAnalysis la) {
@@ -80,7 +81,7 @@ public class SSATransform extends AbstractVisitor {
 		int blocksCount = blocks.size();
 		BitSet hasPhi = new BitSet(blocksCount);
 		BitSet processed = new BitSet(blocksCount);
-		Deque<BlockNode> workList = new LinkedList<>();
+		Deque<BlockNode> workList = new ArrayDeque<>();
 
 		BitSet assignBlocks = la.getAssignBlocks(regNum);
 		for (int id = assignBlocks.nextSetBit(0); id >= 0; id = assignBlocks.nextSetBit(id + 1)) {
@@ -135,11 +136,11 @@ public class SSATransform extends AbstractVisitor {
 		RenameState initState = RenameState.init(mth);
 		initPhiInEnterBlock(initState);
 
-		Deque<RenameState> stack = new LinkedList<>();
+		Deque<RenameState> stack = new ArrayDeque<>();
 		stack.push(initState);
 		while (!stack.isEmpty()) {
 			RenameState state = stack.pop();
-			renameVarsInBlock(state);
+			renameVarsInBlock(mth, state);
 			for (BlockNode dominated : state.getBlock().getDominatesOn()) {
 				stack.push(RenameState.copyFrom(state, dominated));
 			}
@@ -155,7 +156,7 @@ public class SSATransform extends AbstractVisitor {
 		}
 	}
 
-	private static void renameVarsInBlock(RenameState state) {
+	private static void renameVarsInBlock(MethodNode mth, RenameState state) {
 		BlockNode block = state.getBlock();
 		for (InsnNode insn : block.getInstructions()) {
 			if (insn.getType() != InsnType.PHI) {
@@ -167,8 +168,9 @@ public class SSATransform extends AbstractVisitor {
 					int regNum = reg.getRegNum();
 					SSAVar var = state.getVar(regNum);
 					if (var == null) {
-						throw new JadxRuntimeException("Not initialized variable reg: " + regNum
-								+ ", insn: " + insn + ", block:" + block);
+						// TODO: in most cases issue in incorrectly attached exception handlers
+						mth.addWarnComment("Not initialized variable reg: " + regNum + ", insn: " + insn + ", block:" + block);
+						var = state.startVar(reg);
 					}
 					var.use(reg);
 				}
@@ -448,5 +450,19 @@ public class SSATransform extends AbstractVisitor {
 			block.remove(AType.PHI_LIST);
 		}
 		mth.getSVars().clear();
+	}
+
+	private static void removeUnusedInvokeResults(MethodNode mth) {
+		Iterator<SSAVar> it = mth.getSVars().iterator();
+		while (it.hasNext()) {
+			SSAVar ssaVar = it.next();
+			if (ssaVar.getUseCount() == 0) {
+				InsnNode parentInsn = ssaVar.getAssign().getParentInsn();
+				if (parentInsn != null && parentInsn.getType() == InsnType.INVOKE) {
+					parentInsn.setResult(null);
+					it.remove();
+				}
+			}
+		}
 	}
 }

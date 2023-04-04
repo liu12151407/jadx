@@ -9,6 +9,7 @@ import java.util.Map;
 import org.jetbrains.annotations.Nullable;
 
 import jadx.api.plugins.input.data.ILocalVar;
+import jadx.api.plugins.input.data.impl.DebugInfo;
 import jadx.plugins.input.dex.sections.DexConsts;
 import jadx.plugins.input.dex.sections.SectionReader;
 
@@ -34,7 +35,7 @@ public class DebugInfoParser {
 	private final SectionReader in;
 	private final SectionReader ext;
 
-	private final LocalVar[] locals;
+	private final DexLocalVar[] locals;
 	private final int codeSize;
 
 	private List<ILocalVar> resultList;
@@ -48,7 +49,7 @@ public class DebugInfoParser {
 	public DebugInfoParser(SectionReader in, int regsCount, int codeSize) {
 		this.in = in;
 		this.ext = in.copy();
-		this.locals = new LocalVar[regsCount];
+		this.locals = new DexLocalVar[regsCount];
 		this.codeSize = codeSize;
 	}
 
@@ -95,35 +96,32 @@ public class DebugInfoParser {
 			int nameId = in.readUleb128p1();
 			String name = ext.getString(nameId);
 			if (name != null && i < argsCount) {
-				int regNum = argRegs[i];
-				startVar(new LocalVar(regNum, name, argTypes.get(i)), -1);
+				DexLocalVar paramVar = new DexLocalVar(argRegs[i], name, argTypes.get(i));
+				startVar(paramVar, addr);
+				paramVar.markAsParameter();
 				varsInfoFound = true;
 			}
 		}
-
-		// process '0' instruction
-		addrChange(-1, 1, line);
-		setLine(addr, line);
-
-		int c = in.readUByte();
-		while (c != DBG_END_SEQUENCE) {
+		while (true) {
+			int c = in.readUByte();
+			if (c == DBG_END_SEQUENCE) {
+				break;
+			}
 			switch (c) {
 				case DBG_ADVANCE_PC: {
 					int addrInc = in.readUleb128();
-					addr = addrChange(addr, addrInc, line);
-					setLine(addr, line);
+					addr = addrChange(addr, addrInc);
 					break;
 				}
 				case DBG_ADVANCE_LINE: {
 					line += in.readSleb128();
 					break;
 				}
-
 				case DBG_START_LOCAL: {
 					int regNum = in.readUleb128();
 					int nameId = in.readUleb128() - 1;
 					int type = in.readUleb128() - 1;
-					LocalVar var = new LocalVar(ext, regNum, nameId, type, DexConsts.NO_INDEX);
+					DexLocalVar var = new DexLocalVar(ext, regNum, nameId, type, DexConsts.NO_INDEX);
 					startVar(var, addr);
 					varsInfoFound = true;
 					break;
@@ -133,7 +131,7 @@ public class DebugInfoParser {
 					int nameId = in.readUleb128p1();
 					int type = in.readUleb128p1();
 					int sign = in.readUleb128p1();
-					LocalVar var = new LocalVar(ext, regNum, nameId, type, sign);
+					DexLocalVar var = new DexLocalVar(ext, regNum, nameId, type, sign);
 					startVar(var, addr);
 					varsInfoFound = true;
 					break;
@@ -146,61 +144,45 @@ public class DebugInfoParser {
 				}
 				case DBG_END_LOCAL: {
 					int regNum = in.readUleb128();
-					LocalVar var = locals[regNum];
+					DexLocalVar var = locals[regNum];
 					if (var != null) {
 						endVar(var, addr);
 					}
 					varsInfoFound = true;
 					break;
 				}
-
 				case DBG_SET_PROLOGUE_END:
-				case DBG_SET_EPILOGUE_BEGIN:
+				case DBG_SET_EPILOGUE_BEGIN: {
 					// do nothing
 					break;
-
+				}
 				case DBG_SET_FILE: {
 					int idx = in.readUleb128() - 1;
 					this.sourceFile = ext.getString(idx);
 					break;
 				}
-
 				default: {
 					int adjustedOpCode = c - DBG_FIRST_SPECIAL;
 					int addrInc = adjustedOpCode / DBG_LINE_RANGE;
-					addr = addrChange(addr, addrInc, line);
+					addr = addrChange(addr, addrInc);
 					line += DBG_LINE_BASE + adjustedOpCode % DBG_LINE_RANGE;
 					setLine(addr, line);
 					break;
 				}
 			}
-			c = in.readUByte();
 		}
-
 		if (varsInfoFound) {
-			for (LocalVar var : locals) {
+			for (DexLocalVar var : locals) {
 				if (var != null && !var.isEnd()) {
 					endVar(var, codeSize - 1);
 				}
 			}
 		}
-		setSourceLines(addr, codeSize, line);
-
 		return new DebugInfo(linesMap, resultList);
 	}
 
-	private int addrChange(int addr, int addrInc, int line) {
-		int newAddr = addr + addrInc;
-		int maxAddr = codeSize - 1;
-		newAddr = Math.min(newAddr, maxAddr);
-		setSourceLines(addr, newAddr, line);
-		return newAddr;
-	}
-
-	private void setSourceLines(int start, int end, int line) {
-		for (int offset = start + 1; offset < end; offset++) {
-			setLine(offset, line);
-		}
+	private int addrChange(int addr, int addrInc) {
+		return Math.min(addr + addrInc, codeSize - 1);
 	}
 
 	private void setLine(int offset, int line) {
@@ -208,17 +190,17 @@ public class DebugInfoParser {
 	}
 
 	private void restartVar(int regNum, int addr) {
-		LocalVar prev = locals[regNum];
+		DexLocalVar prev = locals[regNum];
 		if (prev != null) {
 			endVar(prev, addr);
-			LocalVar newVar = new LocalVar(regNum, prev.getName(), prev.getType(), prev.getSignature());
+			DexLocalVar newVar = new DexLocalVar(regNum, prev.getName(), prev.getType(), prev.getSignature());
 			startVar(newVar, addr);
 		}
 	}
 
-	private void startVar(LocalVar newVar, int addr) {
+	private void startVar(DexLocalVar newVar, int addr) {
 		int regNum = newVar.getRegNum();
-		LocalVar prev = locals[regNum];
+		DexLocalVar prev = locals[regNum];
 		if (prev != null) {
 			endVar(prev, addr);
 		}
@@ -226,7 +208,7 @@ public class DebugInfoParser {
 		locals[regNum] = newVar;
 	}
 
-	private void endVar(LocalVar var, int addr) {
+	private void endVar(DexLocalVar var, int addr) {
 		if (var.end(addr)) {
 			resultList.add(var);
 		}

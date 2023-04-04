@@ -1,33 +1,33 @@
 package jadx.gui.treemodel;
 
+import java.util.Comparator;
 import java.util.Iterator;
 
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
 
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
+import org.jetbrains.annotations.NotNull;
 
 import jadx.api.JavaMethod;
 import jadx.api.JavaNode;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.instructions.args.ArgType;
-import jadx.gui.ui.ContentPanel;
-import jadx.gui.ui.TabbedPane;
-import jadx.gui.ui.codearea.ClassCodeContentPanel;
+import jadx.gui.utils.Icons;
 import jadx.gui.utils.OverlayIcon;
 import jadx.gui.utils.UiUtils;
 
 public class JMethod extends JNode {
 	private static final long serialVersionUID = 3834526867464663751L;
 
-	private static final ImageIcon ICON_MTH_DEF = UiUtils.openIcon("methdef_obj");
-	private static final ImageIcon ICON_MTH_PRI = UiUtils.openIcon("methpri_obj");
-	private static final ImageIcon ICON_MTH_PRO = UiUtils.openIcon("methpro_obj");
-	private static final ImageIcon ICON_MTH_PUB = UiUtils.openIcon("methpub_obj");
-
-	private static final ImageIcon ICON_CONSTRUCTOR = UiUtils.openIcon("constr_ovr");
-	private static final ImageIcon ICON_SYNC = UiUtils.openIcon("synch_co");
+	private static final ImageIcon ICON_METHOD = UiUtils.openSvgIcon("nodes/method");
+	private static final ImageIcon ICON_METHOD_ABSTRACT = UiUtils.openSvgIcon("nodes/abstractMethod");
+	private static final ImageIcon ICON_METHOD_PRIVATE = UiUtils.openSvgIcon("nodes/privateMethod");
+	private static final ImageIcon ICON_METHOD_PROTECTED = UiUtils.openSvgIcon("nodes/protectedMethod");
+	private static final ImageIcon ICON_METHOD_PUBLIC = UiUtils.openSvgIcon("nodes/publicMethod");
+	private static final ImageIcon ICON_METHOD_CONSTRUCTOR = UiUtils.openSvgIcon("nodes/constructorMethod");
+	private static final ImageIcon ICON_METHOD_SYNC = UiUtils.openSvgIcon("nodes/methodReference");
 
 	private final transient JavaMethod mth;
 	private final transient JClass jParent;
@@ -61,26 +61,37 @@ public class JMethod extends JNode {
 	}
 
 	@Override
-	public int getLine() {
-		return mth.getDecompiledLine();
-	}
-
-	@Override
-	public ContentPanel getContentPanel(TabbedPane tabbedPane) {
-		return new ClassCodeContentPanel(tabbedPane, this);
-	}
-
-	@Override
 	public Icon getIcon() {
 		AccessInfo accessFlags = mth.getAccessFlags();
-		OverlayIcon icon = UiUtils.makeIcon(accessFlags, ICON_MTH_PUB, ICON_MTH_PRI, ICON_MTH_PRO, ICON_MTH_DEF);
+		Icon icon = ICON_METHOD;
+		if (accessFlags.isAbstract()) {
+			icon = ICON_METHOD_ABSTRACT;
+		}
 		if (accessFlags.isConstructor()) {
-			icon.add(ICON_CONSTRUCTOR);
+			icon = ICON_METHOD_CONSTRUCTOR;
+		}
+		if (accessFlags.isPublic()) {
+			icon = ICON_METHOD_PUBLIC;
+		}
+		if (accessFlags.isPrivate()) {
+			icon = ICON_METHOD_PRIVATE;
+		}
+		if (accessFlags.isProtected()) {
+			icon = ICON_METHOD_PROTECTED;
 		}
 		if (accessFlags.isSynchronized()) {
-			icon.add(ICON_SYNC);
+			icon = ICON_METHOD_SYNC;
 		}
-		return icon;
+
+		OverlayIcon overIcon = new OverlayIcon(icon);
+		if (accessFlags.isFinal()) {
+			overIcon.add(Icons.FINAL);
+		}
+		if (accessFlags.isStatic()) {
+			overIcon.add(Icons.STATIC);
+		}
+
+		return overIcon;
 	}
 
 	@Override
@@ -90,6 +101,9 @@ public class JMethod extends JNode {
 
 	@Override
 	public boolean canRename() {
+		if (mth.isClassInit()) {
+			return false;
+		}
 		return !mth.getMethodNode().contains(AFlag.DONT_RENAME);
 	}
 
@@ -115,6 +129,11 @@ public class JMethod extends JNode {
 	}
 
 	@Override
+	public String getName() {
+		return mth.getName();
+	}
+
+	@Override
 	public String makeString() {
 		return UiUtils.typeFormat(makeBaseString(), getReturnType());
 	}
@@ -137,13 +156,23 @@ public class JMethod extends JNode {
 	}
 
 	@Override
+	public boolean disableHtml() {
+		return false;
+	}
+
+	@Override
 	public String makeDescString() {
 		return UiUtils.typeStr(getReturnType()) + " " + makeBaseString();
 	}
 
 	@Override
 	public boolean hasDescString() {
-		return true;
+		return false;
+	}
+
+	@Override
+	public int getPos() {
+		return mth.getDefPos();
 	}
 
 	@Override
@@ -154,5 +183,30 @@ public class JMethod extends JNode {
 	@Override
 	public boolean equals(Object o) {
 		return this == o || o instanceof JMethod && mth.equals(((JMethod) o).mth);
+	}
+
+	private static final Comparator<JMethod> COMPARATOR = Comparator
+			.comparing(JMethod::getJParent)
+			.thenComparing(jMethod -> jMethod.mth.getMethodNode().getMethodInfo().getShortId())
+			.thenComparingInt(JMethod::getPos);
+
+	public int compareToMth(@NotNull JMethod other) {
+		return COMPARATOR.compare(this, other);
+	}
+
+	@Override
+	public int compareTo(@NotNull JNode other) {
+		if (other instanceof JMethod) {
+			return compareToMth(((JMethod) other));
+		}
+		if (other instanceof JClass) {
+			JClass cls = (JClass) other;
+			int cmp = jParent.compareToCls(cls);
+			if (cmp != 0) {
+				return cmp;
+			}
+			return 1;
+		}
+		return super.compareTo(other);
 	}
 }

@@ -66,7 +66,11 @@ public final class TypeUpdate {
 	 * Force type setting
 	 */
 	public TypeUpdateResult applyWithWiderIgnSame(MethodNode mth, SSAVar ssaVar, ArgType candidateType) {
-		return apply(mth, ssaVar, candidateType, TypeUpdateFlags.FLAGS_WIDER_IGNSAME);
+		return apply(mth, ssaVar, candidateType, TypeUpdateFlags.FLAGS_WIDER_IGNORE_SAME);
+	}
+
+	public TypeUpdateResult applyWithWiderIgnoreUnknown(MethodNode mth, SSAVar ssaVar, ArgType candidateType) {
+		return apply(mth, ssaVar, candidateType, TypeUpdateFlags.FLAGS_WIDER_IGNORE_UNKNOWN);
 	}
 
 	private TypeUpdateResult apply(MethodNode mth, SSAVar ssaVar, ArgType candidateType, TypeUpdateFlags flags) {
@@ -84,8 +88,9 @@ public final class TypeUpdate {
 			return SAME;
 		}
 		if (Consts.DEBUG_TYPE_INFERENCE) {
-			LOG.debug("Applying types for {} -> {}", ssaVar, candidateType);
-			updates.forEach(updateEntry -> LOG.debug("  {} -> {}", updateEntry.getType(), updateEntry.getArg()));
+			LOG.debug("Applying type {} to {}", ssaVar.toShortString(), candidateType);
+			updates.forEach(updateEntry -> LOG.debug("  {} -> {} in {}",
+					updateEntry.getType(), updateEntry.getArg(), updateEntry.getArg().getParentInsn()));
 		}
 		updateInfo.applyUpdates();
 		return CHANGED;
@@ -109,6 +114,9 @@ public final class TypeUpdate {
 			}
 
 			TypeCompareEnum compareResult = comparator.compareTypes(candidateType, currentType);
+			if (compareResult == TypeCompareEnum.UNKNOWN && updateInfo.getFlags().isIgnoreUnknown()) {
+				return REJECT;
+			}
 			if (arg.isTypeImmutable() && currentType != ArgType.UNKNOWN) {
 				// don't changed type
 				if (compareResult == TypeCompareEnum.EQUAL) {
@@ -334,7 +342,6 @@ public final class TypeUpdate {
 					argNum -> typeUtils.replaceClassGenerics(candidateType, argTypes.get(argNum)));
 		}
 		return SAME;
-
 	}
 
 	private TypeUpdateResult applyInvokeTypes(TypeUpdateInfo updateInfo, BaseInvokeNode invoke, int argsCount,
@@ -439,14 +446,15 @@ public final class TypeUpdate {
 		}
 		boolean allSame = true;
 		for (InsnArg insnArg : insn.getArguments()) {
-			if (insnArg != arg) {
-				TypeUpdateResult result = updateTypeChecked(updateInfo, insnArg, candidateType);
-				if (result == REJECT) {
-					return result;
-				}
-				if (result != SAME) {
-					allSame = false;
-				}
+			if (insnArg == arg) {
+				continue;
+			}
+			TypeUpdateResult result = updateTypeChecked(updateInfo, insnArg, candidateType);
+			if (result == REJECT) {
+				return result;
+			}
+			if (result != SAME) {
+				allSame = false;
 			}
 		}
 		return allSame ? SAME : CHANGED;
@@ -505,7 +513,18 @@ public final class TypeUpdate {
 
 	private TypeUpdateResult arrayGetListener(TypeUpdateInfo updateInfo, InsnNode insn, InsnArg arg, ArgType candidateType) {
 		if (isAssign(insn, arg)) {
-			return updateTypeChecked(updateInfo, insn.getArg(0), ArgType.array(candidateType));
+			TypeUpdateResult result = updateTypeChecked(updateInfo, insn.getArg(0), ArgType.array(candidateType));
+			if (result == REJECT) {
+				ArgType arrType = insn.getArg(0).getType();
+				if (arrType.isTypeKnown() && arrType.isArray() && arrType.getArrayElement().isPrimitive()) {
+					TypeCompareEnum compResult = comparator.compareTypes(candidateType, arrType.getArrayElement());
+					if (compResult == TypeCompareEnum.WIDER) {
+						// allow implicit upcast for primitive types (int a = byteArr[n])
+						return CHANGED;
+					}
+				}
+			}
+			return result;
 		}
 		InsnArg arrArg = insn.getArg(0);
 		if (arrArg == arg) {
@@ -513,7 +532,18 @@ public final class TypeUpdate {
 			if (arrayElement == null) {
 				return REJECT;
 			}
-			return updateTypeChecked(updateInfo, insn.getResult(), arrayElement);
+			TypeUpdateResult result = updateTypeChecked(updateInfo, insn.getResult(), arrayElement);
+			if (result == REJECT) {
+				ArgType resType = insn.getResult().getType();
+				if (resType.isTypeKnown() && resType.isPrimitive()) {
+					TypeCompareEnum compResult = comparator.compareTypes(resType, arrayElement);
+					if (compResult == TypeCompareEnum.WIDER) {
+						// allow implicit upcast for primitive types (int a = byteArr[n])
+						return CHANGED;
+					}
+				}
+			}
+			return result;
 		}
 		// index argument
 		return SAME;
@@ -530,10 +560,10 @@ public final class TypeUpdate {
 			TypeUpdateResult result = updateTypeChecked(updateInfo, putArg, arrayElement);
 			if (result == REJECT) {
 				ArgType putType = putArg.getType();
-				if (putType.isTypeKnown() && !putType.isPrimitive()) {
+				if (putType.isTypeKnown()) {
 					TypeCompareEnum compResult = comparator.compareTypes(arrayElement, putType);
 					if (compResult == TypeCompareEnum.WIDER || compResult == TypeCompareEnum.WIDER_BY_GENERIC) {
-						// allow wider result (i.e allow put in Object[] any objects)
+						// allow wider result (i.e. allow put any objects in Object[] or byte in int[])
 						return CHANGED;
 					}
 				}

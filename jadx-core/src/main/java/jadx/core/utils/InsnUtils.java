@@ -1,14 +1,16 @@
 package jadx.core.utils;
 
+import java.util.List;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.api.plugins.input.data.annotations.EncodedValue;
+import jadx.api.plugins.input.data.attributes.JadxAttrType;
 import jadx.core.dex.attributes.AFlag;
-import jadx.core.dex.attributes.AType;
-import jadx.core.dex.attributes.fldinit.FieldInitAttr;
 import jadx.core.dex.info.FieldInfo;
 import jadx.core.dex.instructions.ConstClassNode;
 import jadx.core.dex.instructions.ConstStringNode;
@@ -95,14 +97,14 @@ public class InsnUtils {
 				return ((ConstClassNode) insn).getClsType();
 			case SGET:
 				FieldInfo f = (FieldInfo) ((IndexInsnNode) insn).getIndex();
-				FieldNode fieldNode = root.deepResolveField(f);
+				FieldNode fieldNode = root.resolveField(f);
 				if (fieldNode == null) {
 					LOG.warn("Field {} not found", f);
 					return null;
 				}
-				FieldInitAttr attr = fieldNode.get(AType.FIELD_INIT);
-				if (attr != null && attr.isConst()) {
-					return EncodedValueUtils.convertToConstValue(root, attr.getEncodedValue());
+				EncodedValue constVal = fieldNode.get(JadxAttrType.CONSTANT_VALUE);
+				if (constVal != null) {
+					return EncodedValueUtils.convertToConstValue(constVal);
 				}
 				return null;
 
@@ -113,7 +115,7 @@ public class InsnUtils {
 
 	@Nullable
 	public static InsnNode searchSingleReturnInsn(MethodNode mth, Predicate<InsnNode> test) {
-		if (!mth.isNoCode() && mth.getExitBlocks().size() == 1) {
+		if (!mth.isNoCode() && mth.getPreExitBlocks().size() == 1) {
 			return searchInsn(mth, InsnType.RETURN, test);
 		}
 		return null;
@@ -134,6 +136,48 @@ public class InsnUtils {
 				if (foundInsn != null) {
 					return foundInsn;
 				}
+			}
+		}
+		return null;
+	}
+
+	public static void replaceInsns(MethodNode mth, Function<InsnNode, InsnNode> replaceFunction) {
+		for (BlockNode block : mth.getBasicBlocks()) {
+			List<InsnNode> insns = block.getInstructions();
+			int insnsCount = insns.size();
+			for (int i = 0; i < insnsCount; i++) {
+				InsnNode insn = insns.get(i);
+				replaceInsnsInInsn(mth, insn, replaceFunction);
+				InsnNode replace = replaceFunction.apply(insn);
+				if (replace != null) {
+					BlockUtils.replaceInsn(mth, block, i, replace);
+				}
+			}
+		}
+	}
+
+	public static void replaceInsnsInInsn(MethodNode mth, InsnNode insn, Function<InsnNode, InsnNode> replaceFunction) {
+		int argsCount = insn.getArgsCount();
+		for (int i = 0; i < argsCount; i++) {
+			InsnArg arg = insn.getArg(i);
+			if (arg.isInsnWrap()) {
+				InsnNode wrapInsn = ((InsnWrapArg) arg).getWrapInsn();
+				replaceInsnsInInsn(mth, wrapInsn, replaceFunction);
+				InsnNode replace = replaceFunction.apply(wrapInsn);
+				if (replace != null) {
+					InsnRemover.unbindArgUsage(mth, arg);
+					insn.setArg(i, InsnArg.wrapInsnIntoArg(replace));
+				}
+			}
+		}
+	}
+
+	@Nullable
+	public static RegisterArg getRegFromInsn(List<RegisterArg> regs, InsnType insnType) {
+		for (RegisterArg reg : regs) {
+			InsnNode parentInsn = reg.getParentInsn();
+			if (parentInsn != null && parentInsn.getType() == insnType) {
+				return reg;
 			}
 		}
 		return null;
@@ -193,5 +237,17 @@ public class InsnUtils {
 		}
 		insn.add(AFlag.DONT_GENERATE);
 		return true;
+	}
+
+	public static <T extends InsnArg> boolean containsVar(List<T> list, RegisterArg arg) {
+		if (list == null || list.isEmpty()) {
+			return false;
+		}
+		for (InsnArg insnArg : list) {
+			if (insnArg == arg || arg.sameRegAndSVar(insnArg)) {
+				return true;
+			}
+		}
+		return false;
 	}
 }

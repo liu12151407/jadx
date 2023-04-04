@@ -19,6 +19,7 @@ import jadx.core.Consts;
 import jadx.core.clsp.ClspGraph;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
+import jadx.core.dex.attributes.nodes.AnonymousClassAttr;
 import jadx.core.dex.attributes.nodes.PhiListAttr;
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.instructions.ArithNode;
@@ -35,12 +36,15 @@ import jadx.core.dex.instructions.args.LiteralArg;
 import jadx.core.dex.instructions.args.PrimitiveType;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.args.SSAVar;
+import jadx.core.dex.instructions.mods.ConstructorInsn;
 import jadx.core.dex.instructions.mods.TernaryInsn;
 import jadx.core.dex.nodes.BlockNode;
+import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.IMethodDetails;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.nodes.RootNode;
+import jadx.core.dex.nodes.utils.MethodUtils;
 import jadx.core.dex.trycatch.ExcHandlerAttr;
 import jadx.core.dex.visitors.AbstractVisitor;
 import jadx.core.dex.visitors.AttachMethodDetails;
@@ -48,11 +52,12 @@ import jadx.core.dex.visitors.ConstInlineVisitor;
 import jadx.core.dex.visitors.InitCodeVariables;
 import jadx.core.dex.visitors.JadxVisitor;
 import jadx.core.dex.visitors.ModVisitor;
-import jadx.core.dex.visitors.blocksmaker.BlockSplitter;
+import jadx.core.dex.visitors.blocks.BlockSplitter;
 import jadx.core.dex.visitors.ssa.SSATransform;
 import jadx.core.utils.BlockUtils;
 import jadx.core.utils.InsnList;
 import jadx.core.utils.InsnUtils;
+import jadx.core.utils.ListUtils;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxOverflowException;
 
@@ -79,10 +84,12 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 		this.resolvers = Arrays.asList(
 				this::initTypeBounds,
 				this::runTypePropagation,
+				this::tryRestoreTypeVarCasts,
 				this::tryInsertCasts,
 				this::tryDeduceTypes,
 				this::trySplitConstInsns,
 				this::tryToFixIncompatiblePrimitives,
+				this::tryToForceImmutableTypes,
 				this::tryInsertAdditionalMove,
 				this::runMultiVariableSearch,
 				this::tryRemoveGenerics);
@@ -273,6 +280,11 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 				addBound(typeInfo, new TypeBoundConst(BoundEnum.ASSIGN, clsType));
 				break;
 
+			case CONSTRUCTOR:
+				ArgType ctrClsType = replaceAnonymousType((ConstructorInsn) insn);
+				addBound(typeInfo, new TypeBoundConst(BoundEnum.ASSIGN, ctrClsType));
+				break;
+
 			case CONST:
 				LiteralArg constLit = (LiteralArg) insn.getArg(0);
 				addBound(typeInfo, new TypeBoundConst(BoundEnum.ASSIGN, constLit.getType()));
@@ -308,6 +320,19 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 		}
 	}
 
+	private ArgType replaceAnonymousType(ConstructorInsn ctr) {
+		if (ctr.isNewInstance()) {
+			ClassNode ctrCls = root.resolveClass(ctr.getClassType());
+			if (ctrCls != null && ctrCls.contains(AFlag.DONT_GENERATE)) {
+				AnonymousClassAttr baseTypeAttr = ctrCls.get(AType.ANONYMOUS_CLASS);
+				if (baseTypeAttr != null && baseTypeAttr.getInlineType() == AnonymousClassAttr.InlineType.CONSTRUCTOR) {
+					return baseTypeAttr.getBaseType();
+				}
+			}
+		}
+		return ctr.getClassType().getType();
+	}
+
 	private ITypeBound makeAssignFieldGetBound(IndexInsnNode insn) {
 		ArgType initType = insn.getResult().getInitType();
 		if (initType.containsTypeVariable()) {
@@ -340,7 +365,7 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 			return null;
 		}
 		if (insn instanceof BaseInvokeNode) {
-			TypeBoundInvokeUse invokeUseBound = makeInvokeUseBound(regArg, (BaseInvokeNode) insn);
+			ITypeBound invokeUseBound = makeInvokeUseBound(regArg, (BaseInvokeNode) insn);
 			if (invokeUseBound != null) {
 				return invokeUseBound;
 			}
@@ -352,21 +377,32 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 		return new TypeBoundConst(BoundEnum.USE, regArg.getInitType(), regArg);
 	}
 
-	private TypeBoundInvokeUse makeInvokeUseBound(RegisterArg regArg, BaseInvokeNode invoke) {
+	private ITypeBound makeInvokeUseBound(RegisterArg regArg, BaseInvokeNode invoke) {
 		InsnArg instanceArg = invoke.getInstanceArg();
-		if (instanceArg == null || instanceArg == regArg) {
+		if (instanceArg == null) {
 			return null;
 		}
-		IMethodDetails methodDetails = root.getMethodUtils().getMethodDetails(invoke);
+		MethodUtils methodUtils = root.getMethodUtils();
+		IMethodDetails methodDetails = methodUtils.getMethodDetails(invoke);
 		if (methodDetails == null) {
 			return null;
 		}
-		int argIndex = invoke.getArgIndex(regArg) - invoke.getFirstArgOffset();
-		ArgType argType = methodDetails.getArgTypes().get(argIndex);
-		if (!argType.containsTypeVariable()) {
-			return null;
+		if (instanceArg != regArg) {
+			int argIndex = invoke.getArgIndex(regArg) - invoke.getFirstArgOffset();
+			ArgType argType = methodDetails.getArgTypes().get(argIndex);
+			if (!argType.containsTypeVariable()) {
+				return null;
+			}
+			return new TypeBoundInvokeUse(root, invoke, regArg, argType);
 		}
-		return new TypeBoundInvokeUse(root, invoke, regArg, argType);
+
+		// for override methods use origin declared class as type
+		if (methodDetails instanceof MethodNode) {
+			MethodNode callMth = (MethodNode) methodDetails;
+			ClassInfo declCls = methodUtils.getMethodOriginDeclClass(callMth);
+			return new TypeBoundConst(BoundEnum.USE, declCls.getType(), regArg);
+		}
+		return null;
 	}
 
 	private boolean tryPossibleTypes(MethodNode mth, SSAVar var, ArgType type) {
@@ -486,7 +522,60 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 		return false;
 	}
 
-	@SuppressWarnings("ForLoopReplaceableByWhile")
+	/**
+	 * Fix check casts to type var extend type:
+	 * <br>
+	 * {@code <T extends Comparable> T var = (Comparable) obj; => T var = (T) obj; }
+	 */
+	private boolean tryRestoreTypeVarCasts(MethodNode mth) {
+		int changed = 0;
+		List<SSAVar> mthSVars = mth.getSVars();
+		for (SSAVar var : mthSVars) {
+			changed += restoreTypeVarCasts(var);
+		}
+		if (changed == 0) {
+			return false;
+		}
+		if (Consts.DEBUG_TYPE_INFERENCE) {
+			mth.addDebugComment("Restore " + changed + " type vars casts");
+		}
+		initTypeBounds(mth);
+		return runTypePropagation(mth);
+	}
+
+	private int restoreTypeVarCasts(SSAVar var) {
+		TypeInfo typeInfo = var.getTypeInfo();
+		Set<ITypeBound> bounds = typeInfo.getBounds();
+		if (!ListUtils.anyMatch(bounds, t -> t.getType().isGenericType())) {
+			return 0;
+		}
+		List<ITypeBound> casts = ListUtils.filter(bounds, TypeBoundCheckCastAssign.class::isInstance);
+		if (casts.isEmpty()) {
+			return 0;
+		}
+		ArgType bestType = selectBestTypeFromBounds(bounds).orElse(ArgType.UNKNOWN);
+		if (!bestType.isGenericType()) {
+			return 0;
+		}
+		List<ArgType> extendTypes = bestType.getExtendTypes();
+		if (extendTypes.size() != 1) {
+			return 0;
+		}
+		int fixed = 0;
+		ArgType extendType = extendTypes.get(0);
+		for (ITypeBound bound : casts) {
+			TypeBoundCheckCastAssign cast = (TypeBoundCheckCastAssign) bound;
+			ArgType castType = cast.getType();
+			TypeCompareEnum result = typeUpdate.getTypeCompare().compareTypes(extendType, castType);
+			if (result.isEqual() || result == TypeCompareEnum.NARROW_BY_GENERIC) {
+				cast.getInsn().updateIndex(bestType);
+				fixed++;
+			}
+		}
+		return fixed;
+	}
+
+	@SuppressWarnings({ "ForLoopReplaceableByWhile", "ForLoopReplaceableByForEach" })
 	private boolean tryInsertCasts(MethodNode mth) {
 		int added = 0;
 		List<SSAVar> mthSVars = mth.getSVars();
@@ -802,6 +891,7 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 		if (typeInfo.getType().isTypeKnown()) {
 			return false;
 		}
+		boolean assigned = false;
 		for (ITypeBound bound : typeInfo.getBounds()) {
 			ArgType boundType = bound.getType();
 			switch (bound.getBound()) {
@@ -809,6 +899,7 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 					if (!boundType.contains(PrimitiveType.BOOLEAN)) {
 						return false;
 					}
+					assigned = true;
 					break;
 				case USE:
 					if (!boundType.canBeAnyNumber()) {
@@ -817,25 +908,23 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 					break;
 			}
 		}
+		if (!assigned) {
+			return false;
+		}
 
 		boolean fixed = false;
-		for (ITypeBound bound : typeInfo.getBounds()) {
-			if (bound.getBound() == BoundEnum.USE
-					&& fixBooleanUsage(mth, bound)) {
+		for (RegisterArg arg : new ArrayList<>(var.getUseList())) {
+			if (fixBooleanUsage(mth, arg)) {
 				fixed = true;
 			}
 		}
 		return fixed;
 	}
 
-	private boolean fixBooleanUsage(MethodNode mth, ITypeBound bound) {
-		ArgType boundType = bound.getType();
+	private boolean fixBooleanUsage(MethodNode mth, RegisterArg boundArg) {
+		ArgType boundType = boundArg.getInitType();
 		if (boundType == ArgType.BOOLEAN
 				|| (boundType.isTypeKnown() && !boundType.isPrimitive())) {
-			return false;
-		}
-		RegisterArg boundArg = bound.getArg();
-		if (boundArg == null) {
 			return false;
 		}
 		InsnNode insn = boundArg.getParentInsn();
@@ -897,6 +986,36 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 		TernaryInsn convertInsn = ModVisitor.makeBooleanConvertInsn(resultArg, useArg, useType);
 		convertInsn.add(AFlag.SYNTHETIC);
 		return convertInsn;
+	}
+
+	private boolean tryToForceImmutableTypes(MethodNode mth) {
+		boolean fixed = false;
+		for (SSAVar ssaVar : mth.getSVars()) {
+			ArgType type = ssaVar.getTypeInfo().getType();
+			if (!type.isTypeKnown() && ssaVar.isTypeImmutable()) {
+				if (forceImmutableType(ssaVar)) {
+					fixed = true;
+				}
+			}
+		}
+		if (!fixed) {
+			return false;
+		}
+		return runTypePropagation(mth);
+	}
+
+	private boolean forceImmutableType(SSAVar ssaVar) {
+		for (RegisterArg useArg : ssaVar.getUseList()) {
+			InsnNode parentInsn = useArg.getParentInsn();
+			if (parentInsn != null) {
+				InsnType insnType = parentInsn.getType();
+				if (insnType == InsnType.AGET || insnType == InsnType.APUT) {
+					ssaVar.setType(ssaVar.getImmutableType());
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	private static void assignImmutableTypes(MethodNode mth) {

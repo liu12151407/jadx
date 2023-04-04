@@ -5,18 +5,20 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
 
-import jadx.api.CodePosition;
 import jadx.api.ICodeInfo;
 import jadx.api.ICodeWriter;
 import jadx.api.JadxArgs;
-import jadx.core.dex.attributes.nodes.LineAttrNode;
+import jadx.api.metadata.ICodeAnnotation;
+import jadx.api.metadata.ICodeNodeRef;
+import jadx.api.metadata.annotations.NodeDeclareRef;
+import jadx.api.metadata.annotations.VarRef;
 import jadx.core.utils.StringUtils;
 
 public class AnnotatedCodeWriter extends SimpleCodeWriter implements ICodeWriter {
 
 	private int line = 1;
 	private int offset;
-	private Map<CodePosition, Object> annotations = Collections.emptyMap();
+	private Map<Integer, ICodeAnnotation> annotations = Collections.emptyMap();
 	private Map<Integer, Integer> lineMap = Collections.emptyMap();
 
 	public AnnotatedCodeWriter() {
@@ -59,19 +61,17 @@ public class AnnotatedCodeWriter extends SimpleCodeWriter implements ICodeWriter
 
 	@Override
 	public ICodeWriter add(ICodeWriter cw) {
-		if ((!(cw instanceof AnnotatedCodeWriter))) {
+		if (!cw.isMetadataSupported()) {
 			buf.append(cw.getCodeStr());
 			return this;
 		}
 		AnnotatedCodeWriter code = ((AnnotatedCodeWriter) cw);
 		line--;
-		int startLine = line;
 		int startPos = getLength();
-		for (Map.Entry<CodePosition, Object> entry : code.annotations.entrySet()) {
-			CodePosition codePos = entry.getKey();
-			int newLine = startLine + codePos.getLine();
-			int newPos = startPos + codePos.getPos();
-			attachAnnotation(entry.getValue(), new CodePosition(newLine, codePos.getOffset(), newPos));
+		for (Map.Entry<Integer, ICodeAnnotation> entry : code.annotations.entrySet()) {
+			int pos = entry.getKey();
+			int newPos = startPos + pos;
+			attachAnnotation(entry.getValue(), newPos);
 		}
 		for (Map.Entry<Integer, Integer> entry : code.lineMap.entrySet()) {
 			attachSourceLine(line + entry.getKey(), entry.getValue());
@@ -101,38 +101,36 @@ public class AnnotatedCodeWriter extends SimpleCodeWriter implements ICodeWriter
 		return line;
 	}
 
-	private static final class DefinitionWrapper {
-		private final LineAttrNode node;
-
-		private DefinitionWrapper(LineAttrNode node) {
-			this.node = node;
-		}
-
-		public LineAttrNode getNode() {
-			return node;
-		}
+	@Override
+	public int getLineStartPos() {
+		return getLength() - offset;
 	}
 
 	@Override
-	public void attachDefinition(LineAttrNode obj) {
-		attachAnnotation(obj);
-		attachAnnotation(new DefinitionWrapper(obj), new CodePosition(line, offset, getLength()));
-	}
-
-	@Override
-	public void attachAnnotation(Object obj) {
-		attachAnnotation(obj, new CodePosition(line, offset + 1, getLength()));
-	}
-
-	@Override
-	public void attachLineAnnotation(Object obj) {
+	public void attachDefinition(ICodeNodeRef obj) {
 		if (obj == null) {
 			return;
 		}
-		attachAnnotation(obj, new CodePosition(line, 0, getLength() - offset));
+		attachAnnotation(new NodeDeclareRef(obj));
 	}
 
-	private void attachAnnotation(Object obj, CodePosition pos) {
+	@Override
+	public void attachAnnotation(ICodeAnnotation obj) {
+		if (obj == null) {
+			return;
+		}
+		attachAnnotation(obj, getLength());
+	}
+
+	@Override
+	public void attachLineAnnotation(ICodeAnnotation obj) {
+		if (obj == null) {
+			return;
+		}
+		attachAnnotation(obj, getLineStartPos());
+	}
+
+	private void attachAnnotation(ICodeAnnotation obj, int pos) {
 		if (annotations.isEmpty()) {
 			annotations = new HashMap<>();
 		}
@@ -158,29 +156,39 @@ public class AnnotatedCodeWriter extends SimpleCodeWriter implements ICodeWriter
 	public ICodeInfo finish() {
 		removeFirstEmptyLine();
 		processDefinitionAnnotations();
+		validateAnnotations();
 		String code = buf.toString();
 		buf = null;
 		return new AnnotatedCodeInfo(code, lineMap, annotations);
 	}
 
 	@Override
-	public Map<CodePosition, Object> getRawAnnotations() {
+	public Map<Integer, ICodeAnnotation> getRawAnnotations() {
 		return annotations;
 	}
 
 	private void processDefinitionAnnotations() {
 		if (!annotations.isEmpty()) {
-			annotations.entrySet().removeIf(entry -> {
-				Object v = entry.getValue();
-				if (v instanceof DefinitionWrapper) {
-					LineAttrNode l = ((DefinitionWrapper) v).getNode();
-					CodePosition codePos = entry.getKey();
-					l.setDecompiledLine(codePos.getLine());
-					l.setDefPosition(codePos.getPos());
-					return true;
+			annotations.forEach((k, v) -> {
+				if (v instanceof NodeDeclareRef) {
+					NodeDeclareRef declareRef = (NodeDeclareRef) v;
+					declareRef.setDefPos(k);
+					declareRef.getNode().setDefPosition(k);
 				}
-				return false;
 			});
 		}
+	}
+
+	private void validateAnnotations() {
+		if (annotations.isEmpty()) {
+			return;
+		}
+		annotations.values().removeIf(v -> {
+			if (v.getAnnType() == ICodeAnnotation.AnnType.VAR_REF) {
+				VarRef varRef = (VarRef) v;
+				return varRef.getRefPos() == 0;
+			}
+			return false;
+		});
 	}
 }

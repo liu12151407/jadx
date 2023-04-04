@@ -28,10 +28,13 @@ public class InvokeNode extends BaseInvokeNode {
 			addReg(r, mth.getDeclClass().getType());
 			k++;
 		}
-
 		for (ArgType arg : mth.getArgumentsTypes()) {
 			addReg(isRange ? k : insn.getReg(k), arg);
 			k += arg.getRegCount();
+		}
+		int resReg = insn.getResultReg();
+		if (resReg != -1) {
+			setResult(InsnArg.reg(resReg, mth.getReturnType()));
 		}
 	}
 
@@ -62,6 +65,19 @@ public class InvokeNode extends BaseInvokeNode {
 	@Override
 	public boolean isStaticCall() {
 		return type == InvokeType.STATIC;
+	}
+
+	public boolean isPolymorphicCall() {
+		if (type == InvokeType.POLYMORPHIC) {
+			return true;
+		}
+		// java bytecode uses virtual call with modified method info
+		if (type == InvokeType.VIRTUAL
+				&& mth.getDeclClass().getFullName().equals("java.lang.invoke.MethodHandle")
+				&& (mth.getName().equals("invoke") || mth.getName().equals("invokeExact"))) {
+			return true;
+		}
+		return false;
 	}
 
 	public int getFirstArgOffset() {

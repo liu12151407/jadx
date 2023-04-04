@@ -1,28 +1,24 @@
 package jadx.gui.treemodel;
 
-import javax.swing.*;
+import javax.swing.Icon;
 
 import jadx.api.JavaNode;
 import jadx.api.JavaVariable;
+import jadx.gui.utils.UiUtils;
 
 public class JVariable extends JNode {
 	private static final long serialVersionUID = -3002100457834453783L;
 
-	JClass cls;
-	JavaVariable var;
+	private final JMethod jMth;
+	private final JavaVariable var;
 
-	public JVariable(JavaVariable var, JClass cls) {
-		this.cls = cls;
+	public JVariable(JMethod jMth, JavaVariable var) {
+		this.jMth = jMth;
 		this.var = var;
 	}
 
 	public JavaVariable getJavaVarNode() {
-		return (JavaVariable) getJavaNode();
-	}
-
-	@Override
-	public JClass getRootClass() {
-		return cls;
+		return var;
 	}
 
 	@Override
@@ -31,8 +27,18 @@ public class JVariable extends JNode {
 	}
 
 	@Override
+	public JClass getRootClass() {
+		return jMth.getRootClass();
+	}
+
+	@Override
 	public JClass getJParent() {
-		return cls;
+		return jMth.getJParent();
+	}
+
+	@Override
+	public int getPos() {
+		return var.getDefPos();
 	}
 
 	@Override
@@ -46,8 +52,29 @@ public class JVariable extends JNode {
 	}
 
 	@Override
-	public boolean canRename() {
-		return true;
+	public String makeLongString() {
+		return var.getFullName();
 	}
 
+	@Override
+	public String makeLongStringHtml() {
+		return UiUtils.typeFormatHtml(var.getName(), var.getType());
+	}
+
+	@Override
+	public boolean disableHtml() {
+		return false;
+	}
+
+	@Override
+	public String getTooltip() {
+		String name = var.getName() + " (r" + var.getReg() + "v" + var.getSsa() + ")";
+		String fullType = UiUtils.escapeHtml(var.getType().toString());
+		return UiUtils.wrapHtml(fullType + ' ' + UiUtils.escapeHtml(name));
+	}
+
+	@Override
+	public boolean canRename() {
+		return var.getName() != null;
+	}
 }

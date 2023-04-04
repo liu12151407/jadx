@@ -12,9 +12,9 @@ import org.jetbrains.annotations.TestOnly;
 
 import jadx.core.Consts;
 import jadx.core.dex.info.ClassInfo;
-import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.RootNode;
 import jadx.core.dex.visitors.typeinference.TypeCompareEnum;
+import jadx.core.utils.ListUtils;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
@@ -67,6 +67,7 @@ public abstract class ArgType {
 
 	public static final ArgType INT_FLOAT = unknown(PrimitiveType.INT, PrimitiveType.FLOAT);
 	public static final ArgType INT_BOOLEAN = unknown(PrimitiveType.INT, PrimitiveType.BOOLEAN);
+	public static final ArgType BYTE_BOOLEAN = unknown(PrimitiveType.BYTE, PrimitiveType.BOOLEAN);
 
 	protected int hash;
 
@@ -147,6 +148,17 @@ public abstract class ArgType {
 
 	public static ArgType array(@NotNull ArgType vtype) {
 		return new ArrayArg(vtype);
+	}
+
+	public static ArgType array(@NotNull ArgType type, int dimension) {
+		if (dimension == 1) {
+			return new ArrayArg(type);
+		}
+		ArgType arrType = type;
+		for (int i = 0; i < dimension; i++) {
+			arrType = new ArrayArg(arrType);
+		}
+		return arrType;
 	}
 
 	public static ArgType unknown(PrimitiveType... types) {
@@ -643,7 +655,7 @@ public abstract class ArgType {
 		if (from.equals(to)) {
 			return false;
 		}
-		TypeCompareEnum result = root.getTypeUpdate().getTypeCompare().compareTypes(from, to);
+		TypeCompareEnum result = root.getTypeCompare().compareTypes(from, to);
 		return !result.isNarrow();
 	}
 
@@ -862,28 +874,37 @@ public abstract class ArgType {
 	}
 
 	public static ArgType tryToResolveClassAlias(RootNode root, ArgType type) {
-		if (!type.isObject() || type.isGenericType()) {
+		if (type.isGenericType()) {
 			return type;
 		}
+		if (type.isArray()) {
+			ArgType rootType = type.getArrayRootElement();
+			ArgType aliasType = tryToResolveClassAlias(root, rootType);
+			if (aliasType == rootType) {
+				return type;
+			}
+			return ArgType.array(aliasType, type.getArrayDimension());
+		}
+		if (type.isObject()) {
+			ArgType wildcardType = type.getWildcardType();
+			if (wildcardType != null) {
+				return new WildcardType(tryToResolveClassAlias(root, wildcardType), type.getWildcardBound());
+			}
+			ClassInfo clsInfo = ClassInfo.fromName(root, type.getObject());
+			ArgType baseType = clsInfo.hasAlias() ? ArgType.object(clsInfo.getAliasFullName()) : type;
+			if (!type.isGeneric()) {
+				return baseType;
+			}
+			List<ArgType> genericTypes = type.getGenericTypes();
+			if (genericTypes != null) {
+				return new GenericObject(baseType.getObject(), tryToResolveClassAlias(root, genericTypes));
+			}
+		}
+		return type;
+	}
 
-		ClassNode cls = root.resolveClass(type);
-		if (cls == null) {
-			return type;
-		}
-		ClassInfo clsInfo = cls.getClassInfo();
-		if (!clsInfo.hasAlias()) {
-			return type;
-		}
-		String aliasFullName = clsInfo.getAliasFullName();
-		if (type.isGeneric()) {
-			if (type instanceof GenericObject) {
-				return new GenericObject(aliasFullName, type.getGenericTypes());
-			}
-			if (type instanceof WildcardType) {
-				return new WildcardType(ArgType.object(aliasFullName), type.getWildcardBound());
-			}
-		}
-		return ArgType.object(aliasFullName);
+	public static List<ArgType> tryToResolveClassAlias(RootNode root, List<ArgType> types) {
+		return ListUtils.map(types, t -> tryToResolveClassAlias(root, t));
 	}
 
 	@Override

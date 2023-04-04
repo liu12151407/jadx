@@ -12,8 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.jetbrains.annotations.Nullable;
 
 import jadx.api.JadxArgs;
-import jadx.core.dex.attributes.AType;
-import jadx.core.dex.attributes.fldinit.FieldInitAttr;
+import jadx.api.plugins.input.data.annotations.EncodedValue;
+import jadx.api.plugins.input.data.attributes.JadxAttrType;
 import jadx.core.dex.instructions.args.LiteralArg;
 import jadx.core.dex.instructions.args.PrimitiveType;
 import jadx.core.dex.nodes.ClassNode;
@@ -82,14 +82,22 @@ public class ConstStorage {
 			return;
 		}
 		for (FieldNode f : staticFields) {
-			AccessInfo accFlags = f.getAccessFlags();
-			if (accFlags.isStatic() && accFlags.isFinal()) {
-				FieldInitAttr fv = f.get(AType.FIELD_INIT);
-				if (fv != null && fv.isConst() && fv.getEncodedValue().getValue() != null) {
-					addConstField(cls, f, fv.getEncodedValue().getValue(), accFlags.isPublic());
-				}
+			Object value = getFieldConstValue(f);
+			if (value != null) {
+				addConstField(cls, f, value, f.getAccessFlags().isPublic());
 			}
 		}
+	}
+
+	public static @Nullable Object getFieldConstValue(FieldNode fld) {
+		AccessInfo accFlags = fld.getAccessFlags();
+		if (accFlags.isStatic() && accFlags.isFinal()) {
+			EncodedValue constVal = fld.get(JadxAttrType.CONSTANT_VALUE);
+			if (constVal != null) {
+				return constVal.getValue();
+			}
+		}
+		return null;
 	}
 
 	public void removeForClass(ClassNode cls) {
@@ -176,6 +184,9 @@ public class ConstStorage {
 
 	@Nullable
 	public FieldNode getConstFieldByLiteralArg(ClassNode cls, LiteralArg arg) {
+		if (!replaceEnabled) {
+			return null;
+		}
 		PrimitiveType type = arg.getType().getPrimitiveType();
 		if (type == null) {
 			return null;

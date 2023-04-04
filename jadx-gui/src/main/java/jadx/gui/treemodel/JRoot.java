@@ -3,7 +3,6 @@ package jadx.gui.treemodel;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -22,7 +21,7 @@ import jadx.gui.utils.UiUtils;
 public class JRoot extends JNode {
 	private static final long serialVersionUID = 8888495789773527342L;
 
-	private static final ImageIcon ROOT_ICON = UiUtils.openIcon("java_model_obj");
+	private static final ImageIcon ROOT_ICON = UiUtils.openSvgIcon("nodes/rootPackageFolder");
 
 	private final transient JadxWrapper wrapper;
 
@@ -38,20 +37,16 @@ public class JRoot extends JNode {
 		removeAllChildren();
 		add(new JSources(this, wrapper));
 
-		List<JResource> resList = getHierarchyResources(wrapper.getResources());
-		for (JResource jRes : resList) {
-			jRes.update();
-			add(jRes);
+		List<ResourceFile> resources = wrapper.getResources();
+		if (!resources.isEmpty()) {
+			add(getHierarchyResources(resources));
 		}
 		for (JNode customNode : customNodes) {
 			add(customNode);
 		}
 	}
 
-	private List<JResource> getHierarchyResources(List<ResourceFile> resources) {
-		if (resources.isEmpty()) {
-			return Collections.emptyList();
-		}
+	private JResource getHierarchyResources(List<ResourceFile> resources) {
 		JResource root = new JResource(null, NLS.str("tree.resources_title"), JResType.ROOT);
 		String splitPathStr = Pattern.quote(File.separator);
 		for (ResourceFile rf : resources) {
@@ -71,18 +66,20 @@ public class JRoot extends JNode {
 					if (i != count - 1) {
 						subRF = new JResource(null, name, JResType.DIR);
 					} else {
-						subRF = new JResource(rf, name, JResType.FILE);
+						subRF = new JResource(rf, rf.getDeobfName(), name, JResType.FILE);
 					}
-					curRf.getFiles().add(subRF);
+					curRf.addSubNode(subRF);
 				}
 				curRf = subRF;
 			}
 		}
-		return Collections.singletonList(root);
+		root.sortSubNodes();
+		root.update();
+		return root;
 	}
 
 	private JResource getResourceByName(JResource rf, String name) {
-		for (JResource sub : rf.getFiles()) {
+		for (JResource sub : rf.getSubNodes()) {
 			if (sub.getName().equals(name)) {
 				return sub;
 			}
@@ -90,7 +87,7 @@ public class JRoot extends JNode {
 		return null;
 	}
 
-	public JNode searchClassInTree(JNode node) {
+	public JNode searchNode(JNode node) {
 		Enumeration<?> en = this.breadthFirstEnumeration();
 		while (en.hasMoreElements()) {
 			Object obj = en.nextElement();
@@ -136,13 +133,8 @@ public class JRoot extends JNode {
 	}
 
 	@Override
-	public int getLine() {
-		return 0;
-	}
-
-	@Override
 	public String makeString() {
-		List<Path> paths = wrapper.getOpenPaths();
+		List<Path> paths = wrapper.getProject().getFilePaths();
 		int count = paths.size();
 		if (count == 0) {
 			return "File not open";
@@ -151,5 +143,22 @@ public class JRoot extends JNode {
 			return paths.get(0).getFileName().toString();
 		}
 		return count + " files";
+	}
+
+	@Override
+	public String getTooltip() {
+		List<Path> paths = wrapper.getProject().getFilePaths();
+		int count = paths.size();
+		if (count < 2) {
+			return null;
+		}
+		// Show list of loaded files (full path)
+		StringBuilder sb = new StringBuilder("<html>");
+		for (Path p : paths) {
+			sb.append(UiUtils.escapeHtml(p.toString()));
+			sb.append("<br>");
+		}
+		sb.append("</html>");
+		return sb.toString();
 	}
 }

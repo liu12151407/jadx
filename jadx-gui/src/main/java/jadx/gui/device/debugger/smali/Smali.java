@@ -1,22 +1,44 @@
 package jadx.gui.device.debugger.smali;
 
-import java.util.*;
 import java.util.AbstractMap.SimpleEntry;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Map.Entry;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import jadx.api.ICodeInfo;
-import jadx.api.plugins.input.data.*;
+import jadx.api.plugins.input.data.AccessFlags;
+import jadx.api.plugins.input.data.AccessFlagsScope;
+import jadx.api.plugins.input.data.ICatch;
+import jadx.api.plugins.input.data.IClassData;
+import jadx.api.plugins.input.data.ICodeReader;
+import jadx.api.plugins.input.data.IDebugInfo;
+import jadx.api.plugins.input.data.IFieldData;
+import jadx.api.plugins.input.data.ILocalVar;
+import jadx.api.plugins.input.data.IMethodData;
+import jadx.api.plugins.input.data.IMethodRef;
+import jadx.api.plugins.input.data.ITry;
 import jadx.api.plugins.input.data.annotations.AnnotationVisibility;
 import jadx.api.plugins.input.data.annotations.EncodedValue;
 import jadx.api.plugins.input.data.annotations.IAnnotation;
+import jadx.api.plugins.input.data.attributes.JadxAttrType;
+import jadx.api.plugins.input.data.attributes.types.AnnotationsAttr;
 import jadx.api.plugins.input.insns.InsnData;
 import jadx.api.plugins.input.insns.InsnIndexType;
 import jadx.api.plugins.input.insns.Opcode;
 import jadx.api.plugins.input.insns.custom.ISwitchPayload;
 import jadx.core.codegen.TypeGen;
+import jadx.core.dex.attributes.AttributeStorage;
 import jadx.core.dex.instructions.IndexInsnNode;
 import jadx.core.dex.instructions.InsnDecoder;
 import jadx.core.dex.instructions.InsnType;
@@ -26,12 +48,29 @@ import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
+import jadx.core.utils.Utils;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 
 import static jadx.api.plugins.input.data.AccessFlagsScope.FIELD;
 import static jadx.api.plugins.input.data.AccessFlagsScope.METHOD;
-import static jadx.api.plugins.input.insns.Opcode.*;
+import static jadx.api.plugins.input.insns.Opcode.CONST;
+import static jadx.api.plugins.input.insns.Opcode.CONST_METHOD_HANDLE;
+import static jadx.api.plugins.input.insns.Opcode.CONST_METHOD_TYPE;
+import static jadx.api.plugins.input.insns.Opcode.CONST_WIDE;
+import static jadx.api.plugins.input.insns.Opcode.FILLED_NEW_ARRAY;
+import static jadx.api.plugins.input.insns.Opcode.FILLED_NEW_ARRAY_RANGE;
+import static jadx.api.plugins.input.insns.Opcode.FILL_ARRAY_DATA_PAYLOAD;
+import static jadx.api.plugins.input.insns.Opcode.INVOKE_CUSTOM;
+import static jadx.api.plugins.input.insns.Opcode.INVOKE_CUSTOM_RANGE;
+import static jadx.api.plugins.input.insns.Opcode.INVOKE_POLYMORPHIC;
+import static jadx.api.plugins.input.insns.Opcode.INVOKE_POLYMORPHIC_RANGE;
+import static jadx.api.plugins.input.insns.Opcode.PACKED_SWITCH;
+import static jadx.api.plugins.input.insns.Opcode.PACKED_SWITCH_PAYLOAD;
+import static jadx.api.plugins.input.insns.Opcode.SPARSE_SWITCH;
+import static jadx.api.plugins.input.insns.Opcode.SPARSE_SWITCH_PAYLOAD;
 
 public class Smali {
+	private static final Logger LOG = LoggerFactory.getLogger(Smali.class);
 
 	private static SmaliInsnDecoder insnDecoder = null;
 
@@ -41,6 +80,8 @@ public class Smali {
 	private final boolean printFileOffset = true;
 	private final boolean printBytecode = true;
 
+	private boolean isJavaBytecode;
+
 	private Smali() {
 	}
 
@@ -48,6 +89,7 @@ public class Smali {
 		cls = cls.getTopParentClass();
 		SmaliWriter code = new SmaliWriter(cls);
 		Smali smali = new Smali();
+		smali.isJavaBytecode = cls.getInputFileName().endsWith(".class"); // TODO: add flag to api
 		smali.writeClass(code, cls);
 		smali.codeInfo = code.finish();
 		return smali;
@@ -142,17 +184,23 @@ public class Smali {
 			smali.startLine(String.format("###### Class %s is created by jadx", cls.getFullName()));
 			return;
 		}
+		AttributeStorage attributes = new AttributeStorage();
+		attributes.add(clsData.getAttributes());
+
 		smali.startLine("Class: " + clsData.getType())
 				.startLine("AccessFlags: " + AccessFlags.format(clsData.getAccessFlags(), AccessFlagsScope.CLASS))
 				.startLine("SuperType: " + clsData.getSuperType())
 				.startLine("Interfaces: " + clsData.getInterfacesTypes())
-				.startLine("SourceFile: " + clsData.getSourceFile());
+				.startLine("SourceFile: " + attributes.get(JadxAttrType.SOURCE_FILE));
 
-		List<IAnnotation> annos = clsData.getAnnotations();
-		if (annos.size() > 0) {
-			smali.startLine(String.format("# %d annotations", annos.size()));
-			writeAnnotations(smali, annos);
-			smali.startLine();
+		AnnotationsAttr annotationsAttr = attributes.get(JadxAttrType.ANNOTATION_LIST);
+		if (annotationsAttr != null) {
+			Collection<IAnnotation> annos = annotationsAttr.getList();
+			if (!annos.isEmpty()) {
+				smali.startLine(String.format("# %d annotations", annos.size()));
+				writeAnnotations(smali, new ArrayList<>(annos));
+				smali.startLine();
+			}
 		}
 
 		List<RawField> fields = new ArrayList<>();
@@ -175,7 +223,15 @@ public class Smali {
 						writeFields(smali, clsData, fields, colWidths);
 						fields.clear();
 					}
-					writeMethod(smali, cls.getMethods().get(mthIndex[0]++), m, line);
+					try {
+						writeMethod(smali, cls.getMethods().get(mthIndex[0]++), m, line);
+					} catch (Throwable e) {
+						IMethodRef methodRef = m.getMethodRef();
+						String mthFullName = methodRef.getParentClassType() + "->" + methodRef.getName();
+						smali.setIndent(0);
+						smali.startLine("Failed to write method: " + mthFullName + "\n" + Utils.getStackTrace(e));
+						LOG.error("Failed to write smali code for method: {}", mthFullName, e);
+					}
 					line.reset();
 				});
 
@@ -189,7 +245,6 @@ public class Smali {
 
 	private void writeFields(SmaliWriter smali, IClassData classData, List<RawField> fields, int[] colWidths) {
 		int staticIdx = 0;
-		List<EncodedValue> staticFieldInitValues = classData.getStaticFieldInitValues();
 		smali.startLine().startLine("# fields");
 		String whites = new String(new byte[Math.max(colWidths[0], colWidths[1])]).replace("\0", " ");
 		for (RawField fld : fields) {
@@ -205,15 +260,19 @@ public class Smali {
 			}
 			smali.add(fld.name).add(" ");
 			smali.add(": ").add(fld.type);
-			if (fld.isStatic) { // static field
-				if (staticIdx < staticFieldInitValues.size()) {
+			if (fld.isStatic) {
+				EncodedValue constVal = fld.attributes.get(JadxAttrType.CONSTANT_VALUE);
+				if (constVal != null) {
 					smali.add(" # init val = ");
-					writeEncodedValue(smali, staticFieldInitValues.get(staticIdx++), false);
+					writeEncodedValue(smali, constVal, false);
 				}
 			}
-			smali.incIndent();
-			writeAnnotations(smali, fld.annoList);
-			smali.decIndent();
+			AnnotationsAttr annotationsAttr = fld.attributes.get(JadxAttrType.ANNOTATION_LIST);
+			if (annotationsAttr != null) {
+				smali.incIndent();
+				writeAnnotations(smali, annotationsAttr.getList());
+				smali.decIndent();
+			}
 		}
 		smali.startLine();
 	}
@@ -222,30 +281,37 @@ public class Smali {
 		if (insnDecoder == null) {
 			insnDecoder = new SmaliInsnDecoder(methodNode);
 		}
-		smali.startLine()
-				.startLine(mth.isDirect() ? "# direct method" : " # virtual method")
-				.startLine(".method ");
+		smali.startLine().startLine(".method ");
 		writeMethodDef(smali, mth, line);
 		ICodeReader codeReader = mth.getCodeReader();
 		if (codeReader != null) {
+			int regsCount = codeReader.getRegistersCount();
 			line.smaliMthNode.setParamRegStart(getParamStartRegNum(mth));
-			line.smaliMthNode.setRegCount(codeReader.getRegistersCount());
-			Map<Long, InsnNode> nodes = new HashMap<>(codeReader.getInsnsCount() / 2);
-			line.smaliMthNode.setInsnNodes(nodes, codeReader.getInsnsCount());
-			line.smaliMthNode.initRegInfoList(codeReader.getRegistersCount(), codeReader.getInsnsCount());
+			line.smaliMthNode.setRegCount(regsCount);
+			Map<Long, InsnNode> nodes = new HashMap<>(codeReader.getUnitsCount() / 2);
+			line.smaliMthNode.setInsnNodes(nodes, codeReader.getUnitsCount());
+			line.smaliMthNode.initRegInfoList(regsCount, codeReader.getUnitsCount());
 
 			smali.incIndent();
-			smali.startLine(".registers ")
-					.add("" + codeReader.getRegistersCount())
-					.startLine();
+			smali.startLine(".registers ").add(Integer.toString(regsCount));
+
 			writeTries(codeReader, line);
-			if (formatMthParamInfo(mth, smali, codeReader, line)) {
-				smali.startLine();
+			IDebugInfo debugInfo = codeReader.getDebugInfo();
+			List<ILocalVar> localVars = debugInfo != null ? debugInfo.getLocalVars() : Collections.emptyList();
+			formatMthParamInfo(mth, smali, line, regsCount, localVars);
+			if (debugInfo != null) {
+				formatDbgInfo(debugInfo, localVars, line);
 			}
+			smali.newLine();
 			smali.startLine();
-			if (codeReader.getDebugInfo() != null) {
-				formatDbgInfo(codeReader.getDebugInfo(), line);
-			}
+			// first pass to fill payload offsets for switch instructions
+			codeReader.visitInstructions(insn -> {
+				Opcode opcode = insn.getOpcode();
+				if (opcode == PACKED_SWITCH || opcode == SPARSE_SWITCH) {
+					insn.decode();
+					line.addPayloadOffset(insn.getOffset(), insn.getTarget());
+				}
+			});
 			codeReader.visitInstructions(insn -> {
 				InsnNode node = decodeInsn(insn, line);
 				nodes.put((long) insn.getOffset(), node);
@@ -261,29 +327,29 @@ public class Smali {
 	private void writeTries(ICodeReader codeReader, LineInfo line) {
 		List<ITry> tries = codeReader.getTries();
 		for (ITry aTry : tries) {
-			int end = aTry.getStartAddress() + aTry.getInstructionCount();
+			int end = aTry.getEndOffset();
 			String tryEndTip = String.format(FMT_TRY_END_TAG, end);
-			String tryStartTip = String.format(FMT_TRY_TAG, aTry.getStartAddress());
+			String tryStartTip = String.format(FMT_TRY_TAG, aTry.getStartOffset());
 			String tryStartTipExtra = " # :" + tryStartTip.substring(0, tryStartTip.length() - 1);
 
-			line.addTip(aTry.getStartAddress(), tryStartTip, " # :" + tryEndTip.substring(0, tryEndTip.length() - 1));
+			line.addTip(aTry.getStartOffset(), tryStartTip, " # :" + tryEndTip.substring(0, tryEndTip.length() - 1));
 			line.addTip(end, tryEndTip, tryStartTipExtra);
 
 			ICatch iCatch = aTry.getCatch();
-			int[] addresses = iCatch.getAddresses();
+			int[] addresses = iCatch.getHandlers();
 			int addr;
 			for (int i = 0; i < addresses.length; i++) {
 				addr = addresses[i];
 				String catchTip = String.format(FMT_CATCH_TAG, addr);
 				line.addTip(addr, catchTip, " # " + iCatch.getTypes()[i]);
 				line.addTip(addr, catchTip, tryStartTipExtra);
-				line.addTip(aTry.getStartAddress(), tryStartTip, " # :" + catchTip.substring(0, catchTip.length() - 1));
+				line.addTip(aTry.getStartOffset(), tryStartTip, " # :" + catchTip.substring(0, catchTip.length() - 1));
 			}
-			addr = iCatch.getCatchAllAddress();
+			addr = iCatch.getCatchAllHandler();
 			if (addr > -1) {
 				String catchAllTip = String.format(FMT_CATCH_ALL_TAG, addr);
 				line.addTip(addr, catchAllTip, tryStartTipExtra);
-				line.addTip(aTry.getStartAddress(), tryStartTip, " # :" + catchAllTip.substring(0, catchAllTip.length() - 1));
+				line.addTip(aTry.getStartOffset(), tryStartTip, " # :" + catchAllTip.substring(0, catchAllTip.length() - 1));
 			}
 		}
 	}
@@ -296,39 +362,41 @@ public class Smali {
 	}
 
 	private void formatInsn(InsnData insn, InsnNode node, LineInfo line) {
-		line.getLineWriter().delete(0, line.getLineWriter().length());
+		StringBuilder lw = line.getLineWriter();
+		lw.delete(0, lw.length());
 		fmtCols(insn, line);
 		if (fmtPayloadInsn(insn, line)) {
 			return;
 		}
-		line.getLineWriter()
-				.append(String.format(FMT_INSN_COL, MNEMONIC.MNEMONICS[getOpenCodeByte(insn)]))
-				.append(" ");
+		lw.append(formatInsnName(insn)).append(" ");
 		fmtRegs(insn, node.getType(), line);
 		if (!tryFormatTargetIns(insn, node.getType(), line)) {
 			if (hasLiteral(insn)) {
-				line.getLineWriter().append(", ").append(literal(insn));
-
+				lw.append(", ").append(literal(insn));
 			} else if (node.getType() == InsnType.INVOKE) {
-				line.getLineWriter().append(", ").append(method(insn));
-
+				lw.append(", ").append(method(insn));
 			} else if (insn.getIndexType() == InsnIndexType.FIELD_REF) {
-				line.getLineWriter().append(", ").append(field(insn));
-
+				lw.append(", ").append(field(insn));
 			} else if (insn.getIndexType() == InsnIndexType.STRING_REF) {
-				line.getLineWriter().append(", ").append(str(insn));
-
+				lw.append(", ").append(str(insn));
 			} else if (insn.getIndexType() == InsnIndexType.TYPE_REF) {
-				line.getLineWriter().append(", ").append(type(insn));
-
+				lw.append(", ").append(type(insn));
 			} else if (insn.getOpcode() == CONST_METHOD_HANDLE) {
-				line.getLineWriter().append(", ").append(methodHandle(insn));
-
+				lw.append(", ").append(methodHandle(insn));
 			} else if (insn.getOpcode() == CONST_METHOD_TYPE) {
-				line.getLineWriter().append(", ").append(proto(insn, insn.getIndex()));
+				lw.append(", ").append(proto(insn, insn.getIndex()));
 			}
 		}
-		line.addInsnLine(insn.getOffset(), line.getLineWriter().toString());
+		line.addInsnLine(insn.getOffset(), lw.toString());
+	}
+
+	private String formatInsnName(InsnData insn) {
+		if (isJavaBytecode) {
+			// add api opcode, because registers not used
+			return String.format("%-" + INSN_COL_WIDTH + "s | %-15s",
+					insn.getOpcodeMnemonic(), insn.getOpcode().name().toLowerCase(Locale.ROOT).replace('_', '-'));
+		}
+		return String.format(FMT_INSN_COL, insn.getOpcodeMnemonic());
 	}
 
 	private boolean tryFormatTargetIns(InsnData insn, InsnType insnType, LineInfo line) {
@@ -360,7 +428,6 @@ public class Smali {
 					line.addTip(target, String.format(FMT_S_SWITCH_TAG, target), "");
 					line.getLineWriter().append(", ").append(String.format(FMT_S_SWITCH, target));
 				}
-				line.addPayloadOffset(insn.getOffset(), target);
 				return true;
 			}
 		}
@@ -382,62 +449,55 @@ public class Smali {
 		methodRef.getArgTypes().forEach(smali::add);
 		smali.add(')');
 		smali.add(methodRef.getReturnType());
-		List<IAnnotation> annos = mth.getAnnotations();
-		if (annos.size() > 0) {
+
+		AnnotationsAttr annotationsAttr = new AttributeStorage(mth.getAttributes()).get(JadxAttrType.ANNOTATION_LIST);
+		if (annotationsAttr != null && !annotationsAttr.isEmpty()) {
 			smali.incIndent();
-			writeAnnotations(smali, annos);
+			writeAnnotations(smali, annotationsAttr.getList());
 			smali.decIndent();
 			smali.startLine();
 		}
 	}
 
-	private boolean formatMthParamInfo(IMethodData mth, SmaliWriter smali, ICodeReader codeReader, LineInfo line) {
+	private void formatMthParamInfo(IMethodData mth, SmaliWriter smali, LineInfo line,
+			int regsCount, List<ILocalVar> localVars) {
 		List<String> types = mth.getMethodRef().getArgTypes();
-		if (types.size() == 0) {
-			return false;
+		if (types.isEmpty()) {
+			return;
 		}
-		int paramCount = 0;
 		int paramStart = 0;
 		int regNum = line.smaliMthNode.getParamRegStart();
 		if (!hasStaticFlag(mth.getAccessFlags())) {
+			// add 'this' register
 			line.addRegName(regNum, "p0");
 			line.smaliMthNode.setParamReg(regNum, "p0");
-			regNum += 1;
-			paramStart = 1;
+			regNum++;
+			paramStart++;
 		}
-		IDebugInfo dbgInfo = codeReader.getDebugInfo();
-		if (dbgInfo != null) {
-			for (ILocalVar var : dbgInfo.getLocalVars()) {
-				if (var.getStartOffset() == -1) {
-					int i = writeParamInfo(smali, line, regNum, paramStart, var.getName(), var.getType());
-					regNum += i;
-					paramStart += i;
-					paramCount++;
-				}
+		if (localVars.isEmpty()) {
+			return;
+		}
+		ILocalVar[] params = new ILocalVar[regsCount];
+		for (ILocalVar var : localVars) {
+			if (var.isMarkedAsParameter()) {
+				params[var.getRegNum()] = var;
 			}
 		}
-		for (; paramCount < types.size(); paramCount++) {
-			int i = writeParamInfo(smali, line, regNum, paramStart, "", types.get(paramCount));
-			regNum += i;
-			paramStart += i;
+		smali.newLine();
+		for (String paramType : types) {
+			ILocalVar param = params[regNum];
+			if (param != null) {
+				String name = Utils.getOrElse(param.getName(), "");
+				String type = Utils.getOrElse(param.getSignature(), paramType);
+				String varName = "p" + paramStart;
+				smali.startLine(String.format(".param %s, \"%s\" # %s", varName, name, type));
+				line.addRegName(regNum, varName);
+				line.smaliMthNode.setParamReg(regNum, varName);
+			}
+			int regSize = isWideType(paramType) ? 2 : 1;
+			regNum += regSize;
+			paramStart += regSize;
 		}
-		return true;
-	}
-
-	private static int writeParamInfo(SmaliWriter smali, LineInfo line,
-			int regNum, int paramNum, String dbgInfoName, String type) {
-		smali.startLine(String.format(".param p%d, \"%s\":%s", paramNum, dbgInfoName, type));
-		String pName = "p" + paramNum;
-		line.addRegName(regNum, pName);
-		line.smaliMthNode.setParamReg(regNum, pName);
-		if (isWideType(type)) {
-			regNum++;
-			dbgInfoName = "p" + (paramNum + 1);
-			line.addRegName(regNum, dbgInfoName);
-			line.smaliMthNode.setParamReg(regNum, dbgInfoName);
-			return 2;
-		}
-		return 1;
 	}
 
 	private static int getParamStartRegNum(IMethodData mth) {
@@ -494,30 +554,42 @@ public class Smali {
 		smali.startLine(".end annotation");
 	}
 
-	private void formatDbgInfo(IDebugInfo dbgInfo, LineInfo line) {
+	private void formatDbgInfo(IDebugInfo dbgInfo, List<ILocalVar> localVars, LineInfo line) {
 		dbgInfo.getSourceLineMapping().forEach((codeOffset, srcLine) -> {
 			if (codeOffset > -1) {
 				line.addDebugLineTip(codeOffset, String.format(".line %d", srcLine), "");
 			}
 		});
-		for (ILocalVar localVar : dbgInfo.getLocalVars()) {
-			String type = localVar.getSignature();
-			if (type == null || type.trim().isEmpty()) {
-				type = localVar.getType();
+		for (ILocalVar localVar : localVars) {
+			if (localVar.isMarkedAsParameter()) {
+				continue;
 			}
-			if (localVar.getStartOffset() > -1) {
-				line.addTip(
-						localVar.getStartOffset(),
-						String.format(".local v%d", localVar.getRegNum()),
-						String.format(", \"%s\":%s", localVar.getName(), type));
+			String type = localVar.getType();
+			String sign = localVar.getSignature();
+			String longTypeStr;
+			if (sign == null || sign.trim().isEmpty()) {
+				longTypeStr = String.format(", \"%s\":%s", localVar.getName(), type);
+			} else {
+				longTypeStr = String.format(", \"%s\":%s, \"%s\"", localVar.getName(), type, localVar.getSignature());
 			}
-			if (localVar.getEndOffset() > -1) {
-				line.addTip(
-						localVar.getEndOffset(),
-						String.format(".end local v%d", localVar.getRegNum()),
-						String.format(" # \"%s\":%s", localVar.getName(), type));
-			}
+			line.addTip(
+					localVar.getStartOffset(),
+					".local " + formatVarName(line.smaliMthNode, localVar),
+					longTypeStr);
+			line.addTip(
+					localVar.getEndOffset(),
+					".end local " + formatVarName(line.smaliMthNode, localVar),
+					String.format(" # \"%s\":%s", localVar.getName(), type));
 		}
+	}
+
+	private String formatVarName(SmaliMethodNode smaliMthNode, ILocalVar localVar) {
+		int paramRegStart = smaliMthNode.getParamRegStart();
+		int regNum = localVar.getRegNum();
+		if (regNum < paramRegStart) {
+			return "v" + regNum;
+		}
+		return "p" + (regNum - paramRegStart);
 	}
 
 	private void writeEncodedValue(SmaliWriter smali, EncodedValue value, boolean wrapArray) {
@@ -614,24 +686,30 @@ public class Smali {
 
 	private void fmtRegs(InsnData insn, InsnType insnType, LineInfo line) {
 		boolean appendBrace = insnType == InsnType.INVOKE || isRegList(insn);
-		if (appendBrace) {
-			line.getLineWriter().append("{");
-		}
-		if (isRangeRegIns(insn)) {
-			line.getLineWriter().append(line.getRegName(insn.getReg(0)))
-					.append(" .. ")
-					.append(line.getRegName(insn.getReg(insn.getRegsCount() - 1)));
-
-		} else if (insn.getRegsCount() > 0) {
-			for (int i = 0; i < insn.getRegsCount(); i++) {
-				if (i > 0) {
-					line.getLineWriter().append(", ");
-				}
-				line.getLineWriter().append(line.getRegName(insn.getReg(i)));
+		StringBuilder lw = line.getLineWriter();
+		if (insnType == InsnType.INVOKE) {
+			int resultReg = insn.getResultReg();
+			if (resultReg != -1) {
+				lw.append(line.getRegName(resultReg)).append(" <= ");
 			}
 		}
 		if (appendBrace) {
-			line.getLineWriter().append("}");
+			lw.append("{");
+		}
+		if (isRangeRegIns(insn)) {
+			lw.append(line.getRegName(insn.getReg(0)))
+					.append(" .. ")
+					.append(line.getRegName(insn.getReg(insn.getRegsCount() - 1)));
+		} else if (insn.getRegsCount() > 0) {
+			for (int i = 0; i < insn.getRegsCount(); i++) {
+				if (i > 0) {
+					lw.append(", ");
+				}
+				lw.append(line.getRegName(insn.getReg(i)));
+			}
+		}
+		if (appendBrace) {
+			lw.append("}");
 		}
 	}
 
@@ -660,9 +738,11 @@ public class Smali {
 	private void formatByteCode(StringBuilder smali, byte[] bytes) {
 		int maxLen = Math.min(bytes.length, 4 * 2); // limit to 4 units
 		StringBuilder inHex = new StringBuilder();
-		for (int i = 0; i < maxLen - 1; i += 2) {
-			int temp = ((bytes[i] & 0xff) << 8) | (bytes[i + 1] & 0xff);
-			inHex.append(String.format("%04x ", temp));
+		for (int i = 0; i < maxLen; i++) {
+			inHex.append(String.format("%02x", bytes[i]));
+			if (i % 2 == 1) {
+				inHex.append(' ');
+			}
 		}
 		smali.append(String.format(FMT_BYTECODE_COL, inHex));
 		if (maxLen < bytes.length) {
@@ -680,7 +760,7 @@ public class Smali {
 
 			ISwitchPayload payload = (ISwitchPayload) insn.getPayload();
 			if (payload != null) {
-				fmtSwitchPayload(insn, FMT_P_SWITCH_CASE, FMT_P_SWITCH_CASE_TAG, line, payload, insn.getOffset());
+				fmtSwitchPayload(insn, FMT_P_SWITCH_CASE, FMT_P_SWITCH_CASE_TAG, line, payload);
 			}
 			return true;
 		}
@@ -690,7 +770,7 @@ public class Smali {
 
 			ISwitchPayload payload = (ISwitchPayload) insn.getPayload();
 			if (payload != null) {
-				fmtSwitchPayload(insn, FMT_S_SWITCH_CASE, FMT_S_SWITCH_CASE_TAG, line, payload, insn.getOffset());
+				fmtSwitchPayload(insn, FMT_S_SWITCH_CASE, FMT_S_SWITCH_CASE_TAG, line, payload);
 			}
 			return true;
 		}
@@ -702,17 +782,19 @@ public class Smali {
 		return false;
 	}
 
-	private void fmtSwitchPayload(InsnData insn, String fmtTarget, String fmtTag, LineInfo line,
-			ISwitchPayload payload, int curOffset) {
+	private void fmtSwitchPayload(InsnData insn, String fmtTarget, String fmtTag, LineInfo line, ISwitchPayload payload) {
 		int lineStart = getInsnColStart();
 		lineStart += CODE_OFFSET_COLUMN_WIDTH + 1 + 1; // plus 1s for space and the ':'
 		String basicIndent = new String(new byte[lineStart]).replace("\0", " ");
 		String indent = SmaliWriter.INDENT_STR + basicIndent;
 		int[] keys = payload.getKeys();
 		int[] targets = payload.getTargets();
-		int opcodeOffset = line.payloadOffsetMap.get(curOffset);
+		Integer switchOffset = line.payloadOffsetMap.get(insn.getOffset());
+		if (switchOffset == null) {
+			throw new JadxRuntimeException("Unknown switch insn for payload at " + insn.getOffset());
+		}
 		for (int i = 0; i < keys.length; i++) {
-			int target = opcodeOffset + targets[i];
+			int target = switchOffset + targets[i];
 			line.addInsnLine(insn.getOffset(),
 					String.format("%scase %d: -> " + fmtTarget, indent, keys[i], target));
 			line.addTip(target,
@@ -982,7 +1064,7 @@ public class Smali {
 		String accessFlag;
 		String name;
 		String type;
-		List<IAnnotation> annoList;
+		AttributeStorage attributes;
 
 		private static RawField make(IFieldData f) {
 			RawField field = new RawField();
@@ -990,9 +1072,8 @@ public class Smali {
 			field.accessFlag = AccessFlags.format(f.getAccessFlags(), FIELD);
 			field.name = f.getName();
 			field.type = f.getType();
-			field.annoList = f.getAnnotations();
+			field.attributes = new AttributeStorage(f.getAttributes());
 			return field;
 		}
 	}
-
 }

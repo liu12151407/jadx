@@ -18,11 +18,12 @@ import jadx.api.JadxArgs;
 import jadx.api.ResourceFile;
 import jadx.api.ResourceType;
 import jadx.api.ResourcesLoader;
+import jadx.api.data.ICodeData;
 import jadx.api.plugins.input.data.IClassData;
 import jadx.api.plugins.input.data.ILoadResult;
 import jadx.core.Jadx;
+import jadx.core.ProcessClass;
 import jadx.core.clsp.ClspGraph;
-import jadx.core.dex.attributes.AType;
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.ConstStorage;
 import jadx.core.dex.info.FieldInfo;
@@ -41,7 +42,8 @@ import jadx.core.utils.StringUtils;
 import jadx.core.utils.Utils;
 import jadx.core.utils.android.AndroidResourcesUtils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
-import jadx.core.xmlgen.ResTableParser;
+import jadx.core.xmlgen.IResParser;
+import jadx.core.xmlgen.ResDecoder;
 import jadx.core.xmlgen.ResourceStorage;
 import jadx.core.xmlgen.entry.ResourceEntry;
 import jadx.core.xmlgen.entry.ValuesParser;
@@ -51,8 +53,9 @@ public class RootNode {
 
 	private final JadxArgs args;
 	private final List<IDexTreeVisitor> preDecompilePasses;
-	private final List<IDexTreeVisitor> passes;
+	private final List<ICodeDataUpdateListener> codeDataUpdateListeners = new ArrayList<>();
 
+	private final ProcessClass processClasses;
 	private final ErrorsCounter errorsCounter = new ErrorsCounter();
 	private final StringUtils stringUtils;
 	private final ConstStorage constValues;
@@ -75,7 +78,7 @@ public class RootNode {
 	public RootNode(JadxArgs args) {
 		this.args = args;
 		this.preDecompilePasses = Jadx.getPreDecompilePassesList();
-		this.passes = Jadx.getPassesList(args);
+		this.processClasses = new ProcessClass(this.getArgs());
 		this.stringUtils = new StringUtils(args);
 		this.constValues = new ConstStorage(args);
 		this.typeUpdate = new TypeUpdate(this);
@@ -97,42 +100,62 @@ public class RootNode {
 		}
 		if (classes.size() != clsMap.size()) {
 			// class name duplication detected
-			classes.stream().collect(Collectors.groupingBy(ClassNode::getClassInfo))
-					.entrySet().stream()
-					.filter(entry -> entry.getValue().size() > 1)
-					.forEach(entry -> {
-						LOG.warn("Found duplicated class: {}, count: {}. Only one will be loaded!", entry.getKey(),
-								entry.getValue().size());
-						entry.getValue().forEach(cls -> cls.addAttr(AType.COMMENTS, "WARNING: Classes with same name are omitted"));
-					});
+			markDuplicatedClasses(classes);
 		}
 		classes = new ArrayList<>(clsMap.values());
-		// sort classes by name, expect top classes before inner
-		classes.sort(Comparator.comparing(ClassNode::getFullName));
-		initInnerClasses();
 
 		// print stats for loaded classes
 		int mthCount = classes.stream().mapToInt(c -> c.getMethods().size()).sum();
 		int insnsCount = classes.stream().flatMap(c -> c.getMethods().stream()).mapToInt(MethodNode::getInsnsCount).sum();
 		LOG.info("Loaded classes: {}, methods: {}, instructions: {}", classes.size(), mthCount, insnsCount);
+
+		// sort classes by name, expect top classes before inner
+		classes.sort(Comparator.comparing(ClassNode::getFullName));
+		// move inner classes
+		initInnerClasses();
 	}
 
 	private void addDummyClass(IClassData classData, Exception exc) {
-		String typeStr = classData.getType();
-		String name = null;
 		try {
-			ClassInfo clsInfo = ClassInfo.fromName(this, typeStr);
-			if (clsInfo != null) {
-				name = clsInfo.getShortName();
+			String typeStr = classData.getType();
+			String name = null;
+			try {
+				ClassInfo clsInfo = ClassInfo.fromName(this, typeStr);
+				if (clsInfo != null) {
+					name = clsInfo.getShortName();
+				}
+			} catch (Exception e) {
+				LOG.error("Failed to get name for class with type {}", typeStr, e);
 			}
-		} catch (Exception e) {
-			LOG.error("Failed to get name for class with type {}", typeStr, e);
+			if (name == null || name.isEmpty()) {
+				name = "CLASS_" + typeStr;
+			}
+			ClassNode clsNode = ClassNode.addSyntheticClass(this, name, classData.getAccessFlags());
+			ErrorsCounter.error(clsNode, "Load error", exc);
+		} catch (Exception innerExc) {
+			LOG.error("Failed to load class from file: {}", classData.getInputFileName(), exc);
 		}
-		if (name == null || name.isEmpty()) {
-			name = "CLASS_" + typeStr;
-		}
-		ClassNode clsNode = ClassNode.addSyntheticClass(this, name, classData.getAccessFlags());
-		ErrorsCounter.error(clsNode, "Load error", exc);
+	}
+
+	private static void markDuplicatedClasses(List<ClassNode> classes) {
+		classes.stream()
+				.collect(Collectors.groupingBy(ClassNode::getClassInfo))
+				.entrySet()
+				.stream()
+				.filter(entry -> entry.getValue().size() > 1)
+				.forEach(entry -> {
+					List<String> sources = Utils.collectionMap(entry.getValue(), ClassNode::getInputFileName);
+					LOG.warn("Found duplicated class: {}, count: {}. Only one will be loaded!\n  {}",
+							entry.getKey(), entry.getValue().size(), String.join("\n  ", sources));
+					entry.getValue().forEach(cls -> {
+						String thisSource = cls.getInputFileName();
+						String otherSourceStr = sources.stream()
+								.filter(s -> !s.equals(thisSource))
+								.sorted()
+								.collect(Collectors.joining("\n  "));
+						cls.addWarnComment("Classes with same name are omitted:\n  " + otherSourceStr + '\n');
+					});
+				});
 	}
 
 	public void addClassNode(ClassNode clsNode) {
@@ -141,23 +164,13 @@ public class RootNode {
 	}
 
 	public void loadResources(List<ResourceFile> resources) {
-		ResourceFile arsc = null;
-		for (ResourceFile rf : resources) {
-			if (rf.getType() == ResourceType.ARSC) {
-				arsc = rf;
-				break;
-			}
-		}
+		ResourceFile arsc = getResourceFile(resources);
 		if (arsc == null) {
 			LOG.debug("'.arsc' file not found");
 			return;
 		}
 		try {
-			ResTableParser parser = ResourcesLoader.decodeStream(arsc, (size, is) -> {
-				ResTableParser tableParser = new ResTableParser(this);
-				tableParser.decode(is);
-				return tableParser;
-			});
+			IResParser parser = ResourcesLoader.decodeStream(arsc, (size, is) -> ResDecoder.decode(this, arsc, is));
 			if (parser != null) {
 				processResources(parser.getResStorage());
 				updateObfuscatedFiles(parser, resources);
@@ -165,6 +178,15 @@ public class RootNode {
 		} catch (Exception e) {
 			LOG.error("Failed to parse '.arsc' file", e);
 		}
+	}
+
+	private @Nullable ResourceFile getResourceFile(List<ResourceFile> resources) {
+		for (ResourceFile rf : resources) {
+			if (rf.getType() == ResourceType.ARSC) {
+				return rf;
+			}
+		}
+		return null;
 	}
 
 	public void processResources(ResourceStorage resStorage) {
@@ -179,6 +201,7 @@ public class RootNode {
 				ClspGraph newClsp = new ClspGraph(this);
 				newClsp.load();
 				newClsp.addApp(classes);
+				newClsp.initCache();
 				this.clsp = newClsp;
 			}
 		} catch (Exception e) {
@@ -186,7 +209,7 @@ public class RootNode {
 		}
 	}
 
-	private void updateObfuscatedFiles(ResTableParser parser, List<ResourceFile> resources) {
+	private void updateObfuscatedFiles(IResParser parser, List<ResourceFile> resources) {
 		if (args.isSkipResources()) {
 			return;
 		}
@@ -240,20 +263,26 @@ public class RootNode {
 				innerCls.getClassInfo().updateNames(this);
 			}
 		}
+		classes.forEach(ClassNode::updateParentClass);
 	}
 
 	public void runPreDecompileStage() {
+		boolean debugEnabled = LOG.isDebugEnabled();
 		for (IDexTreeVisitor pass : preDecompilePasses) {
-			long start = System.currentTimeMillis();
+			Utils.checkThreadInterrupt();
+			long start = debugEnabled ? System.currentTimeMillis() : 0;
 			try {
 				pass.init(this);
 			} catch (Exception e) {
 				LOG.error("Visitor init failed: {}", pass.getClass().getSimpleName(), e);
 			}
 			for (ClassNode cls : classes) {
+				if (cls.isInner()) {
+					continue;
+				}
 				DepthTraversal.visit(pass, cls);
 			}
-			if (LOG.isDebugEnabled()) {
+			if (debugEnabled) {
 				LOG.debug("{} time: {}ms", pass.getClass().getSimpleName(), System.currentTimeMillis() - start);
 			}
 		}
@@ -311,6 +340,12 @@ public class RootNode {
 		return resolveClass(clsInfo);
 	}
 
+	/**
+	 * Searches for ClassNode by its full name (original or alias name)
+	 * <br>
+	 * Warning: This method has a runtime of O(n) (n = number of classes).
+	 * If you need to call it more than once consider {@link #buildFullAliasClassCache()} instead
+	 */
 	@Nullable
 	public ClassNode searchClassByFullAlias(String fullName) {
 		for (ClassNode cls : classes) {
@@ -321,6 +356,20 @@ public class RootNode {
 			}
 		}
 		return null;
+	}
+
+	public Map<String, ClassNode> buildFullAliasClassCache() {
+		Map<String, ClassNode> classNameCache = new HashMap<>(classes.size());
+		for (ClassNode cls : classes) {
+			ClassInfo classInfo = cls.getClassInfo();
+			String fullName = classInfo.getFullName();
+			String alias = classInfo.getAliasFullName();
+			classNameCache.put(fullName, cls);
+			if (alias != null && !fullName.equals(alias)) {
+				classNameCache.put(alias, cls);
+			}
+		}
+		return classNameCache;
 	}
 
 	public List<ClassNode> searchClassByShortName(String shortName) {
@@ -335,15 +384,6 @@ public class RootNode {
 
 	@Nullable
 	public MethodNode resolveMethod(@NotNull MethodInfo mth) {
-		ClassNode cls = resolveClass(mth.getDeclClass());
-		if (cls != null) {
-			return cls.searchMethod(mth);
-		}
-		return null;
-	}
-
-	@Nullable
-	public MethodNode deepResolveMethod(@NotNull MethodInfo mth) {
 		ClassNode cls = resolveClass(mth.getDeclClass());
 		if (cls == null) {
 			return null;
@@ -388,17 +428,12 @@ public class RootNode {
 	@Nullable
 	public FieldNode resolveField(FieldInfo field) {
 		ClassNode cls = resolveClass(field.getDeclClass());
-		if (cls != null) {
-			return cls.searchField(field);
-		}
-		return null;
-	}
-
-	@Nullable
-	public FieldNode deepResolveField(@NotNull FieldInfo field) {
-		ClassNode cls = resolveClass(field.getDeclClass());
 		if (cls == null) {
 			return null;
+		}
+		FieldNode fieldNode = cls.searchField(field);
+		if (fieldNode != null) {
+			return fieldNode;
 		}
 		return deepResolveField(cls, field);
 	}
@@ -431,23 +466,30 @@ public class RootNode {
 		return null;
 	}
 
+	public ProcessClass getProcessClasses() {
+		return processClasses;
+	}
+
 	public List<IDexTreeVisitor> getPasses() {
-		return passes;
+		return processClasses.getPasses();
 	}
 
 	public void initPasses() {
-		for (IDexTreeVisitor pass : passes) {
-			try {
-				pass.init(this);
-			} catch (Exception e) {
-				LOG.error("Visitor init failed: {}", pass.getClass().getSimpleName(), e);
-			}
-		}
+		processClasses.initPasses(this);
 	}
 
 	public ICodeWriter makeCodeWriter() {
 		JadxArgs jadxArgs = this.args;
 		return jadxArgs.getCodeWriterProvider().apply(jadxArgs);
+	}
+
+	public void registerCodeDataUpdateListener(ICodeDataUpdateListener listener) {
+		this.codeDataUpdateListeners.add(listener);
+	}
+
+	public void notifyCodeDataListeners() {
+		ICodeData codeData = args.getCodeData();
+		codeDataUpdateListeners.forEach(l -> l.updated(codeData));
 	}
 
 	public ClspGraph getClsp() {

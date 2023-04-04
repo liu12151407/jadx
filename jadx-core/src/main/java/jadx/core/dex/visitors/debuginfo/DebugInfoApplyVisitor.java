@@ -3,13 +3,16 @@ package jadx.core.dex.visitors.debuginfo;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.api.plugins.input.data.AccessFlags;
 import jadx.api.plugins.input.data.ILocalVar;
+import jadx.api.plugins.input.data.attributes.JadxAttrType;
+import jadx.api.plugins.input.data.attributes.types.MethodParametersAttr;
 import jadx.core.Consts;
 import jadx.core.deobf.NameMapper;
 import jadx.core.dex.attributes.AFlag;
@@ -18,6 +21,7 @@ import jadx.core.dex.attributes.nodes.LocalVarsDebugInfoAttr;
 import jadx.core.dex.attributes.nodes.RegDebugInfoAttr;
 import jadx.core.dex.instructions.PhiInsn;
 import jadx.core.dex.instructions.args.ArgType;
+import jadx.core.dex.instructions.args.CodeVar;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.Named;
 import jadx.core.dex.instructions.args.RegisterArg;
@@ -31,7 +35,6 @@ import jadx.core.dex.visitors.ssa.SSATransform;
 import jadx.core.dex.visitors.typeinference.TypeInferenceVisitor;
 import jadx.core.dex.visitors.typeinference.TypeUpdateResult;
 import jadx.core.utils.BlockUtils;
-import jadx.core.utils.ErrorsCounter;
 import jadx.core.utils.exceptions.JadxException;
 
 @JadxVisitor(
@@ -52,53 +55,32 @@ public class DebugInfoApplyVisitor extends AbstractVisitor {
 				applyDebugInfo(mth);
 				mth.remove(AType.LOCAL_VARS_DEBUG_INFO);
 			}
-			checkTypes(mth);
+			processMethodParametersAttribute(mth);
 		} catch (Exception e) {
-			LOG.error("Error to apply debug info: {}", ErrorsCounter.formatMsg(mth, e.getMessage()), e);
+			mth.addWarnComment("Failed to apply debug info", e);
 		}
-	}
-
-	private static void checkTypes(MethodNode mth) {
-		if (mth.isNoCode() || mth.getSVars().isEmpty()) {
-			return;
-		}
-		mth.getSVars().forEach(var -> {
-			ArgType type = var.getTypeInfo().getType();
-			if (!type.isTypeKnown()) {
-				mth.addWarnComment("Type inference failed for: " + var.getDetailedVarInfo(mth));
-			}
-		});
 	}
 
 	private static void applyDebugInfo(MethodNode mth) {
 		if (Consts.DEBUG_TYPE_INFERENCE) {
 			LOG.info("Apply debug info for method: {}", mth);
 		}
-		mth.getSVars().forEach(ssaVar -> collectVarDebugInfo(mth, ssaVar));
+		mth.getSVars().forEach(ssaVar -> searchAndApplyVarDebugInfo(mth, ssaVar));
 
 		fixLinesForReturn(mth);
 		fixNamesForPhiInsns(mth);
 	}
 
-	private static void collectVarDebugInfo(MethodNode mth, SSAVar ssaVar) {
-		Set<RegDebugInfoAttr> debugInfoSet = new HashSet<>(ssaVar.getUseCount() + 1);
-		addRegDbdInfo(debugInfoSet, ssaVar.getAssign());
-		ssaVar.getUseList().forEach(registerArg -> addRegDbdInfo(debugInfoSet, registerArg));
-
-		int dbgCount = debugInfoSet.size();
-		if (dbgCount == 0) {
-			searchDebugInfoByOffset(mth, ssaVar);
+	private static void searchAndApplyVarDebugInfo(MethodNode mth, SSAVar ssaVar) {
+		if (applyDebugInfo(mth, ssaVar, ssaVar.getAssign())) {
 			return;
 		}
-		if (dbgCount == 1) {
-			RegDebugInfoAttr debugInfo = debugInfoSet.iterator().next();
-			applyDebugInfo(mth, ssaVar, debugInfo.getRegType(), debugInfo.getName());
-		} else {
-			mth.addComment("JADX INFO: Multiple debug info for " + ssaVar + ": " + debugInfoSet);
-			for (RegDebugInfoAttr debugInfo : debugInfoSet) {
-				applyDebugInfo(mth, ssaVar, debugInfo.getRegType(), debugInfo.getName());
+		for (RegisterArg useArg : ssaVar.getUseList()) {
+			if (applyDebugInfo(mth, ssaVar, useArg)) {
+				return;
 			}
 		}
+		searchDebugInfoByOffset(mth, ssaVar);
 	}
 
 	private static void searchDebugInfoByOffset(MethodNode mth, SSAVar ssaVar) {
@@ -106,14 +88,12 @@ public class DebugInfoApplyVisitor extends AbstractVisitor {
 		if (debugInfoAttr == null) {
 			return;
 		}
-		Optional<Integer> max = ssaVar.getUseList().stream()
-				.map(DebugInfoApplyVisitor::getInsnOffsetByArg)
-				.max(Integer::compareTo);
+		OptionalInt max = ssaVar.getUseList().stream().mapToInt(DebugInfoApplyVisitor::getInsnOffsetByArg).max();
 		if (!max.isPresent()) {
 			return;
 		}
 		int startOffset = getInsnOffsetByArg(ssaVar.getAssign());
-		int endOffset = max.get();
+		int endOffset = max.getAsInt();
 		int regNum = ssaVar.getRegNum();
 		for (ILocalVar localVar : debugInfoAttr.getLocalVars()) {
 			if (localVar.getRegNum() == regNum) {
@@ -145,24 +125,26 @@ public class DebugInfoApplyVisitor extends AbstractVisitor {
 		return -1;
 	}
 
-	public static void applyDebugInfo(MethodNode mth, SSAVar ssaVar, ArgType type, String varName) {
-		TypeUpdateResult result = mth.root().getTypeUpdate().applyWithWiderAllow(mth, ssaVar, type);
+	public static boolean applyDebugInfo(MethodNode mth, SSAVar ssaVar, RegisterArg arg) {
+		RegDebugInfoAttr debugInfoAttr = arg.get(AType.REG_DEBUG_INFO);
+		if (debugInfoAttr == null) {
+			return false;
+		}
+		return applyDebugInfo(mth, ssaVar, debugInfoAttr.getRegType(), debugInfoAttr.getName());
+	}
+
+	public static boolean applyDebugInfo(MethodNode mth, SSAVar ssaVar, ArgType type, String varName) {
+		TypeUpdateResult result = mth.root().getTypeUpdate().applyWithWiderIgnoreUnknown(mth, ssaVar, type);
 		if (result == TypeUpdateResult.REJECT) {
 			if (Consts.DEBUG_TYPE_INFERENCE) {
 				LOG.debug("Reject debug info of type: {} and name: '{}' for {}, mth: {}", type, varName, ssaVar, mth);
 			}
-		} else {
-			if (NameMapper.isValidAndPrintable(varName)) {
-				ssaVar.setName(varName);
-			}
+			return false;
 		}
-	}
-
-	private static void addRegDbdInfo(Set<RegDebugInfoAttr> debugInfo, RegisterArg reg) {
-		RegDebugInfoAttr debugInfoAttr = reg.get(AType.REG_DEBUG_INFO);
-		if (debugInfoAttr != null) {
-			debugInfo.add(debugInfoAttr);
+		if (NameMapper.isValidAndPrintable(varName)) {
+			ssaVar.setName(varName);
 		}
+		return true;
 	}
 
 	/**
@@ -173,8 +155,8 @@ public class DebugInfoApplyVisitor extends AbstractVisitor {
 			return;
 		}
 		InsnNode origReturn = null;
-		List<InsnNode> newReturns = new ArrayList<>(mth.getExitBlocks().size());
-		for (BlockNode exit : mth.getExitBlocks()) {
+		List<InsnNode> newReturns = new ArrayList<>(mth.getPreExitBlocks().size());
+		for (BlockNode exit : mth.getPreExitBlocks()) {
 			InsnNode ret = BlockUtils.getLastInsn(exit);
 			if (ret != null) {
 				if (ret.contains(AFlag.ORIG_RETURN)) {
@@ -207,7 +189,7 @@ public class DebugInfoApplyVisitor extends AbstractVisitor {
 				if (names.size() == 1) {
 					setNameForInsn(phiInsn, names.iterator().next());
 				} else if (names.size() > 1) {
-					LOG.warn("Different names in phi insn: {}, use first", names);
+					mth.addDebugComment("Different variable names in phi insn: " + names + ", use first");
 					setNameForInsn(phiInsn, names.iterator().next());
 				}
 			}
@@ -230,5 +212,32 @@ public class DebugInfoApplyVisitor extends AbstractVisitor {
 				((Named) arg).setName(name);
 			}
 		});
+	}
+
+	private void processMethodParametersAttribute(MethodNode mth) {
+		MethodParametersAttr parametersAttr = mth.get(JadxAttrType.METHOD_PARAMETERS);
+		if (parametersAttr == null) {
+			return;
+		}
+		try {
+			List<MethodParametersAttr.Info> params = parametersAttr.getList();
+			if (params.size() != mth.getMethodInfo().getArgsCount()) {
+				return;
+			}
+			int i = 0;
+			for (RegisterArg mthArg : mth.getArgRegs()) {
+				MethodParametersAttr.Info paramInfo = params.get(i++);
+				String name = paramInfo.getName();
+				if (NameMapper.isValidAndPrintable(name)) {
+					CodeVar codeVar = mthArg.getSVar().getCodeVar();
+					codeVar.setName(name);
+					if (AccessFlags.hasFlag(paramInfo.getAccFlags(), AccessFlags.FINAL)) {
+						codeVar.setFinal(true);
+					}
+				}
+			}
+		} catch (Exception e) {
+			mth.addWarnComment("Failed to process method parameters attribute: " + parametersAttr.getList(), e);
+		}
 	}
 }

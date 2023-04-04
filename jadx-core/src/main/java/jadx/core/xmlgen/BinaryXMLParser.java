@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,10 +52,12 @@ public class BinaryXMLParser extends CommonBinaryParser {
 	private boolean isLastEnd = true;
 	private boolean isOneLine = true;
 	private int namespaceDepth = 0;
-	private int[] resourceIds;
+	private @Nullable int[] resourceIds;
 
 	private final RootNode rootNode;
 	private String appPackageName;
+
+	private Map<String, ClassNode> classNameCache;
 
 	public BinaryXMLParser(RootNode rootNode) {
 		this.rootNode = rootNode;
@@ -78,14 +81,17 @@ public class BinaryXMLParser extends CommonBinaryParser {
 		firstElement = true;
 		decode();
 		nsMap = null;
-		return writer.finish();
+		ICodeInfo codeInfo = writer.finish();
+		this.classNameCache = null; // reset class name cache
+		return codeInfo;
 	}
 
 	private boolean isBinaryXml() throws IOException {
 		is.mark(4);
 		int v = is.readInt16(); // version
 		int h = is.readInt16(); // header size
-		if (v == 0x0003 && h == 0x0008) {
+		// Some APK Manifest.xml the version is 0
+		if (h == 0x0008) {
 			return true;
 		}
 		is.reset();
@@ -147,16 +153,24 @@ public class BinaryXMLParser extends CommonBinaryParser {
 	}
 
 	private void parseNameSpace() throws IOException {
-		if (is.readInt16() != 0x10) {
-			die("NAMESPACE header is not 0x0010");
+		int headerSize = is.readInt16();
+		if (headerSize > 0x10) {
+			LOG.warn("Invalid namespace header");
+		} else if (headerSize < 0x10) {
+			die("NAMESPACE header is not 0x10 big");
 		}
-		if (is.readInt32() != 0x18) {
+		int size = is.readInt32();
+		if (size > 0x18) {
+			LOG.warn("Invalid namespace size");
+		} else if (size < 0x18) {
 			die("NAMESPACE header chunk is not 0x18 big");
 		}
+
 		int beginLineNumber = is.readInt32();
 		int comment = is.readInt32();
 		int beginPrefix = is.readInt32();
 		int beginURI = is.readInt32();
+		is.skip(headerSize - 0x10);
 
 		String nsKey = getString(beginURI);
 		String nsValue = getString(beginPrefix);
@@ -167,16 +181,23 @@ public class BinaryXMLParser extends CommonBinaryParser {
 	}
 
 	private void parseNameSpaceEnd() throws IOException {
-		if (is.readInt16() != 0x10) {
-			die("NAMESPACE header is not 0x0010");
+		int headerSize = is.readInt16();
+		if (headerSize > 0x10) {
+			LOG.warn("Invalid namespace end");
+		} else if (headerSize < 0x10) {
+			die("NAMESPACE end is not 0x10 big");
 		}
-		if (is.readInt32() != 0x18) {
+		int dataSize = is.readInt32();
+		if (dataSize > 0x18) {
+			LOG.warn("Invalid namespace size");
+		} else if (dataSize < 0x18) {
 			die("NAMESPACE header chunk is not 0x18 big");
 		}
 		int endLineNumber = is.readInt32();
 		int comment = is.readInt32();
 		int endPrefix = is.readInt32();
 		int endURI = is.readInt32();
+		is.skip(headerSize - 0x10);
 		namespaceDepth--;
 
 		String nsKey = getString(endURI);
@@ -338,7 +359,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 		// As the outcome of https://github.com/skylot/jadx/issues/1208
 		// Android seems to favor entries from AndroidResMap and only if
 		// there is no entry uses the values form the XML string pool
-		if (0 <= id && id < resourceIds.length) {
+		if (resourceIds != null && 0 <= id && id < resourceIds.length) {
 			int resId = resourceIds[id];
 			String str = ValuesParser.getAndroidResMap().get(resId);
 			if (str != null) {
@@ -452,6 +473,9 @@ public class BinaryXMLParser extends CommonBinaryParser {
 	}
 
 	private void attachClassNode(ICodeWriter writer, String attrName, String clsName) {
+		if (!writer.isMetadataSupported()) {
+			return;
+		}
 		if (clsName == null || !attrName.equals("name")) {
 			return;
 		}
@@ -461,7 +485,10 @@ public class BinaryXMLParser extends CommonBinaryParser {
 		} else {
 			clsFullName = clsName;
 		}
-		ClassNode classNode = rootNode.searchClassByFullAlias(clsFullName);
+		if (classNameCache == null) {
+			classNameCache = rootNode.buildFullAliasClassCache();
+		}
+		ClassNode classNode = classNameCache.get(clsFullName);
 		if (classNode != null) {
 			writer.attachAnnotation(classNode);
 		}

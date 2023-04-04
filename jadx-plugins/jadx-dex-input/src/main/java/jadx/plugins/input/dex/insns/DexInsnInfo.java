@@ -279,11 +279,12 @@ public class DexInsnInfo {
 		register(arr, DexOpcodes.SHR_INT_LIT8, Opcode.SHR_INT_LIT, DexInsnFormat.FORMAT_22B);
 		register(arr, DexOpcodes.USHR_INT_LIT8, Opcode.USHR_INT_LIT, DexInsnFormat.FORMAT_22B);
 
-		register(arr, DexOpcodes.INVOKE_POLYMORPHIC, Opcode.INVOKE_POLYMORPHIC, DexInsnFormat.FORMAT_45CC);
-		register(arr, DexOpcodes.INVOKE_POLYMORPHIC_RANGE, Opcode.INVOKE_POLYMORPHIC_RANGE, DexInsnFormat.FORMAT_4RCC);
+		register(arr, DexOpcodes.INVOKE_POLYMORPHIC, Opcode.INVOKE_POLYMORPHIC, DexInsnFormat.FORMAT_45CC, InsnIndexType.METHOD_REF);
+		register(arr, DexOpcodes.INVOKE_POLYMORPHIC_RANGE, Opcode.INVOKE_POLYMORPHIC_RANGE, DexInsnFormat.FORMAT_4RCC,
+				InsnIndexType.METHOD_REF);
 
-		register(arr, DexOpcodes.INVOKE_CUSTOM, Opcode.INVOKE_CUSTOM, DexInsnFormat.FORMAT_35C);
-		register(arr, DexOpcodes.INVOKE_CUSTOM_RANGE, Opcode.INVOKE_CUSTOM_RANGE, DexInsnFormat.FORMAT_3RC);
+		register(arr, DexOpcodes.INVOKE_CUSTOM, Opcode.INVOKE_CUSTOM, DexInsnFormat.FORMAT_35C, InsnIndexType.CALL_SITE);
+		register(arr, DexOpcodes.INVOKE_CUSTOM_RANGE, Opcode.INVOKE_CUSTOM_RANGE, DexInsnFormat.FORMAT_3RC, InsnIndexType.CALL_SITE);
 
 		register(arr, DexOpcodes.CONST_METHOD_HANDLE, Opcode.CONST_METHOD_HANDLE, DexInsnFormat.FORMAT_21C);
 		register(arr, DexOpcodes.CONST_METHOD_TYPE, Opcode.CONST_METHOD_TYPE, DexInsnFormat.FORMAT_21C);

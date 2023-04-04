@@ -8,6 +8,7 @@ import java.awt.event.MouseEvent;
 import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 
 import javax.swing.BorderFactory;
@@ -31,17 +32,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.beust.jcommander.Strings;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 
 import jadx.api.JavaClass;
 import jadx.api.JavaMethod;
 import jadx.core.utils.Utils;
 import jadx.gui.JadxWrapper;
-import jadx.gui.jobs.BackgroundExecutor;
 import jadx.gui.treemodel.JMethod;
-import jadx.gui.ui.ContentPanel;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.TabbedPane;
+import jadx.gui.ui.panel.ContentPanel;
 import jadx.gui.utils.JNodeCache;
+import jadx.gui.utils.ui.NodeLabel;
 
 public class QuarkReportPanel extends ContentPanel {
 	private static final long serialVersionUID = -242266836695889206L;
@@ -68,7 +71,7 @@ public class QuarkReportPanel extends ContentPanel {
 	}
 
 	private void prepareData() {
-		data.crimes.sort(Comparator.comparingInt(c -> -Integer.parseInt(c.confidence.replace("%", ""))));
+		data.crimes.sort(Comparator.comparingInt(c -> -c.parseConfidence()));
 	}
 
 	private void initUI() {
@@ -114,11 +117,7 @@ public class QuarkReportPanel extends ContentPanel {
 					Object node = getNodeUnderMouse(tree, event);
 					if (node instanceof MethodTreeNode) {
 						JMethod method = ((MethodTreeNode) node).getJMethod();
-						BackgroundExecutor executor = tabbedPane.getMainWindow().getBackgroundExecutor();
-						executor.execute("Decompiling class",
-								() -> tabbedPane.codeJump(method),
-								status -> tabbedPane.codeJump(method) // TODO: fix bug with incorrect jump on just decompiled code
-						);
+						tabbedPane.codeJump(method);
 					}
 				}
 			}
@@ -213,7 +212,7 @@ public class QuarkReportPanel extends ContentPanel {
 
 		@Override
 		public Component render() {
-			JLabel label = new JLabel(((String) getUserObject()));
+			JLabel label = new NodeLabel(((String) getUserObject()));
 			label.setFont(bold ? boldFont : font);
 			label.setIcon(null);
 			label.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
@@ -238,20 +237,27 @@ public class QuarkReportPanel extends ContentPanel {
 			if (Utils.notEmpty(crime.permissions)) {
 				add(new TextTreeNode("Permissions: " + Strings.join(", ", crime.permissions)));
 			}
-			if (Utils.notEmpty(crime.combination)) {
+			if (Utils.notEmpty(crime.native_api)) {
 				TextTreeNode node = new TextTreeNode("Native API");
-				for (QuarkReportData.Method method : crime.combination) {
+				for (QuarkReportData.Method method : crime.native_api) {
 					node.add(new TextTreeNode(method.toString()));
 				}
 				add(node);
-			} else {
-				if (Utils.notEmpty(crime.native_api)) {
-					TextTreeNode node = new TextTreeNode("Native API");
-					for (QuarkReportData.Method method : crime.native_api) {
-						node.add(new TextTreeNode(method.toString()));
+			}
+			List<JsonElement> combination = crime.combination;
+			if (Utils.notEmpty(combination) && combination.get(0) instanceof JsonArray) {
+				TextTreeNode node = new TextTreeNode("Combination");
+				int size = combination.size();
+				for (int i = 0; i < size; i++) {
+					TextTreeNode set = new TextTreeNode("Set " + i);
+					JsonArray array = (JsonArray) combination.get(i);
+					for (JsonElement ele : array) {
+						String mth = ele.getAsString();
+						set.add(resolveMethod(mth));
 					}
-					add(node);
+					node.add(set);
 				}
+				add(node);
 			}
 			if (Utils.notEmpty(crime.register)) {
 				TextTreeNode node = new TextTreeNode("Invocations");
@@ -270,7 +276,7 @@ public class QuarkReportPanel extends ContentPanel {
 
 	public MutableTreeNode resolveMethod(String descr) {
 		try {
-			String[] parts = descr.split(" ", 3);
+			String[] parts = removeQuotes(descr).split(" ", 3);
 			String cls = Utils.cleanObjectName(parts[0].replace('$', '.'));
 			String mth = parts[1] + parts[2].replace(" ", "");
 			MainWindow mainWindow = getTabbedPane().getMainWindow();
@@ -285,9 +291,16 @@ public class QuarkReportPanel extends ContentPanel {
 			}
 			return new MethodTreeNode(javaMethod);
 		} catch (Exception e) {
-			LOG.error("Failed to parse method descriptor string", e);
+			LOG.error("Failed to parse method descriptor string: {}", descr, e);
 			return new TextTreeNode(descr);
 		}
+	}
+
+	private static String removeQuotes(String descr) {
+		if (descr.charAt(0) == '\'') {
+			return descr.substring(1, descr.length() - 1);
+		}
+		return descr;
 	}
 
 	private class MethodTreeNode extends BaseTreeNode {
@@ -308,7 +321,7 @@ public class QuarkReportPanel extends ContentPanel {
 
 		@Override
 		public Component render() {
-			JLabel label = new JLabel(mth.toString());
+			JLabel label = new NodeLabel(mth.toString());
 			label.setFont(font);
 			label.setIcon(jnode.getIcon());
 			label.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));

@@ -17,6 +17,7 @@ import jadx.core.dex.instructions.args.InsnWrapArg;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.args.SSAVar;
 import jadx.core.dex.nodes.BlockNode;
+import jadx.core.dex.nodes.IContainer;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.utils.exceptions.JadxRuntimeException;
@@ -79,9 +80,12 @@ public class InsnRemover {
 	}
 
 	public static void unbindInsns(@Nullable MethodNode mth, List<InsnNode> insns) {
-		for (InsnNode insn : insns) {
-			unbindInsn(mth, insn);
-		}
+		// remove all usage first so on result unbind we can remove unused ssa vars
+		insns.forEach(insn -> unbindAllArgs(mth, insn));
+		insns.forEach(insn -> {
+			unbindResult(mth, insn);
+			insn.add(AFlag.DONT_GENERATE);
+		});
 	}
 
 	public static void unbindAllArgs(@Nullable MethodNode mth, InsnNode insn) {
@@ -101,11 +105,16 @@ public class InsnRemover {
 
 	public static void unbindResult(@Nullable MethodNode mth, InsnNode insn) {
 		RegisterArg r = insn.getResult();
-		if (r != null && mth != null) {
-			SSAVar ssaVar = r.getSVar();
-			if (ssaVar != null && ssaVar.getAssign() == insn.getResult()) {
-				removeSsaVar(mth, ssaVar);
-			}
+		if (r == null) {
+			return;
+		}
+		r.add(AFlag.REMOVE); // don't unset result arg, can be used to restore variable
+		if (mth == null) {
+			return;
+		}
+		SSAVar ssaVar = r.getSVar();
+		if (ssaVar != null && ssaVar.getAssign() == insn.getResult()) {
+			removeSsaVar(mth, ssaVar);
 		}
 	}
 
@@ -218,6 +227,18 @@ public class InsnRemover {
 	public static void removeAllAndUnbind(MethodNode mth, BlockNode block, List<InsnNode> insns) {
 		unbindInsns(mth, insns);
 		removeAll(block.getInstructions(), insns);
+	}
+
+	public static void removeAllAndUnbind(MethodNode mth, IContainer container, List<InsnNode> insns) {
+		unbindInsns(mth, insns);
+		RegionUtils.visitBlocks(mth, container, b -> removeAll(b.getInstructions(), insns));
+	}
+
+	public static void removeAllAndUnbind(MethodNode mth, List<InsnNode> insns) {
+		unbindInsns(mth, insns);
+		for (BlockNode block : mth.getBasicBlocks()) {
+			removeAll(block.getInstructions(), insns);
+		}
 	}
 
 	public static void removeAllWithoutUnbind(BlockNode block, List<InsnNode> insns) {

@@ -1,19 +1,29 @@
 package jadx.api;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import jadx.api.args.DeobfuscationMapFileMode;
+import jadx.api.args.ResourceNameSource;
 import jadx.api.data.ICodeData;
 import jadx.api.impl.AnnotatedCodeWriter;
 import jadx.api.impl.InMemoryCodeCache;
+import jadx.core.utils.files.FileUtils;
 
 public class JadxArgs {
+	private static final Logger LOG = LoggerFactory.getLogger(JadxArgs.class);
 
 	public static final int DEFAULT_THREADS_COUNT = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
 
@@ -35,14 +45,15 @@ public class JadxArgs {
 	private boolean cfgOutput = false;
 	private boolean rawCFGOutput = false;
 
-	private boolean fallbackMode = false;
 	private boolean showInconsistentCode = false;
 
 	private boolean useImports = true;
 	private boolean debugInfo = true;
 	private boolean insertDebugLines = false;
+	private boolean extractFinally = true;
 	private boolean inlineAnonymousClasses = true;
 	private boolean inlineMethods = true;
+	private boolean allowInlineKotlinLambda = true;
 
 	private boolean skipResources = false;
 	private boolean skipSources = false;
@@ -52,11 +63,18 @@ public class JadxArgs {
 	 */
 	private Predicate<String> classFilter = null;
 
+	/**
+	 * Save dependencies for classes accepted by {@code classFilter}
+	 */
+	private boolean includeDependencies = false;
+
 	private boolean deobfuscationOn = false;
-	private boolean deobfuscationForceSave = false;
 	private boolean useSourceNameAsClassAlias = false;
 	private boolean parseKotlinMetadata = false;
 	private File deobfuscationMapFile = null;
+
+	private DeobfuscationMapFileMode deobfuscationMapFileMode = DeobfuscationMapFileMode.READ;
+	private ResourceNameSource resourceNameSource = ResourceNameSource.AUTO;
 
 	private int deobfuscationMinLength = 0;
 	private int deobfuscationMaxLength = Integer.MAX_VALUE;
@@ -80,7 +98,26 @@ public class JadxArgs {
 
 	private OutputFormatEnum outputFormat = OutputFormatEnum.JAVA;
 
+	private DecompilationMode decompilationMode = DecompilationMode.AUTO;
+
 	private ICodeData codeData;
+
+	private CommentsLevel commentsLevel = CommentsLevel.INFO;
+
+	private boolean useDxInput = false;
+
+	public enum UseKotlinMethodsForVarNames {
+		DISABLE, APPLY, APPLY_AND_HIDE
+	}
+
+	private UseKotlinMethodsForVarNames useKotlinMethodsForVarNames = UseKotlinMethodsForVarNames.APPLY;
+
+	/**
+	 * Don't save files (can be using for performance testing)
+	 */
+	private boolean skipFilesSave = false;
+
+	private Map<String, String> pluginOptions = new HashMap<>();
 
 	public JadxArgs() {
 		// use default options
@@ -90,6 +127,19 @@ public class JadxArgs {
 		setOutDir(rootDir);
 		setOutDirSrc(new File(rootDir, DEFAULT_SRC_DIR));
 		setOutDirRes(new File(rootDir, DEFAULT_RES_DIR));
+	}
+
+	public void close() {
+		try {
+			inputFiles = null;
+			if (codeCache != null) {
+				codeCache.close();
+			}
+		} catch (Exception e) {
+			LOG.error("Failed to close JadxArgs", e);
+		} finally {
+			codeCache = null;
+		}
 	}
 
 	public List<File> getInputFiles() {
@@ -133,7 +183,7 @@ public class JadxArgs {
 	}
 
 	public void setThreadsCount(int threadsCount) {
-		this.threadsCount = threadsCount;
+		this.threadsCount = Math.max(1, threadsCount); // make sure threadsCount >= 1
 	}
 
 	public boolean isCfgOutput() {
@@ -153,11 +203,17 @@ public class JadxArgs {
 	}
 
 	public boolean isFallbackMode() {
-		return fallbackMode;
+		return decompilationMode == DecompilationMode.FALLBACK;
 	}
 
+	/**
+	 * Deprecated: use 'decompilation mode' property
+	 */
+	@Deprecated
 	public void setFallbackMode(boolean fallbackMode) {
-		this.fallbackMode = fallbackMode;
+		if (fallbackMode) {
+			this.decompilationMode = DecompilationMode.FALLBACK;
+		}
 	}
 
 	public boolean isShowInconsistentCode() {
@@ -208,6 +264,22 @@ public class JadxArgs {
 		this.inlineMethods = inlineMethods;
 	}
 
+	public boolean isAllowInlineKotlinLambda() {
+		return allowInlineKotlinLambda;
+	}
+
+	public void setAllowInlineKotlinLambda(boolean allowInlineKotlinLambda) {
+		this.allowInlineKotlinLambda = allowInlineKotlinLambda;
+	}
+
+	public boolean isExtractFinally() {
+		return extractFinally;
+	}
+
+	public void setExtractFinally(boolean extractFinally) {
+		this.extractFinally = extractFinally;
+	}
+
 	public boolean isSkipResources() {
 		return skipResources;
 	}
@@ -222,6 +294,14 @@ public class JadxArgs {
 
 	public void setSkipSources(boolean skipSources) {
 		this.skipSources = skipSources;
+	}
+
+	public void setIncludeDependencies(boolean includeDependencies) {
+		this.includeDependencies = includeDependencies;
+	}
+
+	public boolean isIncludeDependencies() {
+		return includeDependencies;
 	}
 
 	public Predicate<String> getClassFilter() {
@@ -240,12 +320,24 @@ public class JadxArgs {
 		this.deobfuscationOn = deobfuscationOn;
 	}
 
+	@Deprecated
 	public boolean isDeobfuscationForceSave() {
-		return deobfuscationForceSave;
+		return deobfuscationMapFileMode == DeobfuscationMapFileMode.OVERWRITE;
 	}
 
+	@Deprecated
 	public void setDeobfuscationForceSave(boolean deobfuscationForceSave) {
-		this.deobfuscationForceSave = deobfuscationForceSave;
+		if (deobfuscationForceSave) {
+			this.deobfuscationMapFileMode = DeobfuscationMapFileMode.OVERWRITE;
+		}
+	}
+
+	public DeobfuscationMapFileMode getDeobfuscationMapFileMode() {
+		return deobfuscationMapFileMode;
+	}
+
+	public void setDeobfuscationMapFileMode(DeobfuscationMapFileMode deobfuscationMapFileMode) {
+		this.deobfuscationMapFileMode = deobfuscationMapFileMode;
 	}
 
 	public boolean isUseSourceNameAsClassAlias() {
@@ -286,6 +378,14 @@ public class JadxArgs {
 
 	public void setDeobfuscationMapFile(File deobfuscationMapFile) {
 		this.deobfuscationMapFile = deobfuscationMapFile;
+	}
+
+	public ResourceNameSource getResourceNameSource() {
+		return resourceNameSource;
+	}
+
+	public void setResourceNameSource(ResourceNameSource resourceNameSource) {
+		this.resourceNameSource = resourceNameSource;
 	}
 
 	public boolean isEscapeUnicode() {
@@ -380,6 +480,14 @@ public class JadxArgs {
 		this.outputFormat = outputFormat;
 	}
 
+	public DecompilationMode getDecompilationMode() {
+		return decompilationMode;
+	}
+
+	public void setDecompilationMode(DecompilationMode decompilationMode) {
+		this.decompilationMode = decompilationMode;
+	}
+
 	public ICodeCache getCodeCache() {
 		return codeCache;
 	}
@@ -404,6 +512,62 @@ public class JadxArgs {
 		this.codeData = codeData;
 	}
 
+	public CommentsLevel getCommentsLevel() {
+		return commentsLevel;
+	}
+
+	public void setCommentsLevel(CommentsLevel commentsLevel) {
+		this.commentsLevel = commentsLevel;
+	}
+
+	public boolean isUseDxInput() {
+		return useDxInput;
+	}
+
+	public void setUseDxInput(boolean useDxInput) {
+		this.useDxInput = useDxInput;
+	}
+
+	public UseKotlinMethodsForVarNames getUseKotlinMethodsForVarNames() {
+		return useKotlinMethodsForVarNames;
+	}
+
+	public void setUseKotlinMethodsForVarNames(UseKotlinMethodsForVarNames useKotlinMethodsForVarNames) {
+		this.useKotlinMethodsForVarNames = useKotlinMethodsForVarNames;
+	}
+
+	public boolean isSkipFilesSave() {
+		return skipFilesSave;
+	}
+
+	public void setSkipFilesSave(boolean skipFilesSave) {
+		this.skipFilesSave = skipFilesSave;
+	}
+
+	public Map<String, String> getPluginOptions() {
+		return pluginOptions;
+	}
+
+	public void setPluginOptions(Map<String, String> pluginOptions) {
+		this.pluginOptions = pluginOptions;
+	}
+
+	/**
+	 * Hash of all options that can change result code
+	 */
+	public String makeCodeArgsHash() {
+		String argStr = "args:" + decompilationMode + useImports + showInconsistentCode
+				+ inlineAnonymousClasses + inlineMethods
+				+ deobfuscationOn + deobfuscationMinLength + deobfuscationMaxLength
+				+ resourceNameSource
+				+ parseKotlinMetadata + useKotlinMethodsForVarNames
+				+ insertDebugLines + extractFinally
+				+ debugInfo + useSourceNameAsClassAlias + escapeUnicode + replaceConsts
+				+ respectBytecodeAccModifiers + fsCaseSensitive + renameFlags
+				+ commentsLevel + useDxInput + pluginOptions;
+		return FileUtils.md5Sum(argStr.getBytes(StandardCharsets.US_ASCII));
+	}
+
 	@Override
 	public String toString() {
 		return "JadxArgs{" + "inputFiles=" + inputFiles
@@ -411,18 +575,21 @@ public class JadxArgs {
 				+ ", outDirSrc=" + outDirSrc
 				+ ", outDirRes=" + outDirRes
 				+ ", threadsCount=" + threadsCount
-				+ ", cfgOutput=" + cfgOutput
-				+ ", rawCFGOutput=" + rawCFGOutput
-				+ ", fallbackMode=" + fallbackMode
+				+ ", decompilationMode=" + decompilationMode
 				+ ", showInconsistentCode=" + showInconsistentCode
 				+ ", useImports=" + useImports
 				+ ", skipResources=" + skipResources
 				+ ", skipSources=" + skipSources
+				+ ", includeDependencies=" + includeDependencies
 				+ ", deobfuscationOn=" + deobfuscationOn
 				+ ", deobfuscationMapFile=" + deobfuscationMapFile
-				+ ", deobfuscationForceSave=" + deobfuscationForceSave
+				+ ", deobfuscationMapFileMode=" + deobfuscationMapFileMode
+				+ ", resourceNameSource=" + resourceNameSource
 				+ ", useSourceNameAsClassAlias=" + useSourceNameAsClassAlias
 				+ ", parseKotlinMetadata=" + parseKotlinMetadata
+				+ ", useKotlinMethodsForVarNames=" + useKotlinMethodsForVarNames
+				+ ", insertDebugLines=" + insertDebugLines
+				+ ", extractFinally=" + extractFinally
 				+ ", deobfuscationMinLength=" + deobfuscationMinLength
 				+ ", deobfuscationMaxLength=" + deobfuscationMaxLength
 				+ ", escapeUnicode=" + escapeUnicode
@@ -432,8 +599,13 @@ public class JadxArgs {
 				+ ", fsCaseSensitive=" + fsCaseSensitive
 				+ ", renameFlags=" + renameFlags
 				+ ", outputFormat=" + outputFormat
+				+ ", commentsLevel=" + commentsLevel
 				+ ", codeCache=" + codeCache
 				+ ", codeWriter=" + codeWriterProvider.apply(this).getClass().getSimpleName()
+				+ ", useDxInput=" + useDxInput
+				+ ", pluginOptions=" + pluginOptions
+				+ ", cfgOutput=" + cfgOutput
+				+ ", rawCFGOutput=" + rawCFGOutput
 				+ '}';
 	}
 }

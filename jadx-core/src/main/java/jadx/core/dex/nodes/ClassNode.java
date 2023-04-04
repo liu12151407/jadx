@@ -13,22 +13,31 @@ import java.util.stream.Collectors;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import jadx.api.DecompilationMode;
 import jadx.api.ICodeCache;
 import jadx.api.ICodeInfo;
+import jadx.api.ICodeWriter;
+import jadx.api.JadxArgs;
+import jadx.api.JavaClass;
+import jadx.api.impl.SimpleCodeInfo;
 import jadx.api.plugins.input.data.IClassData;
+import jadx.api.plugins.input.data.IFieldData;
+import jadx.api.plugins.input.data.IMethodData;
 import jadx.api.plugins.input.data.annotations.EncodedValue;
-import jadx.api.plugins.input.data.annotations.IAnnotation;
+import jadx.api.plugins.input.data.attributes.JadxAttrType;
+import jadx.api.plugins.input.data.attributes.types.AnnotationDefaultAttr;
+import jadx.api.plugins.input.data.attributes.types.AnnotationDefaultClassAttr;
+import jadx.api.plugins.input.data.attributes.types.InnerClassesAttr;
+import jadx.api.plugins.input.data.attributes.types.InnerClsInfo;
+import jadx.api.plugins.input.data.attributes.types.SourceFileAttr;
+import jadx.api.plugins.input.data.impl.ListConsumer;
 import jadx.core.Consts;
 import jadx.core.ProcessClass;
 import jadx.core.dex.attributes.AFlag;
-import jadx.core.dex.attributes.annotations.AnnotationsList;
-import jadx.core.dex.attributes.fldinit.FieldInitAttr;
-import jadx.core.dex.attributes.fldinit.FieldInitConstAttr;
+import jadx.core.dex.attributes.AType;
+import jadx.core.dex.attributes.nodes.InlinedAttr;
 import jadx.core.dex.attributes.nodes.NotificationAttrNode;
-import jadx.core.dex.attributes.nodes.SourceFileAttr;
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.info.AccessInfo.AFType;
 import jadx.core.dex.info.ClassInfo;
@@ -37,16 +46,14 @@ import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.LiteralArg;
 import jadx.core.dex.nodes.utils.TypeUtils;
+import jadx.core.utils.ListUtils;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
 import static jadx.core.dex.nodes.ProcessState.LOADED;
 import static jadx.core.dex.nodes.ProcessState.NOT_LOADED;
-import static jadx.core.dex.nodes.ProcessState.PROCESS_COMPLETE;
 
 public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeNode, Comparable<ClassNode> {
-	private static final Logger LOG = LoggerFactory.getLogger(ClassNode.class);
-
 	private final RootNode root;
 	private final IClassData clsData;
 
@@ -75,6 +82,10 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 	 */
 	private List<ClassNode> dependencies = Collections.emptyList();
 	/**
+	 * Top level classes needed for code generation stage
+	 */
+	private List<ClassNode> codegenDeps = Collections.emptyList();
+	/**
 	 * Classes which uses this class
 	 */
 	private List<ClassNode> useIn = Collections.emptyList();
@@ -86,6 +97,8 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 	// cache maps
 	private Map<MethodInfo, MethodNode> mthInfoMap = Collections.emptyMap();
 
+	private JavaClass javaNode;
+
 	public ClassNode(RootNode root, IClassData cls) {
 		this.root = root;
 		this.clsInfo = ClassInfo.fromType(root, ArgType.object(cls.getType()));
@@ -95,57 +108,117 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 
 	private void initialLoad(IClassData cls) {
 		try {
-			String superType = cls.getSuperType();
-			if (superType == null) {
-				// only java.lang.Object don't have super class
-				if (!clsInfo.getType().getObject().equals(Consts.CLASS_OBJECT)) {
-					throw new JadxRuntimeException("No super class in " + clsInfo.getType());
-				}
-				this.superClass = null;
-			} else {
-				this.superClass = ArgType.object(superType);
-			}
+			addAttrs(cls.getAttributes());
+			this.accessFlags = new AccessInfo(getAccessFlags(cls), AFType.CLASS);
+			this.superClass = checkSuperType(cls);
 			this.interfaces = Utils.collectionMap(cls.getInterfacesTypes(), ArgType::object);
 
-			methods = new ArrayList<>();
-			fields = new ArrayList<>();
-			cls.visitFieldsAndMethods(
-					fld -> fields.add(FieldNode.build(this, fld)),
-					mth -> methods.add(MethodNode.build(this, mth)));
+			ListConsumer<IFieldData, FieldNode> fieldsConsumer = new ListConsumer<>(fld -> FieldNode.build(this, fld));
+			ListConsumer<IMethodData, MethodNode> methodsConsumer = new ListConsumer<>(mth -> MethodNode.build(this, mth));
+			cls.visitFieldsAndMethods(fieldsConsumer, methodsConsumer);
+			if (this.fields != null && this.methods != null) {
+				// TODO: temporary solution for restore usage info in reloaded methods and fields
+				restoreUsageData(this.fields, this.methods, fieldsConsumer.getResult(), methodsConsumer.getResult());
+			}
+			this.fields = fieldsConsumer.getResult();
+			this.methods = methodsConsumer.getResult();
 
-			AnnotationsList.attach(this, cls.getAnnotations());
-			loadStaticValues(cls, fields);
-			initAccessFlags(cls);
-
-			addSourceFilenameAttr(cls.getSourceFile());
+			initStaticValues(fields);
+			processAttributes(this);
 			buildCache();
+
+			// TODO: implement module attribute parsing
+			if (this.accessFlags.isModuleInfo()) {
+				this.addWarnComment("Modules not supported yet");
+			}
 		} catch (Exception e) {
 			throw new JadxRuntimeException("Error decode class: " + clsInfo, e);
 		}
 	}
 
-	public void updateGenericClsData(ArgType superClass, List<ArgType> interfaces, List<ArgType> generics) {
-		this.superClass = superClass;
-		this.interfaces = interfaces;
-		this.generics = generics;
+	private void restoreUsageData(List<FieldNode> oldFields, List<MethodNode> oldMethods,
+			List<FieldNode> newFields, List<MethodNode> newMethods) {
+		Map<FieldInfo, FieldNode> oldFieldMap = Utils.groupBy(oldFields, FieldNode::getFieldInfo);
+		for (FieldNode newField : newFields) {
+			FieldNode oldField = oldFieldMap.get(newField.getFieldInfo());
+			if (oldField != null) {
+				newField.setUseIn(oldField.getUseIn());
+			}
+		}
+		Map<MethodInfo, MethodNode> oldMethodsMap = Utils.groupBy(oldMethods, MethodNode::getMethodInfo);
+		for (MethodNode newMethod : newMethods) {
+			MethodNode oldMethod = oldMethodsMap.get(newMethod.getMethodInfo());
+			if (oldMethod != null) {
+				newMethod.setUseIn(oldMethod.getUseIn());
+			}
+		}
 	}
 
-	/**
-	 * Restore original access flags from Dalvik annotation if present
-	 */
-	private void initAccessFlags(IClassData cls) {
-		int accFlagsValue;
-		IAnnotation a = getAnnotation(Consts.DALVIK_INNER_CLASS);
-		if (a != null) {
-			accFlagsValue = (Integer) a.getValues().get("accessFlags").getValue();
-		} else {
-			accFlagsValue = cls.getAccessFlags();
+	private ArgType checkSuperType(IClassData cls) {
+		String superType = cls.getSuperType();
+		if (superType == null) {
+			if (clsInfo.getType().getObject().equals(Consts.CLASS_OBJECT)) {
+				// java.lang.Object don't have super class
+				return null;
+			}
+			if (this.accessFlags.isModuleInfo()) {
+				// module-info also don't have super class
+				return null;
+			}
+			throw new JadxRuntimeException("No super class in " + clsInfo.getType());
 		}
-		this.accessFlags = new AccessInfo(accFlagsValue, AFType.CLASS);
+		return ArgType.object(superType);
+	}
+
+	public void updateGenericClsData(List<ArgType> generics, ArgType superClass, List<ArgType> interfaces) {
+		this.generics = generics;
+		this.superClass = superClass;
+		this.interfaces = interfaces;
+	}
+
+	private static void processAttributes(ClassNode cls) {
+		// move AnnotationDefault from cls to methods (dex specific)
+		AnnotationDefaultClassAttr defAttr = cls.get(JadxAttrType.ANNOTATION_DEFAULT_CLASS);
+		if (defAttr != null) {
+			cls.remove(JadxAttrType.ANNOTATION_DEFAULT_CLASS);
+			for (Map.Entry<String, EncodedValue> entry : defAttr.getValues().entrySet()) {
+				MethodNode mth = cls.searchMethodByShortName(entry.getKey());
+				if (mth != null) {
+					mth.addAttr(new AnnotationDefaultAttr(entry.getValue()));
+				} else {
+					cls.addWarnComment("Method from annotation default annotation not found: " + entry.getKey());
+				}
+			}
+		}
+
+		// check source file attribute
+		if (!cls.checkSourceFilenameAttr()) {
+			cls.remove(JadxAttrType.SOURCE_FILE);
+		}
+	}
+
+	private int getAccessFlags(IClassData cls) {
+		InnerClassesAttr innerClassesAttr = get(JadxAttrType.INNER_CLASSES);
+		if (innerClassesAttr != null) {
+			InnerClsInfo innerClsInfo = innerClassesAttr.getMap().get(cls.getType());
+			if (innerClsInfo != null) {
+				return innerClsInfo.getAccessFlags();
+			}
+		}
+		return cls.getAccessFlags();
 	}
 
 	public static ClassNode addSyntheticClass(RootNode root, String name, int accessFlags) {
-		ClassNode cls = new ClassNode(root, name, accessFlags);
+		ClassInfo clsInfo = ClassInfo.fromName(root, name);
+		ClassNode existCls = root.resolveClass(clsInfo);
+		if (existCls != null) {
+			throw new JadxRuntimeException("Class already exist: " + name);
+		}
+		return addSyntheticClass(root, clsInfo, accessFlags);
+	}
+
+	public static ClassNode addSyntheticClass(RootNode root, ClassInfo clsInfo, int accessFlags) {
+		ClassNode cls = new ClassNode(root, clsInfo, accessFlags);
 		cls.add(AFlag.SYNTHETIC);
 		cls.setState(ProcessState.PROCESS_COMPLETE);
 		root.addClassNode(cls);
@@ -153,10 +226,10 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 	}
 
 	// Create empty class
-	private ClassNode(RootNode root, String name, int accessFlags) {
+	private ClassNode(RootNode root, ClassInfo clsInfo, int accessFlags) {
 		this.root = root;
 		this.clsData = null;
-		this.clsInfo = ClassInfo.fromName(root, name);
+		this.clsInfo = clsInfo;
 		this.interfaces = new ArrayList<>();
 		this.methods = new ArrayList<>();
 		this.fields = new ArrayList<>();
@@ -164,26 +237,18 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 		this.parentClass = this;
 	}
 
-	private void loadStaticValues(IClassData cls, List<FieldNode> fields) {
+	private void initStaticValues(List<FieldNode> fields) {
 		if (fields.isEmpty()) {
 			return;
 		}
 		List<FieldNode> staticFields = fields.stream().filter(FieldNode::isStatic).collect(Collectors.toList());
 		for (FieldNode f : staticFields) {
-			if (f.getAccessFlags().isFinal()) {
+			if (f.getAccessFlags().isFinal() && f.get(JadxAttrType.CONSTANT_VALUE) == null) {
 				// incorrect initialization will be removed if assign found in constructor
-				f.addAttr(FieldInitConstAttr.NULL_VALUE);
+				f.addAttr(EncodedValue.NULL);
 			}
 		}
 		try {
-			List<EncodedValue> values = cls.getStaticFieldInitValues();
-			int count = values.size();
-			if (count == 0 || count > staticFields.size()) {
-				return;
-			}
-			for (int i = 0; i < count; i++) {
-				staticFields.get(i).addAttr(FieldInitAttr.constValue(values.get(i)));
-			}
 			// process const fields
 			root().getConstValues().processConstFields(this, staticFields);
 		} catch (Exception e) {
@@ -191,39 +256,75 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 		}
 	}
 
-	private void addSourceFilenameAttr(String fileName) {
-		if (fileName == null) {
-			return;
+	private boolean checkSourceFilenameAttr() {
+		SourceFileAttr sourceFileAttr = get(JadxAttrType.SOURCE_FILE);
+		if (sourceFileAttr == null) {
+			return true;
 		}
+		String fileName = sourceFileAttr.getFileName();
 		if (fileName.endsWith(".java")) {
 			fileName = fileName.substring(0, fileName.length() - 5);
 		}
 		if (fileName.isEmpty() || fileName.equals("SourceFile")) {
-			return;
+			return false;
 		}
 		if (clsInfo != null) {
 			String name = clsInfo.getShortName();
 			if (fileName.equals(name)) {
-				return;
+				return false;
+			}
+			ClassInfo parentCls = clsInfo.getParentClass();
+			while (parentCls != null) {
+				String parentName = parentCls.getShortName();
+				if (parentName.equals(fileName) || parentName.startsWith(fileName + '$')) {
+					return false;
+				}
+				parentCls = parentCls.getParentClass();
 			}
 			if (fileName.contains("$") && fileName.endsWith('$' + name)) {
-				return;
+				return false;
+			}
+			if (name.contains("$") && name.startsWith(fileName)) {
+				return false;
 			}
 		}
-		this.addAttr(new SourceFileAttr(fileName));
+		return true;
+	}
+
+	public boolean checkProcessed() {
+		return getTopParentClass().getState().isProcessComplete();
 	}
 
 	public void ensureProcessed() {
-		ClassNode topClass = getTopParentClass();
-		ProcessState state = topClass.getState();
-		if (state != PROCESS_COMPLETE) {
+		if (!checkProcessed()) {
+			ClassNode topParentClass = getTopParentClass();
 			throw new JadxRuntimeException("Expected class to be processed at this point,"
-					+ " class: " + topClass + ", state: " + state);
+					+ " class: " + topParentClass + ", state: " + topParentClass.getState());
 		}
 	}
 
 	public ICodeInfo decompile() {
 		return decompile(true);
+	}
+
+	/**
+	 * WARNING: Slow operation! Use with caution!
+	 */
+	public ICodeInfo decompileWithMode(DecompilationMode mode) {
+		DecompilationMode baseMode = root.getArgs().getDecompilationMode();
+		if (mode == baseMode) {
+			return decompile(true);
+		}
+		JadxArgs args = root.getArgs();
+		try {
+			unload();
+			args.setDecompilationMode(mode);
+			ProcessClass process = new ProcessClass(args);
+			process.initPasses(root);
+			return process.generateCode(this);
+		} finally {
+			args.setDecompilationMode(baseMode);
+		}
 	}
 
 	public ICodeInfo getCode() {
@@ -233,6 +334,15 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 	public ICodeInfo reloadCode() {
 		add(AFlag.CLASS_DEEP_RELOAD);
 		return decompile(false);
+	}
+
+	public void unloadCode() {
+		if (state == NOT_LOADED) {
+			return;
+		}
+		add(AFlag.CLASS_UNLOADED);
+		unloadFromCache();
+		deepUnload();
 	}
 
 	public void deepUnload() {
@@ -248,18 +358,47 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 		innerClasses.forEach(ClassNode::deepUnload);
 	}
 
-	private synchronized ICodeInfo decompile(boolean searchInCache) {
+	private void unloadFromCache() {
+		if (isInner()) {
+			return;
+		}
 		ICodeCache codeCache = root().getCodeCache();
-		ClassNode topParentClass = getTopParentClass();
-		String clsRawName = topParentClass.getRawName();
+		codeCache.remove(getRawName());
+	}
+
+	private synchronized ICodeInfo decompile(boolean searchInCache) {
+		if (isInner()) {
+			return ICodeInfo.EMPTY;
+		}
+		ICodeCache codeCache = root().getCodeCache();
+		String clsRawName = getRawName();
 		if (searchInCache) {
 			ICodeInfo code = codeCache.get(clsRawName);
-			if (code != null && code != ICodeInfo.EMPTY) {
+			if (code != ICodeInfo.EMPTY) {
 				return code;
 			}
 		}
-		ICodeInfo codeInfo = ProcessClass.generateCode(topParentClass);
-		codeCache.add(clsRawName, codeInfo);
+		ICodeInfo codeInfo;
+		try {
+			codeInfo = root.getProcessClasses().generateCode(this);
+		} catch (Throwable e) {
+			addError("Code generation failed", e);
+			codeInfo = new SimpleCodeInfo(Utils.getStackTrace(e));
+		}
+		if (codeInfo != ICodeInfo.EMPTY) {
+			codeCache.add(clsRawName, codeInfo);
+		}
+		return codeInfo;
+	}
+
+	@Nullable
+	public ICodeInfo getCodeFromCache() {
+		ICodeCache codeCache = root().getCodeCache();
+		String clsRawName = getRawName();
+		ICodeInfo codeInfo = codeCache.get(clsRawName);
+		if (codeInfo == ICodeInfo.EMPTY) {
+			return null;
+		}
 		return codeInfo;
 	}
 
@@ -329,6 +468,9 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 	}
 
 	public void addField(FieldNode fld) {
+		if (fields == null || fields.isEmpty()) {
+			fields = new ArrayList<>(1);
+		}
 		fields.add(fld);
 	}
 
@@ -411,15 +553,18 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 	}
 
 	public ClassNode getParentClass() {
-		if (parentClass == null) {
-			if (clsInfo.isInner()) {
-				ClassNode parent = root.resolveClass(clsInfo.getParentClass());
-				parentClass = parent == null ? this : parent;
-			} else {
-				parentClass = this;
+		return parentClass;
+	}
+
+	public void updateParentClass() {
+		if (clsInfo.isInner()) {
+			ClassNode parent = root.resolveClass(clsInfo.getParentClass());
+			if (parent != null) {
+				parentClass = parent;
+				return;
 			}
 		}
-		return parentClass;
+		parentClass = this;
 	}
 
 	public ClassNode getTopParentClass() {
@@ -465,10 +610,15 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 		return innerClasses;
 	}
 
+	public List<ClassNode> getInlinedClasses() {
+		return inlinedClasses;
+	}
+
 	/**
 	 * Get all inner and inlined classes recursively
 	 *
-	 * @param resultClassesSet all identified inner and inlined classes are added to this set
+	 * @param resultClassesSet
+	 *                         all identified inner and inlined classes are added to this set
 	 */
 	public void getInnerAndInlinedClassesRecursive(Set<ClassNode> resultClassesSet) {
 		for (ClassNode innerCls : innerClasses) {
@@ -495,6 +645,7 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 		if (inlinedClasses.isEmpty()) {
 			inlinedClasses = new ArrayList<>(5);
 		}
+		cls.addAttr(new InlinedAttr(this));
 		inlinedClasses.add(cls);
 	}
 
@@ -505,11 +656,19 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 	}
 
 	public boolean isAnonymous() {
-		return contains(AFlag.ANONYMOUS_CLASS);
+		return contains(AType.ANONYMOUS_CLASS);
+	}
+
+	public boolean isSynthetic() {
+		return contains(AFlag.SYNTHETIC);
 	}
 
 	public boolean isInner() {
-		return parentClass != null;
+		return parentClass != this;
+	}
+
+	public boolean isTopClass() {
+		return parentClass == this;
 	}
 
 	@Nullable
@@ -570,30 +729,30 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 		return clsInfo.getAliasPkg();
 	}
 
-	public String getSmali() {
+	public String getDisassembledCode() {
 		if (smali == null) {
 			StringBuilder sb = new StringBuilder();
-			getSmali(sb);
-			sb.append(System.lineSeparator());
+			getDisassembledCode(sb);
+			sb.append(ICodeWriter.NL);
 			Set<ClassNode> allInlinedClasses = new LinkedHashSet<>();
 			getInnerAndInlinedClassesRecursive(allInlinedClasses);
 			for (ClassNode innerClass : allInlinedClasses) {
-				innerClass.getSmali(sb);
-				sb.append(System.lineSeparator());
+				innerClass.getDisassembledCode(sb);
+				sb.append(ICodeWriter.NL);
 			}
 			smali = sb.toString();
 		}
 		return smali;
 	}
 
-	protected void getSmali(StringBuilder sb) {
-		if (this.clsData == null) {
+	protected void getDisassembledCode(StringBuilder sb) {
+		if (clsData == null) {
 			sb.append(String.format("###### Class %s is created by jadx", getFullName()));
 			return;
 		}
 		sb.append(String.format("###### Class %s (%s)", getFullName(), getRawName()));
-		sb.append(System.lineSeparator());
-		sb.append(this.clsData.getDisassembledCode());
+		sb.append(ICodeWriter.NL);
+		sb.append(clsData.getDisassembledCode());
 	}
 
 	public IClassData getClsData() {
@@ -632,6 +791,28 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 		this.dependencies = dependencies;
 	}
 
+	public void removeDependency(ClassNode dep) {
+		this.dependencies = ListUtils.safeRemoveAndTrim(this.dependencies, dep);
+	}
+
+	public List<ClassNode> getCodegenDeps() {
+		return codegenDeps;
+	}
+
+	public void setCodegenDeps(List<ClassNode> codegenDeps) {
+		this.codegenDeps = codegenDeps;
+	}
+
+	public void addCodegenDep(ClassNode dep) {
+		if (!codegenDeps.contains(dep)) {
+			this.codegenDeps = ListUtils.safeAdd(this.codegenDeps, dep);
+		}
+	}
+
+	public int getTotalDepsCount() {
+		return dependencies.size() + codegenDeps.size();
+	}
+
 	public List<ClassNode> getUseIn() {
 		return useIn;
 	}
@@ -651,6 +832,19 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 	@Override
 	public String getInputFileName() {
 		return clsData == null ? "synthetic" : clsData.getInputFileName();
+	}
+
+	public JavaClass getJavaNode() {
+		return javaNode;
+	}
+
+	public void setJavaNode(JavaClass javaNode) {
+		this.javaNode = javaNode;
+	}
+
+	@Override
+	public AnnType getAnnType() {
+		return AnnType.CLASS;
 	}
 
 	@Override

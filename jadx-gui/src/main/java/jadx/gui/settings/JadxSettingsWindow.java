@@ -1,19 +1,50 @@
 package jadx.gui.settings;
 
-import java.awt.*;
+import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.Container;
+import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.GraphicsEnvironment;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
+import java.awt.Toolkit;
 import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.ItemEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
-import javax.swing.*;
-import javax.swing.event.ChangeEvent;
-import javax.swing.event.ChangeListener;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
+import javax.swing.AbstractAction;
+import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.InputMap;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JComponent;
+import javax.swing.JDialog;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JSpinner;
+import javax.swing.JTextField;
+import javax.swing.KeyStroke;
+import javax.swing.ScrollPaneConstants;
+import javax.swing.SpinnerNumberModel;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
+import javax.swing.WindowConstants;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,13 +54,25 @@ import com.google.gson.JsonObject;
 
 import say.swing.JFontChooser;
 
+import jadx.api.CommentsLevel;
+import jadx.api.DecompilationMode;
 import jadx.api.JadxArgs;
+import jadx.api.JadxArgs.UseKotlinMethodsForVarNames;
+import jadx.api.args.DeobfuscationMapFileMode;
+import jadx.api.args.ResourceNameSource;
+import jadx.api.plugins.JadxPlugin;
+import jadx.api.plugins.JadxPluginInfo;
+import jadx.api.plugins.options.JadxPluginOptions;
+import jadx.api.plugins.options.OptionDescription;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.codearea.EditorTheme;
 import jadx.gui.utils.FontUtils;
+import jadx.gui.utils.LafManager;
 import jadx.gui.utils.LangLocale;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.UiUtils;
+import jadx.gui.utils.codecache.CodeCacheMode;
+import jadx.gui.utils.ui.DocumentUpdateListener;
 
 public class JadxSettingsWindow extends JDialog {
 	private static final long serialVersionUID = -1804570470377354148L;
@@ -75,11 +118,14 @@ public class JadxSettingsWindow extends JDialog {
 		leftPanel.add(makeDeobfuscationGroup());
 		leftPanel.add(makeRenameGroup());
 		leftPanel.add(makeProjectGroup());
-		leftPanel.add(makeEditorGroup());
+		leftPanel.add(makeAppearanceGroup());
 		leftPanel.add(makeOtherGroup());
 		leftPanel.add(makeSearchResGroup());
+		leftPanel.add(Box.createVerticalGlue());
 
 		rightPanel.add(makeDecompilationGroup());
+		rightPanel.add(makePluginOptionsGroup());
+		rightPanel.add(Box.createVerticalGlue());
 
 		JButton saveBtn = new JButton(NLS.str("preferences.save"));
 		saveBtn.addActionListener(event -> {
@@ -88,7 +134,7 @@ public class JadxSettingsWindow extends JDialog {
 
 			SwingUtilities.invokeLater(() -> {
 				if (needReload) {
-					mainWindow.reOpenFile();
+					mainWindow.reopen();
 				}
 				if (!settings.getLangLocale().equals(prevLang)) {
 					JOptionPane.showMessageDialog(
@@ -194,13 +240,6 @@ public class JadxSettingsWindow extends JDialog {
 			needReload();
 		});
 
-		JCheckBox deobfForce = new JCheckBox();
-		deobfForce.setSelected(settings.isDeobfuscationForceSave());
-		deobfForce.addItemListener(e -> {
-			settings.setDeobfuscationForceSave(e.getStateChange() == ItemEvent.SELECTED);
-			needReload();
-		});
-
 		SpinnerNumberModel minLenModel = new SpinnerNumberModel(settings.getDeobfuscationMinLength(), 0, Integer.MAX_VALUE, 1);
 		JSpinner minLenSpinner = new JSpinner(minLenModel);
 		minLenSpinner.addChangeListener(e -> {
@@ -229,17 +268,35 @@ public class JadxSettingsWindow extends JDialog {
 			needReload();
 		});
 
+		JComboBox<ResourceNameSource> resNamesSource = new JComboBox<>(ResourceNameSource.values());
+		resNamesSource.setSelectedItem(settings.getResourceNameSource());
+		resNamesSource.addActionListener(e -> {
+			settings.setResourceNameSource((ResourceNameSource) resNamesSource.getSelectedItem());
+			needReload();
+		});
+
+		JComboBox<DeobfuscationMapFileMode> deobfMapFileModeCB = new JComboBox<>(DeobfuscationMapFileMode.values());
+		deobfMapFileModeCB.setSelectedItem(settings.getDeobfuscationMapFileMode());
+		deobfMapFileModeCB.addActionListener(e -> {
+			DeobfuscationMapFileMode newValue = (DeobfuscationMapFileMode) deobfMapFileModeCB.getSelectedItem();
+			if (newValue != settings.getDeobfuscationMapFileMode()) {
+				settings.setDeobfuscationMapFileMode(newValue);
+				needReload();
+			}
+		});
+
 		SettingsGroup deobfGroup = new SettingsGroup(NLS.str("preferences.deobfuscation"));
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_on"), deobfOn);
-		deobfGroup.addRow(NLS.str("preferences.deobfuscation_force"), deobfForce);
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_min_len"), minLenSpinner);
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_max_len"), maxLenSpinner);
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_source_alias"), deobfSourceAlias);
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_kotlin_metadata"), deobfKotlinMetadata);
+		deobfGroup.addRow(NLS.str("preferences.deobfuscation_res_name_source"), resNamesSource);
+		deobfGroup.addRow(NLS.str("preferences.deobfuscation_map_file_mode"), deobfMapFileModeCB);
 		deobfGroup.end();
 
 		Collection<JComponent> connectedComponents =
-				Arrays.asList(deobfForce, minLenSpinner, maxLenSpinner, deobfSourceAlias, deobfKotlinMetadata);
+				Arrays.asList(minLenSpinner, maxLenSpinner, deobfSourceAlias, deobfKotlinMetadata);
 		deobfOn.addItemListener(e -> enableComponentList(connectedComponents, e.getStateChange() == ItemEvent.SELECTED));
 		enableComponentList(connectedComponents, settings.isDeobfuscationOn());
 		return deobfGroup;
@@ -289,7 +346,7 @@ public class JadxSettingsWindow extends JDialog {
 		return group;
 	}
 
-	private SettingsGroup makeEditorGroup() {
+	private SettingsGroup makeAppearanceGroup() {
 		JButton fontBtn = new JButton(NLS.str("preferences.select_font"));
 		JButton smaliFontBtn = new JButton(NLS.str("preferences.select_smali_font"));
 
@@ -308,9 +365,17 @@ public class JadxSettingsWindow extends JDialog {
 			mainWindow.loadSettings();
 		});
 
-		SettingsGroup group = new SettingsGroup(NLS.str("preferences.editor"));
-		JLabel fontLabel = group.addRow(getFontLabelStr(), fontBtn);
+		JComboBox<String> lafCbx = new JComboBox<>(LafManager.getThemes());
+		lafCbx.setSelectedItem(settings.getLafTheme());
+		lafCbx.addActionListener(e -> {
+			settings.setLafTheme((String) lafCbx.getSelectedItem());
+			mainWindow.loadSettings();
+		});
+
+		SettingsGroup group = new SettingsGroup(NLS.str("preferences.appearance"));
+		group.addRow(NLS.str("preferences.laf_theme"), lafCbx);
 		group.addRow(NLS.str("preferences.theme"), themesCbx);
+		JLabel fontLabel = group.addRow(getFontLabelStr(), fontBtn);
 		JLabel smaliFontLabel = group.addRow(getSmaliFontLabelStr(), smaliFontBtn);
 
 		fontBtn.addMouseListener(new MouseAdapter() {
@@ -360,12 +425,27 @@ public class JadxSettingsWindow extends JDialog {
 	}
 
 	private SettingsGroup makeDecompilationGroup() {
-		JCheckBox fallback = new JCheckBox();
-		fallback.setSelected(settings.isFallbackMode());
-		fallback.addItemListener(e -> {
-			settings.setFallbackMode(e.getStateChange() == ItemEvent.SELECTED);
+		JCheckBox useDx = new JCheckBox();
+		useDx.setSelected(settings.isUseDx());
+		useDx.addItemListener(e -> {
+			settings.setUseDx(e.getStateChange() == ItemEvent.SELECTED);
 			needReload();
 		});
+
+		JComboBox<DecompilationMode> decompilationModeComboBox = new JComboBox<>(DecompilationMode.values());
+		decompilationModeComboBox.setSelectedItem(settings.getDecompilationMode());
+		decompilationModeComboBox.addActionListener(e -> {
+			settings.setDecompilationMode((DecompilationMode) decompilationModeComboBox.getSelectedItem());
+			needReload();
+		});
+
+		JComboBox<CodeCacheMode> codeCacheModeComboBox = new JComboBox<>(CodeCacheMode.values());
+		codeCacheModeComboBox.setSelectedItem(settings.getCodeCacheMode());
+		codeCacheModeComboBox.addActionListener(e -> {
+			settings.setCodeCacheMode((CodeCacheMode) codeCacheModeComboBox.getSelectedItem());
+			needReload();
+		});
+		String codeCacheModeToolTip = CodeCacheMode.buildToolTip();
 
 		JCheckBox showInconsistentCode = new JCheckBox();
 		showInconsistentCode.setSelected(settings.isShowInconsistentCode());
@@ -381,8 +461,10 @@ public class JadxSettingsWindow extends JDialog {
 			needReload();
 		});
 
-		SpinnerNumberModel spinnerModel = new SpinnerNumberModel(
-				settings.getThreadsCount(), 1, Runtime.getRuntime().availableProcessors() * 2, 1);
+		// fix for #1331
+		int threadsCountValue = settings.getThreadsCount();
+		int threadsCountMax = Math.max(2, Math.max(threadsCountValue, Runtime.getRuntime().availableProcessors() * 2));
+		SpinnerNumberModel spinnerModel = new SpinnerNumberModel(threadsCountValue, 1, threadsCountMax, 1);
 		JSpinner threadsCount = new JSpinner(spinnerModel);
 		threadsCount.addChangeListener(e -> {
 			settings.setThreadsCount((Integer) threadsCount.getValue());
@@ -435,6 +517,13 @@ public class JadxSettingsWindow extends JDialog {
 			needReload();
 		});
 
+		JCheckBox useDebugInfo = new JCheckBox();
+		useDebugInfo.setSelected(settings.isDebugInfo());
+		useDebugInfo.addItemListener(e -> {
+			settings.setDebugInfo(e.getStateChange() == ItemEvent.SELECTED);
+			needReload();
+		});
+
 		JCheckBox inlineAnonymous = new JCheckBox();
 		inlineAnonymous.setSelected(settings.isInlineAnonymousClasses());
 		inlineAnonymous.addItemListener(e -> {
@@ -449,6 +538,20 @@ public class JadxSettingsWindow extends JDialog {
 			needReload();
 		});
 
+		JCheckBox inlineKotlinLambdas = new JCheckBox();
+		inlineKotlinLambdas.setSelected(settings.isAllowInlineKotlinLambda());
+		inlineKotlinLambdas.addItemListener(e -> {
+			settings.setAllowInlineKotlinLambda(e.getStateChange() == ItemEvent.SELECTED);
+			needReload();
+		});
+
+		JCheckBox extractFinally = new JCheckBox();
+		extractFinally.setSelected(settings.isExtractFinally());
+		extractFinally.addItemListener(e -> {
+			settings.setExtractFinally(e.getStateChange() == ItemEvent.SELECTED);
+			needReload();
+		});
+
 		JCheckBox fsCaseSensitive = new JCheckBox();
 		fsCaseSensitive.setSelected(settings.isFsCaseSensitive());
 		fsCaseSensitive.addItemListener(e -> {
@@ -456,22 +559,75 @@ public class JadxSettingsWindow extends JDialog {
 			needReload();
 		});
 
+		JComboBox<UseKotlinMethodsForVarNames> kotlinRenameVars = new JComboBox<>(UseKotlinMethodsForVarNames.values());
+		kotlinRenameVars.setSelectedItem(settings.getUseKotlinMethodsForVarNames());
+		kotlinRenameVars.addActionListener(e -> {
+			settings.setUseKotlinMethodsForVarNames((UseKotlinMethodsForVarNames) kotlinRenameVars.getSelectedItem());
+			needReload();
+		});
+
+		JComboBox<CommentsLevel> commentsLevel = new JComboBox<>(CommentsLevel.values());
+		commentsLevel.setSelectedItem(settings.getCommentsLevel());
+		commentsLevel.addActionListener(e -> {
+			settings.setCommentsLevel((CommentsLevel) commentsLevel.getSelectedItem());
+			needReload();
+		});
+
 		SettingsGroup other = new SettingsGroup(NLS.str("preferences.decompile"));
 		other.addRow(NLS.str("preferences.threads"), threadsCount);
-		other.addRow(NLS.str("preferences.excludedPackages"), NLS.str("preferences.excludedPackages.tooltip"),
-				editExcludedPackages);
+		other.addRow(NLS.str("preferences.excludedPackages"),
+				NLS.str("preferences.excludedPackages.tooltip"), editExcludedPackages);
 		other.addRow(NLS.str("preferences.start_jobs"), autoStartJobs);
+		other.addRow(NLS.str("preferences.decompilationMode"), decompilationModeComboBox);
+		other.addRow(NLS.str("preferences.codeCacheMode"), codeCacheModeToolTip, codeCacheModeComboBox);
 		other.addRow(NLS.str("preferences.showInconsistentCode"), showInconsistentCode);
 		other.addRow(NLS.str("preferences.escapeUnicode"), escapeUnicode);
 		other.addRow(NLS.str("preferences.replaceConsts"), replaceConsts);
 		other.addRow(NLS.str("preferences.respectBytecodeAccessModifiers"), respectBytecodeAccessModifiers);
 		other.addRow(NLS.str("preferences.useImports"), useImports);
+		other.addRow(NLS.str("preferences.useDebugInfo"), useDebugInfo);
 		other.addRow(NLS.str("preferences.inlineAnonymous"), inlineAnonymous);
 		other.addRow(NLS.str("preferences.inlineMethods"), inlineMethods);
+		other.addRow(NLS.str("preferences.inlineKotlinLambdas"), inlineKotlinLambdas);
+		other.addRow(NLS.str("preferences.extractFinally"), extractFinally);
 		other.addRow(NLS.str("preferences.fsCaseSensitive"), fsCaseSensitive);
-		other.addRow(NLS.str("preferences.fallback"), fallback);
+		other.addRow(NLS.str("preferences.useDx"), useDx);
 		other.addRow(NLS.str("preferences.skipResourcesDecode"), resourceDecode);
+		other.addRow(NLS.str("preferences.useKotlinMethodsForVarNames"), kotlinRenameVars);
+		other.addRow(NLS.str("preferences.commentsLevel"), commentsLevel);
 		return other;
+	}
+
+	private SettingsGroup makePluginOptionsGroup() {
+		SettingsGroup pluginsGroup = new SettingsGroup(NLS.str("preferences.plugins"));
+		for (JadxPlugin plugin : mainWindow.getWrapper().getAllPlugins()) {
+			if (!(plugin instanceof JadxPluginOptions)) {
+				continue;
+			}
+			JadxPluginInfo pluginInfo = plugin.getPluginInfo();
+			JadxPluginOptions optPlugin = (JadxPluginOptions) plugin;
+			for (OptionDescription opt : optPlugin.getOptionsDescriptions()) {
+				String title = "[" + pluginInfo.getPluginId() + "]  " + opt.description();
+				if (opt.values().isEmpty()) {
+					JTextField textField = new JTextField();
+					textField.getDocument().addDocumentListener(new DocumentUpdateListener(event -> {
+						settings.getPluginOptions().put(opt.name(), textField.getText());
+						needReload();
+					}));
+					pluginsGroup.addRow(title, textField);
+				} else {
+					String curValue = settings.getPluginOptions().get(opt.name());
+					JComboBox<String> combo = new JComboBox<>(opt.values().toArray(new String[0]));
+					combo.setSelectedItem(curValue != null ? curValue : opt.defaultValue());
+					combo.addActionListener(e -> {
+						settings.getPluginOptions().put(opt.name(), ((String) combo.getSelectedItem()));
+						needReload();
+					});
+					pluginsGroup.addRow(title, combo);
+				}
+			}
+		}
+		return pluginsGroup;
 	}
 
 	private SettingsGroup makeOtherGroup() {
@@ -483,6 +639,21 @@ public class JadxSettingsWindow extends JDialog {
 			}
 		}
 		languageCbx.addActionListener(e -> settings.setLangLocale((LangLocale) languageCbx.getSelectedItem()));
+
+		JComboBox<LineNumbersMode> lineNumbersMode = new JComboBox<>(LineNumbersMode.values());
+		lineNumbersMode.setSelectedItem(settings.getLineNumbersMode());
+		lineNumbersMode.addActionListener(e -> {
+			settings.setLineNumbersMode((LineNumbersMode) lineNumbersMode.getSelectedItem());
+			mainWindow.loadSettings();
+		});
+
+		JCheckBox jumpOnDoubleClick = new JCheckBox();
+		jumpOnDoubleClick.setSelected(settings.isJumpOnDoubleClick());
+		jumpOnDoubleClick.addItemListener(e -> settings.setJumpOnDoubleClick(e.getStateChange() == ItemEvent.SELECTED));
+
+		JCheckBox useAltFileDialog = new JCheckBox();
+		useAltFileDialog.setSelected(settings.isUseAlternativeFileDialog());
+		useAltFileDialog.addItemListener(e -> settings.setUseAlternativeFileDialog(e.getStateChange() == ItemEvent.SELECTED));
 
 		JCheckBox update = new JCheckBox();
 		update.setSelected(settings.isCheckForUpdates());
@@ -504,6 +675,9 @@ public class JadxSettingsWindow extends JDialog {
 
 		SettingsGroup group = new SettingsGroup(NLS.str("preferences.other"));
 		group.addRow(NLS.str("preferences.language"), languageCbx);
+		group.addRow(NLS.str("preferences.lineNumbersMode"), lineNumbersMode);
+		group.addRow(NLS.str("preferences.jumpOnDoubleClick"), jumpOnDoubleClick);
+		group.addRow(NLS.str("preferences.useAlternativeFileDialog"), useAltFileDialog);
 		group.addRow(NLS.str("preferences.check_for_updates"), update);
 		group.addRow(NLS.str("preferences.cfg"), cfg);
 		group.addRow(NLS.str("preferences.raw_cfg"), rawCfg);
@@ -511,48 +685,26 @@ public class JadxSettingsWindow extends JDialog {
 	}
 
 	private SettingsGroup makeSearchResGroup() {
-		SettingsGroup group = new SettingsGroup(NLS.str("preferences.search_res_title"));
-		int prevSize = settings.getSrhResourceSkipSize();
-		String prevExts = settings.getSrhResourceFileExt();
-		SpinnerNumberModel sizeLimitModel = new SpinnerNumberModel(prevSize,
-				0, Integer.MAX_VALUE, 1);
-		JSpinner spinner = new JSpinner(sizeLimitModel);
+		JSpinner resultsPerPage = new JSpinner(
+				new SpinnerNumberModel(settings.getSearchResultsPerPage(), 0, Integer.MAX_VALUE, 1));
+		resultsPerPage.addChangeListener(ev -> settings.setSearchResultsPerPage((Integer) resultsPerPage.getValue()));
+
+		JSpinner sizeLimit = new JSpinner(
+				new SpinnerNumberModel(settings.getSrhResourceSkipSize(), 0, Integer.MAX_VALUE, 1));
+		sizeLimit.addChangeListener(ev -> settings.setSrhResourceSkipSize((Integer) sizeLimit.getValue()));
+
 		JTextField fileExtField = new JTextField();
-		group.addRow(NLS.str("preferences.res_skip_file"), spinner);
-		group.addRow(NLS.str("preferences.res_file_ext"), fileExtField);
+		fileExtField.getDocument().addDocumentListener(new DocumentUpdateListener((ev) -> {
+			String ext = fileExtField.getText();
+			settings.setSrhResourceFileExt(ext);
+		}));
+		fileExtField.setText(settings.getSrhResourceFileExt());
 
-		spinner.addChangeListener(new ChangeListener() {
-			@Override
-			public void stateChanged(ChangeEvent e) {
-				int size = (Integer) spinner.getValue();
-				settings.setSrhResourceSkipSize(size);
-			}
-		});
-
-		fileExtField.getDocument().addDocumentListener(new DocumentListener() {
-			private void update() {
-				String ext = fileExtField.getText();
-				settings.setSrhResourceFileExt(ext);
-			}
-
-			@Override
-			public void insertUpdate(DocumentEvent e) {
-				update();
-			}
-
-			@Override
-			public void removeUpdate(DocumentEvent e) {
-				update();
-			}
-
-			@Override
-			public void changedUpdate(DocumentEvent e) {
-				update();
-			}
-		});
-		fileExtField.setText(prevExts);
-
-		return group;
+		SettingsGroup searchGroup = new SettingsGroup(NLS.str("preferences.search_group_title"));
+		searchGroup.addRow(NLS.str("preferences.search_results_per_page"), resultsPerPage);
+		searchGroup.addRow(NLS.str("preferences.res_skip_file"), sizeLimit);
+		searchGroup.addRow(NLS.str("preferences.res_file_ext"), fileExtField);
+		return searchGroup;
 	}
 
 	private void needReload() {

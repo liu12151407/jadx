@@ -1,6 +1,7 @@
 package jadx.gui.utils;
 
-import java.awt.*;
+import java.awt.Font;
+import java.awt.GraphicsEnvironment;
 import java.io.InputStream;
 
 import javax.swing.text.StyleContext;
@@ -41,6 +42,9 @@ public class FontUtils {
 	}
 
 	public static String convertToStr(Font font) {
+		if (font.getSize() < 1) {
+			throw new JadxRuntimeException("Bad font size: " + font.getSize());
+		}
 		return font.getFontName()
 				+ '/' + convertFontStyleToString(font.getStyle())
 				+ '/' + font.getSize();

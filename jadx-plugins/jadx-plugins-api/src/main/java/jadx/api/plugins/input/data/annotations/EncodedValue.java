@@ -2,7 +2,12 @@ package jadx.api.plugins.input.data.annotations;
 
 import java.util.Objects;
 
-public class EncodedValue {
+import jadx.api.plugins.input.data.attributes.IJadxAttrType;
+import jadx.api.plugins.input.data.attributes.IJadxAttribute;
+import jadx.api.plugins.input.data.attributes.JadxAttrType;
+import jadx.api.plugins.input.data.attributes.PinnedAttribute;
+
+public class EncodedValue extends PinnedAttribute {
 	public static final EncodedValue NULL = new EncodedValue(EncodedType.ENCODED_NULL, null);
 
 	private final EncodedType type;
@@ -34,6 +39,11 @@ public class EncodedValue {
 	}
 
 	@Override
+	public IJadxAttrType<? extends IJadxAttribute> getAttrType() {
+		return JadxAttrType.CONSTANT_VALUE;
+	}
+
+	@Override
 	public int hashCode() {
 		return Objects.hash(getType(), getValue());
 	}
@@ -43,12 +53,12 @@ public class EncodedValue {
 		switch (type) {
 			case ENCODED_NULL:
 				return "null";
-			case ENCODED_STRING:
-				return (String) value;
 			case ENCODED_ARRAY:
 				return "[" + value + "]";
+			case ENCODED_STRING:
+				return "{STRING: \"" + value + "\"}";
 			default:
-				return "{" + type + ": " + value + '}';
+				return "{" + type.toString().substring(8) + ": " + value + '}';
 		}
 	}
 }

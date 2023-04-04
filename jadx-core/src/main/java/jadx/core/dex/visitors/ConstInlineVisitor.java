@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import jadx.core.dex.attributes.AFlag;
-import jadx.core.dex.attributes.AType;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.instructions.BaseInvokeNode;
 import jadx.core.dex.instructions.ConstStringNode;
@@ -21,6 +20,7 @@ import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
+import jadx.core.dex.visitors.finaly.MarkFinallyVisitor;
 import jadx.core.dex.visitors.ssa.SSATransform;
 import jadx.core.dex.visitors.typeinference.TypeInferenceVisitor;
 import jadx.core.utils.InsnRemover;
@@ -62,47 +62,56 @@ public class ConstInlineVisitor extends AbstractVisitor {
 				|| insn.getResult() == null) {
 			return;
 		}
-
 		SSAVar sVar = insn.getResult().getSVar();
 		InsnArg constArg;
-
-		InsnType insnType = insn.getType();
-		if (insnType == InsnType.CONST || insnType == InsnType.MOVE) {
-			constArg = insn.getArg(0);
-			if (!constArg.isLiteral()) {
+		Runnable onSuccess = null;
+		switch (insn.getType()) {
+			case CONST:
+			case MOVE: {
+				constArg = insn.getArg(0);
+				if (!constArg.isLiteral()) {
+					return;
+				}
+				long lit = ((LiteralArg) constArg).getLiteral();
+				if (lit == 0 && forbidNullInlines(sVar)) {
+					// all usages forbids inlining
+					return;
+				}
+				break;
+			}
+			case CONST_STR: {
+				String s = ((ConstStringNode) insn).getString();
+				FieldNode f = mth.getParentClass().getConstField(s);
+				if (f == null) {
+					InsnNode copy = insn.copyWithoutResult();
+					constArg = InsnArg.wrapArg(copy);
+				} else {
+					InsnNode constGet = new IndexInsnNode(InsnType.SGET, f.getFieldInfo(), 0);
+					constArg = InsnArg.wrapArg(constGet);
+					constArg.setType(ArgType.STRING);
+					onSuccess = () -> f.addUseIn(mth);
+				}
+				break;
+			}
+			case CONST_CLASS: {
+				if (sVar.isUsedInPhi()) {
+					return;
+				}
+				constArg = InsnArg.wrapArg(insn.copyWithoutResult());
+				constArg.setType(ArgType.CLASS);
+				break;
+			}
+			default:
 				return;
-			}
-			long lit = ((LiteralArg) constArg).getLiteral();
-			if (lit == 0 && forbidNullInlines(sVar)) {
-				// all usages forbids inlining
-				return;
-			}
-		} else if (insnType == InsnType.CONST_STR) {
-			if (sVar.isUsedInPhi()) {
-				return;
-			}
-			String s = ((ConstStringNode) insn).getString();
-			FieldNode f = mth.getParentClass().getConstField(s);
-			if (f == null) {
-				InsnNode copy = insn.copyWithoutResult();
-				constArg = InsnArg.wrapArg(copy);
-			} else {
-				InsnNode constGet = new IndexInsnNode(InsnType.SGET, f.getFieldInfo(), 0);
-				constArg = InsnArg.wrapArg(constGet);
-				constArg.setType(ArgType.STRING);
-			}
-		} else if (insnType == InsnType.CONST_CLASS) {
-			if (sVar.isUsedInPhi()) {
-				return;
-			}
-			constArg = InsnArg.wrapArg(insn.copyWithoutResult());
-			constArg.setType(ArgType.CLASS);
-		} else {
-			return;
 		}
 
 		// all check passed, run replace
-		replaceConst(mth, insn, constArg, toRemove);
+		if (replaceConst(mth, insn, constArg)) {
+			toRemove.add(insn);
+			if (onSuccess != null) {
+				onSuccess.run();
+			}
+		}
 	}
 
 	/**
@@ -148,24 +157,40 @@ public class ConstInlineVisitor extends AbstractVisitor {
 		return true;
 	}
 
-	private static void replaceConst(MethodNode mth, InsnNode constInsn, InsnArg constArg, List<InsnNode> toRemove) {
+	private static boolean replaceConst(MethodNode mth, InsnNode constInsn, InsnArg constArg) {
 		SSAVar ssaVar = constInsn.getResult().getSVar();
 		if (ssaVar.getUseCount() == 0) {
-			toRemove.add(constInsn);
-			return;
+			return true;
 		}
 		List<RegisterArg> useList = new ArrayList<>(ssaVar.getUseList());
 		int replaceCount = 0;
 		for (RegisterArg arg : useList) {
-			if (canInline(arg) && replaceArg(mth, arg, constArg, constInsn, toRemove)) {
+			if (canInline(arg) && replaceArg(mth, arg, constArg, constInsn)) {
 				replaceCount++;
 			}
 		}
 		if (replaceCount == useList.size()) {
-			toRemove.add(constInsn);
+			return true;
 		}
+		// hide insn if used only in not generated insns
+		if (ssaVar.getUseList().stream().allMatch(ConstInlineVisitor::canIgnoreInsn)) {
+			constInsn.add(AFlag.DONT_GENERATE);
+		}
+		return false;
 	}
 
+	private static boolean canIgnoreInsn(RegisterArg reg) {
+		InsnNode parentInsn = reg.getParentInsn();
+		if (parentInsn == null || parentInsn.getType() == InsnType.PHI) {
+			return false;
+		}
+		if (reg.isLinkedToOtherSsaVars()) {
+			return false;
+		}
+		return parentInsn.contains(AFlag.DONT_GENERATE);
+	}
+
+	@SuppressWarnings("RedundantIfStatement")
 	private static boolean canInline(RegisterArg arg) {
 		if (arg.contains(AFlag.DONT_INLINE_CONST)) {
 			return false;
@@ -174,13 +199,17 @@ public class ConstInlineVisitor extends AbstractVisitor {
 		if (parentInsn == null) {
 			return false;
 		}
-		if (parentInsn.contains(AFlag.DONT_GENERATE) || parentInsn.contains(AFlag.FINALLY_INSNS)) {
+		if (parentInsn.contains(AFlag.DONT_GENERATE)) {
+			return false;
+		}
+		if (arg.isLinkedToOtherSsaVars() && !arg.getSVar().isUsedInPhi()) {
+			// don't inline vars used in finally block
 			return false;
 		}
 		return true;
 	}
 
-	private static boolean replaceArg(MethodNode mth, RegisterArg arg, InsnArg constArg, InsnNode constInsn, List<InsnNode> toRemove) {
+	private static boolean replaceArg(MethodNode mth, RegisterArg arg, InsnArg constArg, InsnNode constInsn) {
 		InsnNode useInsn = arg.getParentInsn();
 		if (useInsn == null) {
 			return false;
@@ -213,7 +242,10 @@ public class ConstInlineVisitor extends AbstractVisitor {
 				fieldNode = mth.getParentClass().getConstField((int) literal, false);
 			}
 			if (fieldNode != null) {
-				litArg.wrapInstruction(mth, new IndexInsnNode(InsnType.SGET, fieldNode.getFieldInfo(), 0));
+				IndexInsnNode sgetInsn = new IndexInsnNode(InsnType.SGET, fieldNode.getFieldInfo(), 0);
+				if (litArg.wrapInstruction(mth, sgetInsn) != null) {
+					fieldNode.addUseIn(mth);
+				}
 			} else {
 				if (needExplicitCast(useInsn, litArg)) {
 					litArg.add(AFlag.EXPLICIT_PRIMITIVE_TYPE);
@@ -224,15 +256,7 @@ public class ConstInlineVisitor extends AbstractVisitor {
 				return false;
 			}
 		}
-		if (insnType == InsnType.RETURN) {
-			useInsn.setSourceLine(constInsn.getSourceLine());
-			if (useInsn.contains(AFlag.SYNTHETIC)) {
-				useInsn.setOffset(constInsn.getOffset());
-				useInsn.rewriteAttributeFrom(constInsn, AType.CODE_COMMENTS);
-			} else {
-				useInsn.copyAttributeFrom(constInsn, AType.CODE_COMMENTS);
-			}
-		}
+		useInsn.inheritMetadata(constInsn);
 		return true;
 	}
 

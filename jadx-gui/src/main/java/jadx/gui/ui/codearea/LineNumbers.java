@@ -59,7 +59,7 @@ public class LineNumbers extends JPanel implements CaretListener {
 
 	public LineNumbers(AbstractCodeArea codeArea) {
 		this.codeArea = codeArea;
-		this.codeInfo = codeArea.getNode().getCodeInfo();
+		this.codeInfo = codeArea.getCodeInfo();
 
 		setFont(codeArea.getFont());
 		SyntaxScheme syntaxScheme = codeArea.getSyntaxScheme();
@@ -92,7 +92,7 @@ public class LineNumbers extends JPanel implements CaretListener {
 	private void setPreferredWidth() {
 		Element root = codeArea.getDocument().getDefaultRootElement();
 		int lines = root.getElementCount();
-		int digits = Math.max(String.valueOf(lines).length(), 4);
+		int digits = Math.max(numberLength(lines), numberLength(getMaxDebugLine()));
 		if (lastDigits != digits) {
 			lastDigits = digits;
 			FontMetrics fontMetrics = getFontMetrics(getFont());
@@ -107,6 +107,10 @@ public class LineNumbers extends JPanel implements CaretListener {
 				setSize(d);
 			}
 		}
+	}
+
+	private int numberLength(int value) {
+		return String.valueOf(value).length();
 	}
 
 	@SuppressWarnings("deprecation")
@@ -248,11 +252,18 @@ public class LineNumbers extends JPanel implements CaretListener {
 		if (!useSourceLines) {
 			return String.valueOf(lineNumber);
 		}
-		Integer sourceLine = codeInfo.getLineMapping().get(lineNumber);
+		Integer sourceLine = codeInfo.getCodeMetadata().getLineMapping().get(lineNumber);
 		if (sourceLine == null) {
 			return null;
 		}
 		return String.valueOf(sourceLine);
+	}
+
+	private int getMaxDebugLine() {
+		return codeInfo.getCodeMetadata().getLineMapping()
+				.keySet().stream()
+				.mapToInt(Integer::intValue)
+				.max().orElse(0);
 	}
 
 	@Override

@@ -23,10 +23,22 @@ import static jadx.core.xmlgen.ParserConstants.TYPE_REFERENCE;
 
 public class ResXmlGen {
 
+	/**
+	 * Skip only file based resource type
+	 */
 	private static final Set<String> SKIP_RES_TYPES = new HashSet<>(Arrays.asList(
+			"anim",
+			"animator",
+			"font",
+			"id", // skip id type, it is usually auto generated when used this syntax "@+id/my_id"
+			"interpolator",
 			"layout",
+			"menu",
 			"mipmap",
-			"id"));
+			"navigation",
+			"raw",
+			"transition",
+			"xml"));
 
 	private final ResourceStorage resStorage;
 	private final ValuesParser vp;
@@ -156,11 +168,13 @@ public class ResXmlGen {
 	private void addItem(ICodeWriter cw, String itemTag, String typeName, RawNamedValue value) {
 		String nameStr = vp.decodeNameRef(value.getNameRef());
 		String valueStr = vp.decodeValue(value.getRawValue());
+		int dataType = value.getRawValue().getDataType();
+
 		if (!typeName.equals("attr")) {
-			if (valueStr == null || valueStr.equals("0")) {
+			if (dataType == ParserConstants.TYPE_REFERENCE && (valueStr == null || valueStr.equals("0"))) {
 				valueStr = "@null";
 			}
-			if (nameStr != null) {
+			if (dataType == ParserConstants.TYPE_INT_DEC && nameStr != null) {
 				try {
 					int intVal = Integer.parseInt(valueStr);
 					String newVal = ManifestAttributes.getInstance().decode(nameStr.replace("android:attr.", ""), intVal);

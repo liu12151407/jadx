@@ -3,66 +3,96 @@ package jadx.api;
 import java.util.Collections;
 import java.util.List;
 
-import jadx.core.dex.nodes.VariableNode;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Nullable;
+
+import jadx.api.metadata.ICodeAnnotation;
+import jadx.api.metadata.annotations.VarNode;
+import jadx.api.metadata.annotations.VarRef;
+import jadx.core.dex.instructions.args.ArgType;
 
 public class JavaVariable implements JavaNode {
-	JavaClass cls;
-	VariableNode node;
+	private final JavaMethod mth;
+	private final VarNode varNode;
 
-	public JavaVariable(JavaClass cls, VariableNode node) {
-		this.cls = cls;
-		this.node = node;
+	public JavaVariable(JavaMethod mth, VarNode varNode) {
+		this.mth = mth;
+		this.varNode = varNode;
 	}
 
-	public VariableNode getVariableNode() {
-		return node;
+	public JavaMethod getMth() {
+		return mth;
+	}
+
+	public int getReg() {
+		return varNode.getReg();
+	}
+
+	public int getSsa() {
+		return varNode.getSsa();
 	}
 
 	@Override
-	public String getName() {
-		return node.getName();
+	public @Nullable String getName() {
+		return varNode.getName();
+	}
+
+	@ApiStatus.Internal
+	public VarNode getVarNode() {
+		return varNode;
 	}
 
 	@Override
 	public String getFullName() {
-		return node.getName();
+		return varNode.getType() + " " + varNode.getName() + " (r" + varNode.getReg() + "v" + varNode.getSsa() + ")";
+	}
+
+	public ArgType getType() {
+		return ArgType.tryToResolveClassAlias(mth.getMethodNode().root(), varNode.getType());
 	}
 
 	@Override
 	public JavaClass getDeclaringClass() {
-		return cls;
+		return mth.getDeclaringClass();
 	}
 
 	@Override
 	public JavaClass getTopParentClass() {
-		return cls.getTopParentClass();
-	}
-
-	@Override
-	public int getDecompiledLine() {
-		return node.getDecompiledLine();
+		return mth.getTopParentClass();
 	}
 
 	@Override
 	public int getDefPos() {
-		return node.getDefPosition();
+		return varNode.getDefPosition();
 	}
 
 	@Override
 	public List<JavaNode> getUseIn() {
-		return Collections.emptyList();
+		return Collections.singletonList(mth);
+	}
+
+	@Override
+	public boolean isOwnCodeAnnotation(ICodeAnnotation ann) {
+		if (ann.getAnnType() == ICodeAnnotation.AnnType.VAR_REF) {
+			VarRef varRef = (VarRef) ann;
+			return varRef.getRefPos() == getDefPos();
+		}
+		return false;
 	}
 
 	@Override
 	public int hashCode() {
-		return node.hashCode();
+		return varNode.hashCode();
 	}
 
 	@Override
-	public boolean equals(Object obj) {
-		if (obj instanceof JavaVariable) {
-			return node.equals(((JavaVariable) obj).getVariableNode());
+	public boolean equals(Object o) {
+		if (this == o) {
+			return true;
 		}
-		return false;
+		if (!(o instanceof JavaVariable)) {
+			return false;
+		}
+		return varNode.equals(((JavaVariable) o).varNode);
 	}
 }

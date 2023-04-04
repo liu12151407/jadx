@@ -1,53 +1,35 @@
 package jadx.gui.utils;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import org.jetbrains.annotations.Nullable;
 
-import jadx.gui.jobs.IndexService;
-import jadx.gui.settings.JadxSettings;
-import jadx.gui.treemodel.JRoot;
-import jadx.gui.ui.SearchDialog;
-import jadx.gui.utils.search.CommentsIndex;
-import jadx.gui.utils.search.TextSearchIndex;
+import jadx.api.JavaClass;
+import jadx.gui.ui.dialog.SearchDialog;
 
 public class CacheObject {
 
-	private IndexService indexService;
-
-	private TextSearchIndex textIndex;
-	private CodeUsageInfo usageInfo;
-	private CommentsIndex commentsIndex;
 	private String lastSearch;
 	private JNodeCache jNodeCache;
 	private Map<SearchDialog.SearchPreset, Set<SearchDialog.SearchOptions>> lastSearchOptions;
 
-	private JRoot jRoot;
-	private JadxSettings settings;
+	private List<List<JavaClass>> decompileBatches;
+
+	private volatile boolean fullDecompilationFinished;
 
 	public CacheObject() {
 		reset();
 	}
 
 	public void reset() {
-		jRoot = null;
-		settings = null;
-		indexService = null;
-		textIndex = null;
 		lastSearch = null;
 		jNodeCache = new JNodeCache();
-		usageInfo = null;
 		lastSearchOptions = new HashMap<>();
-	}
-
-	public TextSearchIndex getTextIndex() {
-		return textIndex;
-	}
-
-	public void setTextIndex(TextSearchIndex textIndex) {
-		this.textIndex = textIndex;
+		decompileBatches = null;
+		fullDecompilationFinished = false;
 	}
 
 	@Nullable
@@ -59,31 +41,6 @@ public class CacheObject {
 		this.lastSearch = lastSearch;
 	}
 
-	@Nullable
-	public CodeUsageInfo getUsageInfo() {
-		return usageInfo;
-	}
-
-	public void setUsageInfo(@Nullable CodeUsageInfo usageInfo) {
-		this.usageInfo = usageInfo;
-	}
-
-	public CommentsIndex getCommentsIndex() {
-		return commentsIndex;
-	}
-
-	public void setCommentsIndex(CommentsIndex commentsIndex) {
-		this.commentsIndex = commentsIndex;
-	}
-
-	public IndexService getIndexService() {
-		return indexService;
-	}
-
-	public void setIndexService(IndexService indexService) {
-		this.indexService = indexService;
-	}
-
 	public JNodeCache getNodeCache() {
 		return jNodeCache;
 	}
@@ -92,19 +49,19 @@ public class CacheObject {
 		return lastSearchOptions;
 	}
 
-	public void setJadxSettings(JadxSettings settings) {
-		this.settings = settings;
+	public @Nullable List<List<JavaClass>> getDecompileBatches() {
+		return decompileBatches;
 	}
 
-	public JadxSettings getJadxSettings() {
-		return this.settings;
+	public void setDecompileBatches(List<List<JavaClass>> decompileBatches) {
+		this.decompileBatches = decompileBatches;
 	}
 
-	public JRoot getJRoot() {
-		return jRoot;
+	public boolean isFullDecompilationFinished() {
+		return fullDecompilationFinished;
 	}
 
-	public void setJRoot(JRoot jRoot) {
-		this.jRoot = jRoot;
+	public void setFullDecompilationFinished(boolean fullDecompilationFinished) {
+		this.fullDecompilationFinished = fullDecompilationFinished;
 	}
 }

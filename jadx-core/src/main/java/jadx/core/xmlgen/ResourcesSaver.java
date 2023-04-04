@@ -29,7 +29,11 @@ public class ResourcesSaver implements Runnable {
 
 	@Override
 	public void run() {
-		saveResources(resourceFile.loadContent());
+		try {
+			saveResources(resourceFile.loadContent());
+		} catch (Throwable e) {
+			LOG.warn("Failed to save resource: {}", resourceFile.getOriginalName(), e);
+		}
 	}
 
 	private void saveResources(ResContainer rc) {
@@ -49,7 +53,7 @@ public class ResourcesSaver implements Runnable {
 	private void save(ResContainer rc, File outDir) {
 		File outFile = new File(outDir, rc.getFileName());
 		if (!ZipSecurity.isInSubDirectory(outDir, outFile)) {
-			LOG.error("Path traversal attack detected, invalid resource name: {}", outFile.getPath());
+			LOG.error("Invalid resource name or path traversal attack detected: {}", outFile.getPath());
 			return;
 		}
 		saveToFile(rc, outFile);

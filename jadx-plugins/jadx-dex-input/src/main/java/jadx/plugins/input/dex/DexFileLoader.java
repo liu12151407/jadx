@@ -13,61 +13,83 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.api.plugins.utils.CommonFileUtils;
 import jadx.api.plugins.utils.ZipSecurity;
 import jadx.plugins.input.dex.sections.DexConsts;
+import jadx.plugins.input.dex.utils.DexCheckSum;
 
 public class DexFileLoader {
 	private static final Logger LOG = LoggerFactory.getLogger(DexFileLoader.class);
 
+	// sharing between all instances (can be used in other plugins) // TODO:
 	private static int dexUniqId = 1;
 
-	public static List<DexReader> collectDexFiles(List<Path> pathsList) {
+	private final DexInputOptions options;
+
+	public DexFileLoader(DexInputOptions options) {
+		this.options = options;
+		resetDexUniqId();
+	}
+
+	public List<DexReader> collectDexFiles(List<Path> pathsList) {
 		return pathsList.stream()
 				.map(Path::toFile)
-				.map(DexFileLoader::loadDexFromFile)
+				.map(this::loadDexFromFile)
 				.filter(list -> !list.isEmpty())
 				.flatMap(Collection::stream)
 				.peek(dr -> LOG.debug("Loading dex: {}", dr))
 				.collect(Collectors.toList());
 	}
 
-	private static List<DexReader> loadDexFromFile(File file) {
+	private List<DexReader> loadDexFromFile(File file) {
 		try (InputStream inputStream = new FileInputStream(file)) {
-			return checkFileMagic(file, inputStream, file.getAbsolutePath());
+			return load(file, inputStream, file.getAbsolutePath());
 		} catch (Exception e) {
 			LOG.error("File open error: {}", file.getAbsolutePath(), e);
 			return Collections.emptyList();
 		}
 	}
 
-	private static List<DexReader> checkFileMagic(File file, InputStream inputStream, String inputFileName) throws IOException {
+	private List<DexReader> load(@Nullable File file, InputStream inputStream, String fileName) throws IOException {
 		try (InputStream in = inputStream.markSupported() ? inputStream : new BufferedInputStream(inputStream)) {
 			byte[] magic = new byte[DexConsts.MAX_MAGIC_SIZE];
 			in.mark(magic.length);
 			if (in.read(magic) != magic.length) {
 				return Collections.emptyList();
 			}
-			if (isStartWithBytes(magic, DexConsts.DEX_FILE_MAGIC)) {
+			if (isStartWithBytes(magic, DexConsts.DEX_FILE_MAGIC) || fileName.endsWith(".dex")) {
 				in.reset();
-				DexReader dexReader = new DexReader(getNextUniqId(), inputFileName, readAllBytes(in));
+				byte[] content = readAllBytes(in);
+				DexReader dexReader = loadDexReader(fileName, content);
 				return Collections.singletonList(dexReader);
 			}
-			if (file != null && isStartWithBytes(magic, DexConsts.ZIP_FILE_MAGIC)) {
-				return collectDexFromZip(file);
+			if (file != null) {
+				// allow only top level zip files
+				if (isStartWithBytes(magic, DexConsts.ZIP_FILE_MAGIC) || CommonFileUtils.isZipFileExt(fileName)) {
+					return collectDexFromZip(file);
+				}
 			}
 			return Collections.emptyList();
 		}
 	}
 
-	private static List<DexReader> collectDexFromZip(File file) {
+	public DexReader loadDexReader(String fileName, byte[] content) {
+		if (options.isVerifyChecksum()) {
+			DexCheckSum.verify(content);
+		}
+		return new DexReader(getNextUniqId(), fileName, content);
+	}
+
+	private List<DexReader> collectDexFromZip(File file) {
 		List<DexReader> result = new ArrayList<>();
 		try {
 			ZipSecurity.readZipEntries(file, (entry, in) -> {
 				try {
-					result.addAll(checkFileMagic(null, in, entry.getName()));
+					result.addAll(load(null, in, entry.getName()));
 				} catch (Exception e) {
 					LOG.error("Failed to read zip entry: {}", entry, e);
 				}
@@ -104,15 +126,15 @@ public class DexFileLoader {
 		return buf.toByteArray();
 	}
 
-	private static int getNextUniqId() {
+	private static synchronized int getNextUniqId() {
 		dexUniqId++;
 		if (dexUniqId >= 0xFFFF) {
-			resetDexUniqId();
+			dexUniqId = 1;
 		}
 		return dexUniqId;
 	}
 
-	public static void resetDexUniqId() {
+	private static synchronized void resetDexUniqId() {
 		dexUniqId = 1;
 	}
 }

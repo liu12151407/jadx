@@ -26,22 +26,27 @@ import org.slf4j.LoggerFactory;
 
 import com.beust.jcommander.Parameter;
 
+import jadx.api.CommentsLevel;
+import jadx.api.DecompilationMode;
 import jadx.api.JadxArgs;
+import jadx.api.args.DeobfuscationMapFileMode;
+import jadx.api.args.ResourceNameSource;
 import jadx.cli.JadxCLIArgs;
 import jadx.cli.LogHelper;
-import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.codearea.EditorTheme;
 import jadx.gui.utils.FontUtils;
+import jadx.gui.utils.LafManager;
 import jadx.gui.utils.LangLocale;
 import jadx.gui.utils.NLS;
+import jadx.gui.utils.codecache.CodeCacheMode;
 
 public class JadxSettings extends JadxCLIArgs {
 	private static final Logger LOG = LoggerFactory.getLogger(JadxSettings.class);
 
 	private static final Path USER_HOME = Paths.get(System.getProperty("user.home"));
 	private static final int RECENT_PROJECTS_COUNT = 15;
-	private static final int CURRENT_SETTINGS_VERSION = 12;
+	private static final int CURRENT_SETTINGS_VERSION = 18;
 
 	private static final Font DEFAULT_FONT = new RSyntaxTextArea().getFont();
 
@@ -55,25 +60,31 @@ public class JadxSettings extends JadxCLIArgs {
 	private Path lastOpenFilePath = USER_HOME;
 	private Path lastSaveFilePath = USER_HOME;
 	private boolean flattenPackage = false;
-	private boolean checkForUpdates = false;
+	private boolean checkForUpdates = true;
 	private List<Path> recentProjects = new ArrayList<>();
 	private String fontStr = "";
 	private String smaliFontStr = "";
 	private String editorThemePath = "";
+	private String lafTheme = LafManager.INITIAL_THEME_NAME;
 	private LangLocale langLocale = NLS.defaultLocale();
 	private boolean autoStartJobs = false;
-	protected String excludedPackages = "";
+	private String excludedPackages = "";
 	private boolean autoSaveProject = false;
 
 	private boolean showHeapUsageBar = false;
+	private boolean alwaysSelectOpened = false;
+	private boolean useAlternativeFileDialog = false;
 
 	private Map<String, WindowLocation> windowPos = new HashMap<>();
 	private int mainWindowExtendedState = JFrame.NORMAL;
 	private boolean codeAreaLineWrap = false;
 	private int srhResourceSkipSize = 1000;
 	private String srhResourceFileExt = ".xml|.html|.js|.json|.txt";
+	private int searchResultsPerPage = 50;
+	private boolean useAutoSearch = true;
 	private boolean keepCommonDialogOpen = false;
 	private boolean smaliAreaShowBytecode = false;
+	private LineNumbersMode lineNumbersMode = LineNumbersMode.AUTO;
 
 	private int mainWindowVerticalSplitterLoc = 300;
 	private int debuggerStackFrameSplitterLoc = 300;
@@ -82,6 +93,9 @@ public class JadxSettings extends JadxCLIArgs {
 	private String adbDialogPath = "";
 	private String adbDialogHost = "localhost";
 	private String adbDialogPort = "5037";
+
+	private CodeCacheMode codeCacheMode = CodeCacheMode.DISK_WITH_CACHE;
+	private boolean jumpOnDoubleClick = true;
 
 	/**
 	 * UI setting: the width of the tree showing the classes, resources, ...
@@ -123,6 +137,14 @@ public class JadxSettings extends JadxCLIArgs {
 		if (settingsVersion != CURRENT_SETTINGS_VERSION) {
 			upgradeSettings(settingsVersion);
 		}
+	}
+
+	public int getSettingsVersion() {
+		return settingsVersion;
+	}
+
+	public void setSettingsVersion(int settingsVersion) {
+		this.settingsVersion = settingsVersion;
 	}
 
 	public String getCmdSelectClass() {
@@ -191,6 +213,11 @@ public class JadxSettings extends JadxCLIArgs {
 		partialSync(settings -> settings.recentProjects = recentProjects);
 	}
 
+	public void removeRecentProject(Path projectPath) {
+		recentProjects.remove(projectPath);
+		partialSync(settings -> settings.recentProjects = recentProjects);
+	}
+
 	public void saveWindowPos(Window window) {
 		WindowLocation pos = new WindowLocation(window.getClass().getSimpleName(), window.getBounds());
 		windowPos.put(pos.getWindowId(), pos);
@@ -202,29 +229,22 @@ public class JadxSettings extends JadxCLIArgs {
 		if (pos == null || pos.getBounds() == null) {
 			return false;
 		}
-		if (window instanceof MainWindow) {
-			int extendedState = getMainWindowExtendedState();
-			if (extendedState != JFrame.NORMAL) {
-				((JFrame) window).setExtendedState(extendedState);
-				return true;
-			}
-		}
-
-		if (!isContainedInAnyScreen(pos)) {
+		if (!isAccessibleInAnyScreen(pos)) {
 			return false;
 		}
-
 		window.setBounds(pos.getBounds());
+		if (window instanceof MainWindow) {
+			((JFrame) window).setExtendedState(getMainWindowExtendedState());
+		}
 		return true;
 	}
 
-	private static boolean isContainedInAnyScreen(WindowLocation pos) {
-		Rectangle bounds = pos.getBounds();
-		if (bounds.getX() > 0 && bounds.getY() > 0) {
-			for (GraphicsDevice gd : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
-				if (gd.getDefaultConfiguration().getBounds().contains(bounds)) {
-					return true;
-				}
+	private static boolean isAccessibleInAnyScreen(WindowLocation pos) {
+		Rectangle windowBounds = pos.getBounds();
+		for (GraphicsDevice gd : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
+			Rectangle screenBounds = gd.getDefaultConfiguration().getBounds();
+			if (screenBounds.intersects(windowBounds)) {
+				return true;
 			}
 		}
 		LOG.debug("Window saved position was ignored: {}", pos);
@@ -238,6 +258,23 @@ public class JadxSettings extends JadxCLIArgs {
 	public void setShowHeapUsageBar(boolean showHeapUsageBar) {
 		this.showHeapUsageBar = showHeapUsageBar;
 		partialSync(settings -> settings.showHeapUsageBar = showHeapUsageBar);
+	}
+
+	public boolean isAlwaysSelectOpened() {
+		return alwaysSelectOpened;
+	}
+
+	public void setAlwaysSelectOpened(boolean alwaysSelectOpened) {
+		this.alwaysSelectOpened = alwaysSelectOpened;
+		partialSync(settings -> settings.alwaysSelectOpened = alwaysSelectOpened);
+	}
+
+	public boolean isUseAlternativeFileDialog() {
+		return useAlternativeFileDialog;
+	}
+
+	public void setUseAlternativeFileDialog(boolean useAlternativeFileDialog) {
+		this.useAlternativeFileDialog = useAlternativeFileDialog;
 	}
 
 	public String getExcludedPackages() {
@@ -256,12 +293,20 @@ public class JadxSettings extends JadxCLIArgs {
 		this.fallbackMode = fallbackMode;
 	}
 
+	public void setUseDx(boolean useDx) {
+		this.useDx = useDx;
+	}
+
 	public void setSkipResources(boolean skipResources) {
 		this.skipResources = skipResources;
 	}
 
 	public void setSkipSources(boolean skipSources) {
 		this.skipSources = skipSources;
+	}
+
+	public void setDecompilationMode(DecompilationMode decompilationMode) {
+		this.decompilationMode = decompilationMode;
 	}
 
 	public void setShowInconsistentCode(boolean showInconsistentCode) {
@@ -288,6 +333,10 @@ public class JadxSettings extends JadxCLIArgs {
 		this.verbose = verbose;
 	}
 
+	public void setDebugInfo(boolean useDebugInfo) {
+		this.debugInfo = useDebugInfo;
+	}
+
 	public void setDeobfuscationOn(boolean deobfuscationOn) {
 		this.deobfuscationOn = deobfuscationOn;
 	}
@@ -300,8 +349,8 @@ public class JadxSettings extends JadxCLIArgs {
 		this.deobfuscationMaxLength = deobfuscationMaxLength;
 	}
 
-	public void setDeobfuscationForceSave(boolean deobfuscationForceSave) {
-		this.deobfuscationForceSave = deobfuscationForceSave;
+	public void setDeobfuscationMapFileMode(DeobfuscationMapFileMode mode) {
+		this.deobfuscationMapFileMode = mode;
 	}
 
 	public void setDeobfuscationUseSourceNameAsAlias(boolean deobfuscationUseSourceNameAsAlias) {
@@ -310,6 +359,14 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setDeobfuscationParseKotlinMetadata(boolean deobfuscationParseKotlinMetadata) {
 		this.deobfuscationParseKotlinMetadata = deobfuscationParseKotlinMetadata;
+	}
+
+	public void setUseKotlinMethodsForVarNames(JadxArgs.UseKotlinMethodsForVarNames useKotlinMethodsForVarNames) {
+		this.useKotlinMethodsForVarNames = useKotlinMethodsForVarNames;
+	}
+
+	public void setResourceNameSource(ResourceNameSource source) {
+		this.resourceNameSource = source;
 	}
 
 	public void updateRenameFlag(JadxArgs.RenameEnum flag, boolean enabled) {
@@ -342,6 +399,14 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setInlineMethods(boolean inlineMethods) {
 		this.inlineMethods = inlineMethods;
+	}
+
+	public void setAllowInlineKotlinLambda(boolean allowInlineKotlinLambda) {
+		this.allowInlineKotlinLambda = allowInlineKotlinLambda;
+	}
+
+	public void setExtractFinally(boolean extractFinally) {
+		this.extractFinally = extractFinally;
 	}
 
 	public void setFsCaseSensitive(boolean fsCaseSensitive) {
@@ -377,12 +442,20 @@ public class JadxSettings extends JadxCLIArgs {
 		partialSync(settings -> settings.treeWidth = JadxSettings.this.treeWidth);
 	}
 
+	@JadxSettingsAdapter.GsonExclude
+	private Font cachedFont = null;
+
 	public Font getFont() {
+		if (cachedFont != null) {
+			return cachedFont;
+		}
 		if (fontStr.isEmpty()) {
 			return DEFAULT_FONT;
 		}
 		try {
-			return FontUtils.loadByStr(fontStr);
+			Font font = FontUtils.loadByStr(fontStr);
+			this.cachedFont = font;
+			return font;
 		} catch (Exception e) {
 			LOG.warn("Failed to load font: {}, reset to default", fontStr, e);
 			setFont(DEFAULT_FONT);
@@ -392,10 +465,20 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setFont(@Nullable Font font) {
 		if (font == null) {
-			this.fontStr = "";
+			setFontStr("");
 		} else {
-			this.fontStr = FontUtils.convertToStr(font);
+			setFontStr(FontUtils.convertToStr(font));
+			this.cachedFont = font;
 		}
+	}
+
+	public String getFontStr() {
+		return fontStr;
+	}
+
+	public void setFontStr(String fontStr) {
+		this.fontStr = fontStr;
+		this.cachedFont = null;
 	}
 
 	public Font getSmaliFont() {
@@ -431,6 +514,14 @@ public class JadxSettings extends JadxCLIArgs {
 		this.editorThemePath = editorThemePath;
 	}
 
+	public String getLafTheme() {
+		return lafTheme;
+	}
+
+	public void setLafTheme(String lafTheme) {
+		this.lafTheme = lafTheme;
+	}
+
 	public int getMainWindowExtendedState() {
 		return mainWindowExtendedState;
 	}
@@ -462,6 +553,23 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setSrhResourceFileExt(String all) {
 		srhResourceFileExt = all.trim();
+	}
+
+	public int getSearchResultsPerPage() {
+		return searchResultsPerPage;
+	}
+
+	public void setSearchResultsPerPage(int searchResultsPerPage) {
+		this.searchResultsPerPage = searchResultsPerPage;
+	}
+
+	public boolean isUseAutoSearch() {
+		return useAutoSearch;
+	}
+
+	public void setUseAutoSearch(boolean useAutoSearch) {
+		this.useAutoSearch = useAutoSearch;
+		partialSync(settings -> settings.useAutoSearch = useAutoSearch);
 	}
 
 	public void setKeepCommonDialogOpen(boolean yes) {
@@ -531,6 +639,38 @@ public class JadxSettings extends JadxCLIArgs {
 		this.adbDialogPort = port;
 	}
 
+	public void setCommentsLevel(CommentsLevel level) {
+		this.commentsLevel = level;
+	}
+
+	public LineNumbersMode getLineNumbersMode() {
+		return lineNumbersMode;
+	}
+
+	public void setLineNumbersMode(LineNumbersMode lineNumbersMode) {
+		this.lineNumbersMode = lineNumbersMode;
+	}
+
+	public void setPluginOptions(Map<String, String> pluginOptions) {
+		this.pluginOptions = pluginOptions;
+	}
+
+	public CodeCacheMode getCodeCacheMode() {
+		return codeCacheMode;
+	}
+
+	public void setCodeCacheMode(CodeCacheMode codeCacheMode) {
+		this.codeCacheMode = codeCacheMode;
+	}
+
+	public boolean isJumpOnDoubleClick() {
+		return jumpOnDoubleClick;
+	}
+
+	public void setJumpOnDoubleClick(boolean jumpOnDoubleClick) {
+		this.jumpOnDoubleClick = jumpOnDoubleClick;
+	}
+
 	private void upgradeSettings(int fromVersion) {
 		LOG.debug("upgrade settings from version: {} to {}", fromVersion, CURRENT_SETTINGS_VERSION);
 		if (fromVersion == 0) {
@@ -538,7 +678,7 @@ public class JadxSettings extends JadxCLIArgs {
 			setDeobfuscationMaxLength(64);
 			setDeobfuscationUseSourceNameAsAlias(true);
 			setDeobfuscationParseKotlinMetadata(true);
-			setDeobfuscationForceSave(false);
+			setDeobfuscationMapFileMode(DeobfuscationMapFileMode.READ);
 			setThreadsCount(JadxArgs.DEFAULT_THREADS_COUNT);
 			setReplaceConsts(true);
 			setSkipResources(false);
@@ -597,8 +737,36 @@ public class JadxSettings extends JadxCLIArgs {
 			inlineMethods = true;
 			fromVersion++;
 		}
+		if (fromVersion == 12) {
+			alwaysSelectOpened = false;
+			fromVersion++;
+		}
+		if (fromVersion == 13) {
+			lafTheme = LafManager.INITIAL_THEME_NAME;
+			fromVersion++;
+		}
+		if (fromVersion == 14) {
+			useKotlinMethodsForVarNames = JadxArgs.UseKotlinMethodsForVarNames.APPLY;
+			fromVersion++;
+		}
+		if (fromVersion == 15) {
+			deobfuscationMapFileMode = DeobfuscationMapFileMode.READ;
+			fromVersion++;
+		}
+		if (fromVersion == 16) {
+			if (fallbackMode) {
+				decompilationMode = DecompilationMode.FALLBACK;
+			} else {
+				decompilationMode = DecompilationMode.AUTO;
+			}
+			fromVersion++;
+		}
+		if (fromVersion == 17) {
+			checkForUpdates = true;
+			fromVersion++;
+		}
 		if (fromVersion != CURRENT_SETTINGS_VERSION) {
-			throw new JadxRuntimeException("Incorrect settings upgrade");
+			LOG.warn("Incorrect settings upgrade. Expected version: {}, got: {}", CURRENT_SETTINGS_VERSION, fromVersion);
 		}
 		settingsVersion = CURRENT_SETTINGS_VERSION;
 		sync();

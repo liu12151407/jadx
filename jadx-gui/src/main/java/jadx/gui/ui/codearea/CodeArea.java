@@ -4,8 +4,8 @@ import java.awt.Point;
 import java.awt.event.InputEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.Objects;
 
-import javax.swing.JPopupMenu;
 import javax.swing.event.PopupMenuEvent;
 
 import org.fife.ui.rsyntaxtextarea.RSyntaxDocument;
@@ -15,14 +15,16 @@ import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import jadx.api.CodePosition;
-import jadx.api.JadxDecompiler;
+import jadx.api.ICodeInfo;
+import jadx.api.JavaClass;
 import jadx.api.JavaNode;
+import jadx.api.metadata.ICodeAnnotation;
+import jadx.gui.JadxWrapper;
 import jadx.gui.settings.JadxProject;
 import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JNode;
-import jadx.gui.ui.ContentPanel;
 import jadx.gui.ui.MainWindow;
+import jadx.gui.ui.panel.ContentPanel;
 import jadx.gui.utils.CaretPositionFix;
 import jadx.gui.utils.DefaultPopupMenuListener;
 import jadx.gui.utils.JNodeCache;
@@ -38,10 +40,11 @@ public final class CodeArea extends AbstractCodeArea {
 
 	private static final long serialVersionUID = 6312736869579635796L;
 
-	CodeArea(ContentPanel contentPanel) {
-		super(contentPanel);
-		setSyntaxEditingStyle(node.getSyntaxName());
+	private @Nullable ICodeInfo cachedCodeInfo;
 
+	CodeArea(ContentPanel contentPanel, JNode node) {
+		super(contentPanel, node);
+		setSyntaxEditingStyle(node.getSyntaxName());
 		boolean isJavaCode = node instanceof JClass;
 		if (isJavaCode) {
 			((RSyntaxDocument) getDocument()).setSyntaxStyle(new JadxTokenMaker(this));
@@ -55,7 +58,7 @@ public final class CodeArea extends AbstractCodeArea {
 		addMouseListener(new MouseAdapter() {
 			@Override
 			public void mouseClicked(MouseEvent e) {
-				if (e.getClickCount() % 2 == 0 || e.isControlDown()) {
+				if (e.isControlDown() || jumpOnDoubleClick(e)) {
 					navToDecl(e.getPoint(), codeLinkGenerator);
 				}
 			}
@@ -66,48 +69,59 @@ public final class CodeArea extends AbstractCodeArea {
 		}
 	}
 
+	private boolean jumpOnDoubleClick(MouseEvent e) {
+		return e.getClickCount() == 2 && getMainWindow().getSettings().isJumpOnDoubleClick();
+	}
+
 	@SuppressWarnings("deprecation")
 	private void navToDecl(Point point, CodeLinkGenerator codeLinkGenerator) {
 		int offs = viewToModel(point);
-		JumpPosition jump = codeLinkGenerator.getJumpLinkAtOffset(CodeArea.this, offs);
-		if (jump != null) {
-			contentPanel.getTabbedPane().codeJump(jump);
+		JNode node = getJNodeAtOffset(codeLinkGenerator.getLinkSourceOffset(offs));
+		if (node != null) {
+			contentPanel.getTabbedPane().codeJump(node);
 		}
+	}
+
+	@Override
+	public ICodeInfo getCodeInfo() {
+		if (cachedCodeInfo == null) {
+			if (isDisposed()) {
+				LOG.debug("CodeArea used after dispose!");
+				return ICodeInfo.EMPTY;
+			}
+			cachedCodeInfo = Objects.requireNonNull(node.getCodeInfo());
+		}
+		return cachedCodeInfo;
 	}
 
 	@Override
 	public void load() {
 		if (getText().isEmpty()) {
-			setText(node.getContent());
+			setText(getCodeInfo().getCodeStr());
 			setCaretPosition(0);
 		}
 	}
 
 	@Override
 	public void refresh() {
-		setText(node.getContent());
+		cachedCodeInfo = null;
+		setText(getCodeInfo().getCodeStr());
 	}
 
 	private void addMenuItems() {
-		FindUsageAction findUsage = new FindUsageAction(this);
-		GoToDeclarationAction goToDeclaration = new GoToDeclarationAction(this);
-		RenameAction rename = new RenameAction(this);
-		CommentAction comment = new CommentAction(this);
-
-		JPopupMenu popup = getPopupMenu();
+		JNodePopupBuilder popup = new JNodePopupBuilder(this, getPopupMenu());
 		popup.addSeparator();
-		popup.add(findUsage);
-		popup.add(goToDeclaration);
-		popup.add(comment);
+		popup.add(new FindUsageAction(this));
+		popup.add(new GoToDeclarationAction(this));
+		popup.add(new CommentAction(this));
 		popup.add(new CommentSearchAction(this));
-		popup.add(rename);
-		popup.addPopupMenuListener(findUsage);
-		popup.addPopupMenuListener(goToDeclaration);
-		popup.addPopupMenuListener(comment);
-		popup.addPopupMenuListener(rename);
+		popup.add(new RenameAction(this));
+		popup.addSeparator();
+		popup.add(new FridaAction(this));
+		popup.add(new XposedAction(this));
 
 		// move caret on mouse right button click
-		popup.addPopupMenuListener(new DefaultPopupMenuListener() {
+		popup.getMenu().addPopupMenuListener(new DefaultPopupMenuListener() {
 			@Override
 			public void popupMenuWillBecomeVisible(PopupMenuEvent e) {
 				CodeArea codeArea = CodeArea.this;
@@ -165,12 +179,12 @@ public final class CodeArea extends AbstractCodeArea {
 		if (foundNode == null) {
 			return null;
 		}
-		CodePosition pos = getDecompiler().getDefinitionPosition(foundNode);
-		if (pos == null) {
-			return null;
+		if (foundNode == node.getJavaNode()) {
+			// current node
+			return new JumpPosition(node);
 		}
 		JNode jNode = convertJavaNode(foundNode);
-		return new JumpPosition(jNode.getRootClass(), pos.getLine(), JumpPosition.getDefPos(jNode));
+		return new JumpPosition(jNode);
 	}
 
 	private JNode convertJavaNode(JavaNode javaNode) {
@@ -178,12 +192,25 @@ public final class CodeArea extends AbstractCodeArea {
 		return nodeCache.makeFrom(javaNode);
 	}
 
+	@Nullable
 	public JNode getNodeUnderCaret() {
-		int start = getWordStart(getCaretPosition());
+		int caretPos = getCaretPosition();
+		Token token = modelToToken(caretPos);
+		if (token == null) {
+			return null;
+		}
+		int start = adjustOffsetForToken(token);
 		if (start == -1) {
-			start = getCaretPosition();
+			start = caretPos;
 		}
 		return getJNodeAtOffset(start);
+	}
+
+	@Nullable
+	public JNode getNodeUnderMouse() {
+		Point pos = UiUtils.getMousePosition(this);
+		int offset = adjustOffsetForToken(viewToToken(pos));
+		return getJNodeAtOffset(offset);
 	}
 
 	@Nullable
@@ -203,25 +230,45 @@ public final class CodeArea extends AbstractCodeArea {
 			return null;
 		}
 		try {
-			// TODO: add direct mapping for code offset to CodeWriter (instead of line and line offset pair)
-			int line = this.getLineOfOffset(offset);
-			int lineOffset = offset - this.getLineStartOffset(line);
-			return node.getJavaNodeAtPosition(getDecompiler(), line + 1, lineOffset + 1);
+			return getJadxWrapper().getDecompiler().getJavaNodeAtPosition(getCodeInfo(), offset);
 		} catch (Exception e) {
 			LOG.error("Can't get java node by offset: {}", offset, e);
 		}
 		return null;
 	}
 
+	public JavaNode getClosestJavaNode(int offset) {
+		try {
+			return getJadxWrapper().getDecompiler().getClosestJavaNode(getCodeInfo(), offset);
+		} catch (Exception e) {
+			LOG.error("Can't get java node by offset: {}", offset, e);
+			return null;
+		}
+	}
+
+	public JavaClass getJavaClassIfAtPos(int pos) {
+		try {
+			ICodeInfo codeInfo = getCodeInfo();
+			if (codeInfo.hasMetadata()) {
+				ICodeAnnotation ann = codeInfo.getCodeMetadata().getAt(pos);
+				if (ann != null && ann.getAnnType() == ICodeAnnotation.AnnType.CLASS) {
+					return (JavaClass) getJadxWrapper().getDecompiler().getJavaNodeByCodeAnnotation(codeInfo, ann);
+				}
+			}
+		} catch (Exception e) {
+			LOG.error("Can't get java node by offset: {}", pos, e);
+		}
+		return null;
+	}
+
 	public void refreshClass() {
 		if (node instanceof JClass) {
-			JClass cls = (JClass) node;
+			JClass cls = node.getRootClass();
 			try {
 				CaretPositionFix caretFix = new CaretPositionFix(this);
 				caretFix.save();
 
-				cls.reload();
-				getMainWindow().getCacheObject().getIndexService().refreshIndex(cls.getCls());
+				cachedCodeInfo = cls.reload(getMainWindow().getCacheObject());
 
 				ClassCodeContentPanel codeContentPanel = (ClassCodeContentPanel) this.contentPanel;
 				codeContentPanel.getTabbedPane().refresh(cls);
@@ -236,11 +283,17 @@ public final class CodeArea extends AbstractCodeArea {
 		return contentPanel.getTabbedPane().getMainWindow();
 	}
 
-	public JadxDecompiler getDecompiler() {
-		return getMainWindow().getWrapper().getDecompiler();
+	public JadxWrapper getJadxWrapper() {
+		return getMainWindow().getWrapper();
 	}
 
 	public JadxProject getProject() {
 		return getMainWindow().getProject();
+	}
+
+	@Override
+	public void dispose() {
+		super.dispose();
+		cachedCodeInfo = null;
 	}
 }

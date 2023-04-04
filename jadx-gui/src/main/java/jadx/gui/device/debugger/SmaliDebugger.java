@@ -4,59 +4,89 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
-import java.util.*;
 import java.util.AbstractMap.SimpleEntry;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
-import java.util.concurrent.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.github.hqktech.JDWP;
-import io.github.hqktech.JDWP.ArrayReference.Length.LengthReplyData;
-import io.github.hqktech.JDWP.ByteBuffer;
-import io.github.hqktech.JDWP.Event.Composite.*;
-import io.github.hqktech.JDWP.EventRequest.Set.ClassMatchRequest;
-import io.github.hqktech.JDWP.EventRequest.Set.CountRequest;
-import io.github.hqktech.JDWP.EventRequest.Set.LocationOnlyRequest;
-import io.github.hqktech.JDWP.EventRequest.Set.StepRequest;
-import io.github.hqktech.JDWP.Method.VariableTableWithGeneric.VarTableWithGenericData;
-import io.github.hqktech.JDWP.Method.VariableTableWithGeneric.VarWithGenericSlot;
-import io.github.hqktech.JDWP.ObjectReference;
-import io.github.hqktech.JDWP.ObjectReference.ReferenceType.ReferenceTypeReplyData;
-import io.github.hqktech.JDWP.ObjectReference.SetValues.FieldValueSetter;
-import io.github.hqktech.JDWP.Packet;
-import io.github.hqktech.JDWP.ReferenceType.FieldsWithGeneric.FieldsWithGenericData;
-import io.github.hqktech.JDWP.ReferenceType.FieldsWithGeneric.FieldsWithGenericReplyData;
-import io.github.hqktech.JDWP.ReferenceType.MethodsWithGeneric.MethodsWithGenericData;
-import io.github.hqktech.JDWP.ReferenceType.MethodsWithGeneric.MethodsWithGenericReplyData;
-import io.github.hqktech.JDWP.ReferenceType.Signature.SignatureReplyData;
-import io.github.hqktech.JDWP.StackFrame.GetValues.GetValuesReplyData;
-import io.github.hqktech.JDWP.StackFrame.GetValues.GetValuesSlots;
-import io.github.hqktech.JDWP.StackFrame.SetValues.SlotValueSetter;
-import io.github.hqktech.JDWP.StackFrame.ThisObject.ThisObjectReplyData;
-import io.github.hqktech.JDWP.StringReference.Value.ValueReplyData;
-import io.github.hqktech.JDWP.ThreadReference.Frames.FramesReplyData;
-import io.github.hqktech.JDWP.ThreadReference.Frames.FramesReplyDataFrames;
-import io.github.hqktech.JDWP.ThreadReference.Name.NameReplyData;
-import io.github.hqktech.JDWP.VirtualMachine.AllClassesWithGeneric.AllClassesWithGenericData;
-import io.github.hqktech.JDWP.VirtualMachine.AllClassesWithGeneric.AllClassesWithGenericReplyData;
-import io.github.hqktech.JDWP.VirtualMachine.AllThreads.AllThreadsReplyData;
-import io.github.hqktech.JDWP.VirtualMachine.AllThreads.AllThreadsReplyDataThreads;
-import io.github.hqktech.JDWP.VirtualMachine.CreateString.CreateStringReplyData;
+import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import io.github.skylot.jdwp.JDWP;
+import io.github.skylot.jdwp.JDWP.ArrayReference.Length.LengthReplyData;
+import io.github.skylot.jdwp.JDWP.ByteBuffer;
+import io.github.skylot.jdwp.JDWP.Event.Composite.BreakpointEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.ClassPrepareEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.ClassUnloadEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.EventData;
+import io.github.skylot.jdwp.JDWP.Event.Composite.ExceptionEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.FieldAccessEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.FieldModificationEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.MethodEntryEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.MethodExitEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.MethodExitWithReturnValueEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.MonitorContendedEnterEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.MonitorContendedEnteredEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.MonitorWaitEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.MonitorWaitedEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.SingleStepEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.ThreadDeathEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.ThreadStartEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.VMDeathEvent;
+import io.github.skylot.jdwp.JDWP.Event.Composite.VMStartEvent;
+import io.github.skylot.jdwp.JDWP.EventRequest.Set.ClassMatchRequest;
+import io.github.skylot.jdwp.JDWP.EventRequest.Set.CountRequest;
+import io.github.skylot.jdwp.JDWP.EventRequest.Set.LocationOnlyRequest;
+import io.github.skylot.jdwp.JDWP.EventRequest.Set.StepRequest;
+import io.github.skylot.jdwp.JDWP.Method.VariableTableWithGeneric.VarTableWithGenericData;
+import io.github.skylot.jdwp.JDWP.Method.VariableTableWithGeneric.VarWithGenericSlot;
+import io.github.skylot.jdwp.JDWP.ObjectReference;
+import io.github.skylot.jdwp.JDWP.ObjectReference.ReferenceType.ReferenceTypeReplyData;
+import io.github.skylot.jdwp.JDWP.ObjectReference.SetValues.FieldValueSetter;
+import io.github.skylot.jdwp.JDWP.Packet;
+import io.github.skylot.jdwp.JDWP.ReferenceType.FieldsWithGeneric.FieldsWithGenericData;
+import io.github.skylot.jdwp.JDWP.ReferenceType.FieldsWithGeneric.FieldsWithGenericReplyData;
+import io.github.skylot.jdwp.JDWP.ReferenceType.MethodsWithGeneric.MethodsWithGenericData;
+import io.github.skylot.jdwp.JDWP.ReferenceType.MethodsWithGeneric.MethodsWithGenericReplyData;
+import io.github.skylot.jdwp.JDWP.ReferenceType.Signature.SignatureReplyData;
+import io.github.skylot.jdwp.JDWP.StackFrame.GetValues.GetValuesReplyData;
+import io.github.skylot.jdwp.JDWP.StackFrame.GetValues.GetValuesSlots;
+import io.github.skylot.jdwp.JDWP.StackFrame.SetValues.SlotValueSetter;
+import io.github.skylot.jdwp.JDWP.StackFrame.ThisObject.ThisObjectReplyData;
+import io.github.skylot.jdwp.JDWP.StringReference.Value.ValueReplyData;
+import io.github.skylot.jdwp.JDWP.ThreadReference.Frames.FramesReplyData;
+import io.github.skylot.jdwp.JDWP.ThreadReference.Frames.FramesReplyDataFrames;
+import io.github.skylot.jdwp.JDWP.ThreadReference.Name.NameReplyData;
+import io.github.skylot.jdwp.JDWP.VirtualMachine.AllClassesWithGeneric.AllClassesWithGenericData;
+import io.github.skylot.jdwp.JDWP.VirtualMachine.AllClassesWithGeneric.AllClassesWithGenericReplyData;
+import io.github.skylot.jdwp.JDWP.VirtualMachine.AllThreads.AllThreadsReplyData;
+import io.github.skylot.jdwp.JDWP.VirtualMachine.AllThreads.AllThreadsReplyDataThreads;
+import io.github.skylot.jdwp.JDWP.VirtualMachine.CreateString.CreateStringReplyData;
 import io.reactivex.annotations.NonNull;
-import io.reactivex.annotations.Nullable;
 
 import jadx.api.plugins.input.data.AccessFlags;
 import jadx.gui.device.debugger.smali.RegisterInfo;
+import jadx.gui.utils.IOUtils;
 import jadx.gui.utils.ObjectPool;
 
 // TODO: Finish error notification, inner errors should be logged let user notice.
 
 public class SmaliDebugger {
 
+	private static final Logger LOG = LoggerFactory.getLogger(SmaliDebugger.class);
 	private final JDWP jdwp;
-	private int localTcpPort;
-	private InputStream inputStream;
-	private OutputStream outputStream;
+	private final int localTcpPort;
+	private final InputStream inputStream;
+	private final OutputStream outputStream;
 
 	// All event callbacks will be called in this queue, e.g. class prepare/unload
 	private static final Executor EVENT_LISTENER_QUEUE = Executors.newSingleThreadExecutor();
@@ -89,10 +119,13 @@ public class SmaliDebugger {
 	private static final ICommandResult SKIP_RESULT = res -> {
 	};
 
-	private SmaliDebugger(SuspendListener suspendListener, int localTcpPort, JDWP jdwp) {
+	private SmaliDebugger(SuspendListener suspendListener, int localTcpPort, JDWP jdwp, InputStream inputStream,
+			OutputStream outputStream) {
 		this.jdwp = jdwp;
 		this.localTcpPort = localTcpPort;
 		this.suspendListener = suspendListener;
+		this.inputStream = inputStream;
+		this.outputStream = outputStream;
 
 		oneOffEventReq = jdwp.eventRequest().cmdSet().newCountRequest();
 		oneOffEventReq.count = 1;
@@ -106,6 +139,7 @@ public class SmaliDebugger {
 		try {
 			byte[] bytes = JDWP.IDSizes.encode().getBytes();
 			JDWP.setPacketID(bytes, 1);
+			LOG.debug("Connecting to ADB {}:{}", host, port);
 			Socket socket = new Socket(host, port);
 			InputStream inputStream = socket.getInputStream();
 			OutputStream outputStream = socket.getOutputStream();
@@ -114,16 +148,14 @@ public class SmaliDebugger {
 			JDWP jdwp = initJDWP(outputStream, inputStream);
 			socket.setSoTimeout(0); // set back to 0 so the decodingLoop won't break for timeout.
 
-			SmaliDebugger debugger = new SmaliDebugger(suspendListener, port, jdwp);
-			debugger.inputStream = inputStream;
-			debugger.outputStream = outputStream;
+			SmaliDebugger debugger = new SmaliDebugger(suspendListener, port, jdwp, inputStream, outputStream);
 
 			debugger.decodingLoop();
 			debugger.listenClassUnloadEvent();
 			debugger.initPools();
 			return debugger;
 		} catch (IOException e) {
-			throw new SmaliDebuggerException(e);
+			throw new SmaliDebuggerException("Attach failed", e);
 		}
 	}
 
@@ -233,7 +265,7 @@ public class SmaliDebugger {
 		for (int i = 0; i < values.size(); i++) {
 			ObjectReference.GetValues.GetValuesReplyDataValues value = values.get(i);
 			flds.get(i).setValue(value.value.idOrValue)
-					.setType(getType(value.value.tag));
+					.setType(RuntimeType.fromJdwpTag(value.value.tag));
 		}
 	}
 
@@ -350,7 +382,7 @@ public class SmaliDebugger {
 						try {
 							resume();
 						} catch (SmaliDebuggerException e) {
-							e.printStackTrace();
+							LOG.error("Resume failed", e);
 						}
 					}
 				});
@@ -385,13 +417,13 @@ public class SmaliDebugger {
 							eventListenerMap.remove(reqID);
 						}
 					} catch (SmaliDebuggerException e) {
-						e.printStackTrace();
+						LOG.error("Method entry failed", e);
 					} finally {
 						if (!removeListener) {
 							try {
 								resume();
 							} catch (SmaliDebuggerException e) {
-								e.printStackTrace();
+								LOG.error("Resume failed", e);
 							}
 						}
 					}
@@ -473,7 +505,7 @@ public class SmaliDebugger {
 		ObjectReference.GetValues.GetValuesReplyData data =
 				jdwp.objectReference().cmdGetValues().decode(res.getBuf(), JDWP.PACKET_HEADER_SIZE);
 		fld.setValue(data.values.get(0).value.idOrValue)
-				.setType(getType(data.values.get(0).value.tag));
+				.setType(RuntimeType.fromJdwpTag(data.values.get(0).value.tag));
 	}
 
 	private long createString(String localStr) throws SmaliDebuggerException {
@@ -588,8 +620,8 @@ public class SmaliDebugger {
 			Packet res = readPacket(inputStream);
 			tryThrowError(res);
 			if (res.isReplyPacket() && res.getID() == 1) {
-				outputStream.write(JDWP.IDSizes.encode().setPacketID(1).getBytes()); // get id sizes for decoding & encoding of jdwp
-				// packets.
+				// get id sizes for decoding & encoding of jdwp packets.
+				outputStream.write(JDWP.IDSizes.encode().setPacketID(1).getBytes());
 				res = readPacket(inputStream);
 				tryThrowError(res);
 				if (res.isReplyPacket() && res.getID() == 1) {
@@ -604,15 +636,15 @@ public class SmaliDebugger {
 	}
 
 	private static void handShake(OutputStream outputStream, InputStream inputStream) throws SmaliDebuggerException {
-		byte[] buf = new byte[14];
+		byte[] buf;
 		try {
 			outputStream.write(JDWP.encodeHandShakePacket());
-			inputStream.read(buf, 0, 14);
+			buf = IOUtils.readNBytes(inputStream, 14);
 		} catch (Exception e) {
-			throw new SmaliDebuggerException("jdwp handshake failed, " + e.getMessage());
+			throw new SmaliDebuggerException("jdwp handshake failed", e);
 		}
-		if (!JDWP.decodeHandShakePacket(buf)) {
-			throw new SmaliDebuggerException("jdwp handshake failed.");
+		if (buf == null || !JDWP.decodeHandShakePacket(buf)) {
+			throw new SmaliDebuggerException("jdwp handshake bad reply");
 		}
 	}
 
@@ -632,23 +664,19 @@ public class SmaliDebugger {
 		return idGenerator.getAndAdd(1);
 	}
 
-	private static byte[] appendBytes(byte[] buf1, byte[] buf2) {
-		byte[] tempBuf = new byte[buf1.length + buf2.length];
-		System.arraycopy(buf1, 0, tempBuf, 0, buf1.length);
-		System.arraycopy(buf2, 0, tempBuf, buf1.length, buf2.length);
-		return tempBuf;
-	}
-
 	/**
 	 * Read & decode packets from Socket connection
 	 */
 	private void decodingLoop() {
 		Executors.newSingleThreadExecutor().execute(() -> {
 			boolean errFromCallback;
-			for (;;) {
+			while (true) {
 				errFromCallback = false;
 				try {
 					Packet res = readPacket(inputStream);
+					if (res == null) {
+						break;
+					}
 					suspendInfo.nextRound();
 					ICommandResult callback = callbackMap.remove(res.getID());
 					if (callback != null) {
@@ -665,7 +693,7 @@ public class SmaliDebugger {
 						printUnexpectedID(res.getID());
 					}
 				} catch (SmaliDebuggerException e) {
-					e.printStackTrace();
+					LOG.error("Error in debugger decoding loop", e);
 					if (!errFromCallback) { // fatal error
 						break;
 					}
@@ -696,8 +724,8 @@ public class SmaliDebugger {
 		sendCommand(buf, res -> {
 			try {
 				store.put(res);
-			} catch (InterruptedException e) {
-				e.printStackTrace();
+			} catch (Exception e) {
+				LOG.error("Command send failed", e);
 			}
 		});
 		Integer id = syncQueueID.getAndAdd(1);
@@ -732,11 +760,7 @@ public class SmaliDebugger {
 		for (JDWP.EventRequestDecoder event : data.events) {
 			EventListenerAdapter listener = eventListenerMap.get(event.getRequestID());
 			if (listener == null) {
-				try {
-					printUnexpectedID(event.getRequestID());
-				} catch (Exception e) {
-					e.printStackTrace();
-				}
+				LOG.error("Missing handler for id: {}", event.getRequestID());
 				continue;
 			}
 			if (event instanceof VMStartEvent) {
@@ -1104,31 +1128,39 @@ public class SmaliDebugger {
 	/**
 	 * Reads a JDWP packet.
 	 */
+	@Nullable
 	private static Packet readPacket(InputStream inputStream) throws SmaliDebuggerException {
-		byte[] bytes = new byte[JDWP.PACKET_HEADER_SIZE];
 		try {
-			if (inputStream.read(bytes, 0, bytes.length) == bytes.length) {
-				int len = JDWP.getPacketLength(bytes, 0) - JDWP.PACKET_HEADER_SIZE;
-				if (len > 0) {
-					byte[] payload = new byte[len];
-					int readSize = 0;
-					do {
-						readSize += inputStream.read(payload, readSize, len - readSize);
-						if (readSize == len) {
-							bytes = appendBytes(bytes, payload);
-							break;
-						}
-					} while (true);
-				}
-				return Packet.make(bytes);
+			byte[] header = IOUtils.readNBytes(inputStream, JDWP.PACKET_HEADER_SIZE);
+			if (header == null) {
+				// stream ended
+				return null;
 			}
+			int bodyLength = JDWP.getPacketLength(header, 0) - JDWP.PACKET_HEADER_SIZE;
+			if (bodyLength <= 0) {
+				return Packet.make(header);
+			}
+			byte[] body = IOUtils.readNBytes(inputStream, bodyLength);
+			if (body == null) {
+				throw new SmaliDebuggerException("Stream truncated");
+			}
+			return Packet.make(concatBytes(header, body));
 		} catch (IOException e) {
-			throw new SmaliDebuggerException(e);
+			throw new SmaliDebuggerException("Read packer error", e);
 		}
-		throw new SmaliDebuggerException("read packet failed.");
 	}
 
-	private static void tryThrowError(Packet res) throws SmaliDebuggerException {
+	private static byte[] concatBytes(byte[] buf1, byte[] buf2) {
+		byte[] tempBuf = new byte[buf1.length + buf2.length];
+		System.arraycopy(buf1, 0, tempBuf, 0, buf1.length);
+		System.arraycopy(buf2, 0, tempBuf, buf1.length, buf2.length);
+		return tempBuf;
+	}
+
+	private static void tryThrowError(@Nullable Packet res) throws SmaliDebuggerException {
+		if (res == null) {
+			throw new SmaliDebuggerException("Stream ended");
+		}
 		if (res.isError()) {
 			throw new SmaliDebuggerException("(JDWP Error Code:" + res.getErrorCode() + ") "
 					+ res.getErrorText(), res.getErrorCode());
@@ -1137,62 +1169,6 @@ public class SmaliDebugger {
 
 	private interface ICommandResult {
 		void onCommandReply(Packet res) throws SmaliDebuggerException;
-	}
-
-	private abstract class EventListenerAdapter {
-		void onVMStart(VMStartEvent event) {
-		}
-
-		void onVMDeath(VMDeathEvent event) {
-		}
-
-		void onSingleStep(SingleStepEvent event) {
-		}
-
-		void onBreakpoint(BreakpointEvent event) {
-		}
-
-		void onMethodEntry(MethodEntryEvent event) {
-		}
-
-		void onMethodExit(MethodExitEvent event) {
-		}
-
-		void onMethodExitWithReturnValue(MethodExitWithReturnValueEvent event) {
-		}
-
-		void onMonitorContendedEnter(MonitorContendedEnterEvent event) {
-		}
-
-		void onMonitorContendedEntered(MonitorContendedEnteredEvent event) {
-		}
-
-		void onMonitorWait(MonitorWaitEvent event) {
-		}
-
-		void onMonitorWaited(MonitorWaitedEvent event) {
-		}
-
-		void onException(ExceptionEvent event) {
-		}
-
-		void onThreadStart(ThreadStartEvent event) {
-		}
-
-		void onThreadDeath(ThreadDeathEvent event) {
-		}
-
-		void onClassPrepare(ClassPrepareEvent event) {
-		}
-
-		void onClassUnload(ClassUnloadEvent event) {
-		}
-
-		void onFieldAccess(FieldAccessEvent event) {
-		}
-
-		void onFieldModification(FieldModificationEvent event) {
-		}
 	}
 
 	public static class RuntimeField extends RuntimeValue {
@@ -1252,46 +1228,7 @@ public class SmaliDebugger {
 	}
 
 	private RuntimeRegister buildRegister(int num, int tag, ByteBuffer buf) throws SmaliDebuggerException {
-		return new RuntimeRegister(num, getType(tag), buf);
-	}
-
-	private RuntimeType getType(int tag) throws SmaliDebuggerException {
-		switch (tag) {
-			case JDWP.Tag.ARRAY:
-				return RuntimeType.ARRAY;
-			case JDWP.Tag.BYTE:
-				return RuntimeType.BYTE;
-			case JDWP.Tag.CHAR:
-				return RuntimeType.CHAR;
-			case JDWP.Tag.OBJECT:
-				return RuntimeType.OBJECT;
-			case JDWP.Tag.FLOAT:
-				return RuntimeType.FLOAT;
-			case JDWP.Tag.DOUBLE:
-				return RuntimeType.DOUBLE;
-			case JDWP.Tag.INT:
-				return RuntimeType.INT;
-			case JDWP.Tag.LONG:
-				return RuntimeType.LONG;
-			case JDWP.Tag.SHORT:
-				return RuntimeType.SHORT;
-			case JDWP.Tag.VOID:
-				return RuntimeType.VOID;
-			case JDWP.Tag.BOOLEAN:
-				return RuntimeType.BOOLEAN;
-			case JDWP.Tag.STRING:
-				return RuntimeType.STRING;
-			case JDWP.Tag.THREAD:
-				return RuntimeType.THREAD;
-			case JDWP.Tag.THREAD_GROUP:
-				return RuntimeType.THREAD_GROUP;
-			case JDWP.Tag.CLASS_LOADER:
-				return RuntimeType.CLASS_LOADER;
-			case JDWP.Tag.CLASS_OBJECT:
-				return RuntimeType.CLASS_OBJECT;
-			default:
-				throw new SmaliDebuggerException("Unexpected value: " + tag);
-		}
+		return new RuntimeRegister(num, RuntimeType.fromJdwpTag(tag), buf);
 	}
 
 	public static class RuntimeValue {
@@ -1349,7 +1286,10 @@ public class SmaliDebugger {
 		@Override
 		public String getType() {
 			String gen = getSignature();
-			return gen.isEmpty() ? this.slot.signature : gen;
+			if (gen == null || gen.isEmpty()) {
+				return this.slot.signature;
+			}
+			return gen;
 		}
 
 		@NonNull
@@ -1367,6 +1307,11 @@ public class SmaliDebugger {
 		public int getEndOffset() {
 			return (int) (slot.codeIndex + slot.length);
 		}
+
+		@Override
+		public boolean isMarkedAsParameter() {
+			return false;
+		}
 	}
 
 	public static class RuntimeDebugInfo {
@@ -1381,41 +1326,6 @@ public class SmaliDebugger {
 
 		public List<RuntimeVarInfo> getInfoList() {
 			return infoList;
-		}
-	}
-
-	public enum RuntimeType {
-		ARRAY(91, "[]"),
-		BYTE(66, "byte"),
-		CHAR(67, "char"),
-		OBJECT(76, "object"),
-		FLOAT(70, "float"),
-		DOUBLE(68, "double"),
-		INT(73, "int"),
-		LONG(74, "long"),
-		SHORT(83, "short"),
-		VOID(86, "void"),
-		BOOLEAN(90, "boolean"),
-		STRING(115, "string"),
-		THREAD(116, "thread"),
-		THREAD_GROUP(103, "thread_group"),
-		CLASS_LOADER(108, "class_loader"),
-		CLASS_OBJECT(99, "class_object");
-
-		private final int jdwpTag;
-		private final String desc;
-
-		RuntimeType(int tag, String desc) {
-			this.jdwpTag = tag;
-			this.desc = desc;
-		}
-
-		private int getTag() {
-			return jdwpTag;
-		}
-
-		public String getDesc() {
-			return this.desc;
 		}
 	}
 
@@ -1459,30 +1369,6 @@ public class SmaliDebugger {
 		void onUnloaded(String cls);
 	}
 
-	public static class SmaliDebuggerException extends Exception {
-		private final int errCode;
-		private static final long serialVersionUID = -1111111202102191403L;
-
-		public SmaliDebuggerException(Exception e) {
-			super(e);
-			errCode = -1;
-		}
-
-		public SmaliDebuggerException(String msg) {
-			super(msg);
-			this.errCode = -1;
-		}
-
-		public SmaliDebuggerException(String msg, int errCode) {
-			super(msg);
-			this.errCode = errCode;
-		}
-
-		public int getErrCode() {
-			return errCode;
-		}
-	}
-
 	/**
 	 * Listener for breakpoint, watch, step, etc.
 	 */
@@ -1494,99 +1380,4 @@ public class SmaliDebugger {
 		void onSuspendEvent(SuspendInfo current);
 	}
 
-	public static class SuspendInfo {
-		private boolean terminated;
-		private boolean newRound;
-		private final InfoSetter updater = new InfoSetter();
-
-		public long getThreadID() {
-			return updater.thread;
-		}
-
-		public long getClassID() {
-			return updater.clazz;
-		}
-
-		public long getMethodID() {
-			return updater.method;
-		}
-
-		public long getOffset() {
-			return updater.offset;
-		}
-
-		private InfoSetter update() {
-			updater.changed = false;
-			updater.nextRound(newRound);
-			this.newRound = false;
-			return updater;
-		}
-
-		// called by decodingLoop, to tell the updater even though the values are the same,
-		// they are decoded from another packet, they should be treated as new.
-		private void nextRound() {
-			newRound = true;
-		}
-
-		// according to JDWP document it's legal to fire two or more events on a same location,
-		// e.g. one for single step and the other for breakpoint, so when this happened we only
-		// want one of them.
-		private boolean isAnythingChanged() {
-			return updater.changed;
-		}
-
-		public boolean isTerminated() {
-			return terminated;
-		}
-
-		private void setTerminated() {
-			terminated = true;
-		}
-
-		private static class InfoSetter {
-			private long thread;
-			private long clazz;
-			private long method;
-			private long offset; // code offset;
-			private boolean changed;
-
-			private void nextRound(boolean newRound) {
-				if (!changed) {
-					changed = newRound;
-				}
-			}
-
-			private InfoSetter updateThread(long thread) {
-				if (!changed) {
-					changed = this.thread != thread;
-				}
-				this.thread = thread;
-				return this;
-			}
-
-			private InfoSetter updateClass(long clazz) {
-				if (!changed) {
-					changed = this.clazz != clazz;
-				}
-				this.clazz = clazz;
-				return this;
-			}
-
-			private InfoSetter updateMethod(long method) {
-				if (!changed) {
-					changed = this.method != method;
-				}
-				this.method = method;
-				return this;
-			}
-
-			private InfoSetter updateOffset(long offset) {
-				if (!changed) {
-					changed = this.offset != offset;
-				}
-				this.offset = offset;
-				return this;
-			}
-		}
-	}
 }

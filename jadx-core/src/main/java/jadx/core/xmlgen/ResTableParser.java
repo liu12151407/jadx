@@ -4,27 +4,33 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.api.ICodeInfo;
+import jadx.api.args.ResourceNameSource;
 import jadx.core.deobf.NameMapper;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.RootNode;
+import jadx.core.utils.BetterName;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.core.xmlgen.entry.EntryConfig;
 import jadx.core.xmlgen.entry.RawNamedValue;
 import jadx.core.xmlgen.entry.RawValue;
 import jadx.core.xmlgen.entry.ResourceEntry;
 import jadx.core.xmlgen.entry.ValuesParser;
 
-public class ResTableParser extends CommonBinaryParser {
+public class ResTableParser extends CommonBinaryParser implements IResParser {
 	private static final Logger LOG = LoggerFactory.getLogger(ResTableParser.class);
 
 	private static final Pattern VALID_RES_KEY_PATTERN = Pattern.compile("[\\w\\d_]+");
@@ -76,6 +82,7 @@ public class ResTableParser extends CommonBinaryParser {
 		this.useRawResName = useRawResNames;
 	}
 
+	@Override
 	public void decode(InputStream inputStream) throws IOException {
 		is = new ParserStream(inputStream);
 		decodeTableChunk();
@@ -91,14 +98,6 @@ public class ResTableParser extends CommonBinaryParser {
 		ICodeInfo content = XmlGenUtils.makeXmlDump(root.makeCodeWriter(), resStorage);
 		List<ResContainer> xmlFiles = resGen.makeResourcesXml();
 		return ResContainer.resourceTable("res", xmlFiles, content);
-	}
-
-	public ResourceStorage getResStorage() {
-		return resStorage;
-	}
-
-	public String[] getStrings() {
-		return strings;
 	}
 
 	void decodeTableChunk() throws IOException {
@@ -156,13 +155,31 @@ public class ResTableParser extends CommonBinaryParser {
 		while (is.getPos() < endPos) {
 			long chunkStart = is.getPos();
 			int type = is.readInt16();
-			if (type == RES_NULL_TYPE) {
-				continue;
-			}
-			if (type == RES_TABLE_TYPE_SPEC_TYPE) {
-				parseTypeSpecChunk();
-			} else if (type == RES_TABLE_TYPE_TYPE) {
-				parseTypeChunk(chunkStart, pkg);
+			LOG.trace("res package chunk start at {} type {}", chunkStart, type);
+			switch (type) {
+				case RES_NULL_TYPE:
+					LOG.info("Null chunk type encountered at offset {}", chunkStart);
+					break;
+				case RES_TABLE_TYPE_TYPE: // 0x0201
+					parseTypeChunk(chunkStart, pkg);
+					break;
+				case RES_TABLE_TYPE_SPEC_TYPE: // 0x0202
+					parseTypeSpecChunk(chunkStart);
+					break;
+				case RES_TABLE_TYPE_LIBRARY: // 0x0203
+					parseLibraryTypeChunk(chunkStart);
+					break;
+				case RES_TABLE_TYPE_OVERLAY: // 0x0204
+					parseOverlayTypeChunk(chunkStart);
+					break;
+				case RES_TABLE_TYPE_OVERLAY_POLICY: // 0x0205
+					throw new IOException(
+							String.format("Encountered unsupported chunk type RES_TABLE_TYPE_OVERLAY_POLICY at offset 0x%x ", chunkStart));
+				case RES_TABLE_TYPE_STAGED_ALIAS: // 0x0206
+					parseStagedAliasChunk(chunkStart);
+					break;
+				default:
+					LOG.warn("Unknown chunk type {} encountered at offset {}", type, chunkStart);
 			}
 		}
 		return pkg;
@@ -191,14 +208,14 @@ public class ResTableParser extends CommonBinaryParser {
 	}
 
 	private String makeNewKeyName(int idx) {
-		return "JADX_DEOBF_" + idx;
+		return String.format("jadx_deobf_0x%08x", idx);
 	}
 
 	@SuppressWarnings("unused")
-	private void parseTypeSpecChunk() throws IOException {
+	private void parseTypeSpecChunk(long chunkStart) throws IOException {
 		is.checkInt16(0x0010, "Unexpected type spec header size");
-		/* int size = */
-		is.readInt32();
+		int chunkSize = is.readInt32();
+		long expectedEndPos = chunkStart + chunkSize;
 
 		int id = is.readInt8();
 		is.skip(3);
@@ -206,17 +223,51 @@ public class ResTableParser extends CommonBinaryParser {
 		for (int i = 0; i < entryCount; i++) {
 			int entryFlag = is.readInt32();
 		}
+		if (is.getPos() != expectedEndPos) {
+			throw new IOException(String.format("Error reading type spec chunk at offset 0x%x", chunkStart));
+		}
 	}
 
+	private void parseLibraryTypeChunk(long chunkStart) throws IOException {
+		LOG.trace("parsing library type chunk starting at offset {}", chunkStart);
+		is.checkInt16(12, "Unexpected header size");
+		int chunkSize = is.readInt32();
+		long expectedEndPos = chunkStart + chunkSize;
+		int count = is.readInt32();
+		for (int i = 0; i < count; i++) {
+			int packageId = is.readInt32();
+			String packageName = is.readString16Fixed(128);
+			LOG.info("Found resource shared library {}, pkgId: {}", packageName, packageId);
+			if (is.getPos() > expectedEndPos) {
+				throw new IOException("reading after chunk end");
+			}
+		}
+		if (is.getPos() != expectedEndPos) {
+			throw new IOException(String.format("Error reading library chunk at offset 0x%x", chunkStart));
+		}
+	}
+
+	/**
+	 * Parse an <code>ResTable_type</code> (except for the 2 bytes <code>uint16_t</code>
+	 * from <code>ResChunk_header</code>).
+	 *
+	 * @see <a href=
+	 *      "https://github.com/aosp-mirror/platform_frameworks_base/blob/master/libs/androidfw/include/androidfw/ResourceTypes.h"></a>ResourceTypes.h</a>
+	 */
 	private void parseTypeChunk(long start, PackageChunk pkg) throws IOException {
 		/* int headerSize = */
 		is.readInt16();
 		/* int size = */
-		is.readInt32();
+		long chunkSize = is.readUInt32();
+		long chunkEnd = start + chunkSize;
 
+		// The type identifier this chunk is holding. Type IDs start at 1 (corresponding
+		// to the value of the type bits in a resource identifier). 0 is invalid.
 		int id = is.readInt8();
-		is.checkInt8(0, "type chunk, res0");
-		is.checkInt16(0, "type chunk, res1");
+		int flags = is.readInt8(); // 0 or 1
+		boolean flagSparse = (flags == 1);
+
+		is.checkInt16(0, "type chunk, reserved");
 		int entryCount = is.readInt32();
 		long entriesStart = start + is.readInt32();
 
@@ -227,17 +278,68 @@ public class ResTableParser extends CommonBinaryParser {
 			LOG.warn("Invalid config flags detected: {}{}", typeName, config.getQualifiers());
 		}
 
-		int[] entryIndexes = new int[entryCount];
-		for (int i = 0; i < entryCount; i++) {
-			entryIndexes[i] = is.readInt32();
-		}
-
-		is.checkPos(entriesStart, "Expected entry start");
-		for (int i = 0; i < entryCount; i++) {
-			if (entryIndexes[i] != NO_ENTRY) {
-				parseEntry(pkg, id, i, config.getQualifiers());
+		Map<Integer, Integer> entryOffsetMap = new LinkedHashMap<>(entryCount);
+		if (flagSparse) {
+			for (int i = 0; i < entryCount; i++) {
+				entryOffsetMap.put(is.readInt16(), is.readInt16());
+			}
+		} else {
+			for (int i = 0; i < entryCount; i++) {
+				entryOffsetMap.put(i, is.readInt32());
 			}
 		}
+		is.checkPos(entriesStart, "Expected entry start");
+		int processed = 0;
+		for (int index : entryOffsetMap.keySet()) {
+			int offset = entryOffsetMap.get(index);
+			if (offset != NO_ENTRY) {
+				if (is.getPos() >= chunkEnd) {
+					// Certain resource obfuscated apps like com.facebook.orca have more entries defined
+					// than actually fit into the chunk size -> ignore the remaining entries
+					LOG.warn("End of chunk reached - ignoring remaining {} entries", entryCount - processed);
+					break;
+				}
+				parseEntry(pkg, id, index, config.getQualifiers());
+			}
+			processed++;
+		}
+		if (chunkEnd > is.getPos()) {
+			// Skip remaining unknown data in this chunk (e.g. type 8 entries")
+			long skipSize = chunkEnd - is.getPos();
+			LOG.debug("Unknown data at the end of type chunk encountered, skipping {} bytes and continuing at offset {}", skipSize,
+					chunkEnd);
+			is.skip(skipSize);
+		}
+	}
+
+	private void parseOverlayTypeChunk(long chunkStart) throws IOException {
+		LOG.trace("parsing overlay type chunk starting at offset {}", chunkStart);
+		// read ResTable_overlayable_header
+		/* headerSize = */ is.readInt16(); // usually 1032 bytes
+		int chunkSize = is.readInt32(); // e.g. 1056 bytes
+		long expectedEndPos = chunkStart + chunkSize;
+		String name = is.readString16Fixed(256); // 512 bytes
+		String actor = is.readString16Fixed(256); // 512 bytes
+		LOG.trace("Overlay header data: name={} actor={}", name, actor);
+		// skip: ResTable_overlayable_policy_header + ResTable_ref * x
+		is.skipToPos(expectedEndPos, "overlay chunk end");
+	}
+
+	private void parseStagedAliasChunk(long chunkStart) throws IOException {
+		// read ResTable_staged_alias_header
+		LOG.trace("parsing staged alias chunk starting at offset {}", chunkStart);
+		/* headerSize = */ is.readInt16();
+		int chunkSize = is.readInt32();
+		long expectedEndPos = chunkStart + chunkSize;
+		int count = is.readInt32();
+
+		for (int i = 0; i < count; i++) {
+			// read ResTable_staged_alias_entry
+			int stagedResId = is.readInt32();
+			int finalizedResId = is.readInt32();
+			LOG.debug("Staged alias: stagedResId {} finalizedResId {}", stagedResId, finalizedResId);
+		}
+		is.skipToPos(expectedEndPos, "staged alias chunk end");
 	}
 
 	private void parseEntry(PackageChunk pkg, int typeId, int entryId, String config) throws IOException {
@@ -251,7 +353,7 @@ public class ResTableParser extends CommonBinaryParser {
 		int resRef = pkg.getId() << 24 | typeId << 16 | entryId;
 		String typeName = pkg.getTypeStrings()[typeId - 1];
 		String origKeyName = pkg.getKeyStrings()[key];
-		ResourceEntry newResEntry = new ResourceEntry(resRef, pkg.getName(), typeName, getResName(resRef, origKeyName), config);
+		ResourceEntry newResEntry = new ResourceEntry(resRef, pkg.getName(), typeName, getResName(typeName, resRef, origKeyName), config);
 		ResourceEntry prevResEntry = resStorage.searchEntryWithSameName(newResEntry);
 		if (prevResEntry != null) {
 			newResEntry = newResEntry.copyWithId();
@@ -280,7 +382,7 @@ public class ResTableParser extends CommonBinaryParser {
 		resStorage.add(newResEntry);
 	}
 
-	private String getResName(int resRef, String origKeyName) {
+	private String getResName(String typeName, int resRef, String origKeyName) {
 		if (this.useRawResName) {
 			return origKeyName;
 		}
@@ -288,32 +390,66 @@ public class ResTableParser extends CommonBinaryParser {
 		if (renamedKey != null) {
 			return renamedKey;
 		}
-		if (VALID_RES_KEY_PATTERN.matcher(origKeyName).matches()) {
+		// styles might contain dots in name, search for alias only for resources names
+		if (typeName.equals("style")) {
 			return origKeyName;
 		}
 		FieldNode constField = root.getConstValues().getGlobalConstFields().get(resRef);
+		String resAlias = getResAlias(resRef, origKeyName, constField);
+		resStorage.addRename(resRef, resAlias);
 		if (constField != null) {
+			constField.rename(resAlias);
 			constField.add(AFlag.DONT_RENAME);
-			return constField.getName();
+		}
+		return resAlias;
+	}
+
+	private String getResAlias(int resRef, String origKeyName, @Nullable FieldNode constField) {
+		String name;
+		if (constField == null || constField.getTopParentClass().isSynthetic()) {
+			name = origKeyName;
+		} else {
+			name = getBetterName(root.getArgs().getResourceNameSource(), origKeyName, constField.getName());
+		}
+		Matcher matcher = VALID_RES_KEY_PATTERN.matcher(name);
+		if (matcher.matches()) {
+			return name;
 		}
 		// Making sure origKeyName compliant with resource file name rules
-		Matcher m = VALID_RES_KEY_PATTERN.matcher(origKeyName);
+		String cleanedResName = cleanName(matcher);
+		String newResName = String.format("res_0x%08x", resRef);
+		if (cleanedResName.isEmpty()) {
+			return newResName;
+		}
+		// autogenerate key name, appended with cleaned origKeyName to be human-friendly
+		return newResName + "_" + cleanedResName.toLowerCase();
+	}
+
+	public static String getBetterName(ResourceNameSource nameSource, String resName, String codeName) {
+		switch (nameSource) {
+			case AUTO:
+				return BetterName.compareAndGet(resName, codeName);
+			case RESOURCES:
+				return resName;
+			case CODE:
+				return codeName;
+
+			default:
+				throw new JadxRuntimeException("Unexpected ResourceNameSource value: " + nameSource);
+		}
+	}
+
+	private String cleanName(Matcher matcher) {
 		StringBuilder sb = new StringBuilder();
 		boolean first = true;
-		while (m.find()) {
+		while (matcher.find()) {
 			if (!first) {
 				sb.append("_");
 			}
-			sb.append(m.group());
+			sb.append(matcher.group());
 			first = false;
 		}
-		// autogenerate key name, appended with cleaned origKeyName to be human-friendly
-		String newResName = "res_" + resRef;
-		String cleanedResName = sb.toString();
-		if (!cleanedResName.isEmpty()) {
-			newResName += "_" + cleanedResName.toLowerCase();
-		}
-		return newResName;
+		return sb.toString();
 	}
 
 	private RawNamedValue parseValueMap() throws IOException {
@@ -424,5 +560,15 @@ public class ResTableParser extends CommonBinaryParser {
 		}
 		is.skipToPos(start + length, "readScriptOrVariantChar");
 		return sb.toString();
+	}
+
+	@Override
+	public ResourceStorage getResStorage() {
+		return resStorage;
+	}
+
+	@Override
+	public String[] getStrings() {
+		return strings;
 	}
 }

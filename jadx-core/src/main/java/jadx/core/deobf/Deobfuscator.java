@@ -2,17 +2,26 @@ package jadx.core.deobf;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.NavigableSet;
+import java.util.Set;
+import java.util.TreeSet;
 
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.api.JadxArgs;
+import jadx.api.args.DeobfuscationMapFileMode;
+import jadx.api.plugins.input.data.attributes.JadxAttrType;
+import jadx.api.plugins.input.data.attributes.types.SourceFileAttr;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.MethodOverrideAttr;
-import jadx.core.dex.attributes.nodes.SourceFileAttr;
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.FieldInfo;
 import jadx.core.dex.info.MethodInfo;
@@ -68,22 +77,25 @@ public class Deobfuscator {
 	}
 
 	public void execute() {
-		if (!args.isDeobfuscationForceSave()) {
-			deobfPresets.load();
-			for (Map.Entry<String, String> pkgEntry : deobfPresets.getPkgPresetMap().entrySet()) {
-				addPackagePreset(pkgEntry.getKey(), pkgEntry.getValue());
+		if (args.getDeobfuscationMapFileMode().shouldRead()) {
+			if (deobfPresets.load()) {
+				for (Map.Entry<String, String> pkgEntry : deobfPresets.getPkgPresetMap().entrySet()) {
+					addPackagePreset(pkgEntry.getKey(), pkgEntry.getValue());
+				}
+				deobfPresets.getPkgPresetMap().clear(); // not needed anymore
+				initIndexes();
 			}
-			deobfPresets.getPkgPresetMap().clear(); // not needed anymore
-			initIndexes();
 		}
 		process();
 	}
 
 	public void savePresets() {
+		DeobfuscationMapFileMode mode = args.getDeobfuscationMapFileMode();
+		if (!mode.shouldWrite()) {
+			return;
+		}
 		Path deobfMapFile = deobfPresets.getDeobfMapFile();
-		if (Files.exists(deobfMapFile) && !args.isDeobfuscationForceSave()) {
-			LOG.warn("Deobfuscation map file '{}' exists. Use command line option '--deobf-rewrite-cfg' to rewrite it",
-					deobfMapFile.toAbsolutePath());
+		if (mode == DeobfuscationMapFileMode.READ_OR_SAVE && Files.exists(deobfMapFile)) {
 			return;
 		}
 		try {
@@ -104,16 +116,25 @@ public class Deobfuscator {
 				deobfPresets.getPkgPresetMap().put(p.getName(), p.getAlias());
 			}
 		}
-		for (DeobfClsInfo deobfClsInfo : clsMap.values()) {
-			if (deobfClsInfo.getAlias() != null) {
-				deobfPresets.getClsPresetMap().put(deobfClsInfo.getCls().getClassInfo().makeRawFullName(), deobfClsInfo.getAlias());
+		for (ClassNode cls : root.getClasses()) {
+			ClassInfo classInfo = cls.getClassInfo();
+			if (classInfo.hasAlias()) {
+				deobfPresets.getClsPresetMap().put(classInfo.makeRawFullName(), classInfo.getAliasShortName());
 			}
-		}
-		for (FieldInfo fld : fldMap.keySet()) {
-			deobfPresets.getFldPresetMap().put(fld.getRawFullId(), fld.getAlias());
-		}
-		for (MethodInfo mth : mthMap.keySet()) {
-			deobfPresets.getMthPresetMap().put(mth.getRawFullId(), mth.getAlias());
+
+			for (FieldNode fld : cls.getFields()) {
+				FieldInfo fieldInfo = fld.getFieldInfo();
+				if (fieldInfo.hasAlias()) {
+					deobfPresets.getFldPresetMap().put(fieldInfo.getRawFullId(), fld.getAlias());
+				}
+			}
+
+			for (MethodNode mth : cls.getMethods()) {
+				MethodInfo methodInfo = mth.getMethodInfo();
+				if (methodInfo.hasAlias()) {
+					deobfPresets.getMthPresetMap().put(methodInfo.getRawFullId(), methodInfo.getAlias());
+				}
+			}
 		}
 	}
 
@@ -211,11 +232,6 @@ public class Deobfuscator {
 	}
 
 	private void renameMethod(MethodNode mth) {
-		MethodInfo mthInfo = mth.getMethodInfo();
-		Set<String> names = deobfPresets.getForVars(mthInfo);
-		if (names != null) {
-			mthInfo.setVarNameMap(names);
-		}
 		String alias = getMethodAlias(mth);
 		if (alias != null) {
 			applyMethodAlias(mth, alias);
@@ -255,8 +271,10 @@ public class Deobfuscator {
 	/**
 	 * Gets package node for full package name
 	 *
-	 * @param fullPkgName full package name
-	 * @param create      if {@code true} then will create all absent objects
+	 * @param fullPkgName
+	 *                    full package name
+	 * @param create
+	 *                    if {@code true} then will create all absent objects
 	 * @return package node object or {@code null} if no package found and <b>create</b> set to
 	 *         {@code false}
 	 */
@@ -337,6 +355,21 @@ public class Deobfuscator {
 
 	public String getPkgAlias(ClassNode cls) {
 		ClassInfo classInfo = cls.getClassInfo();
+		if (classInfo.hasAliasPkg()) {
+			// already renamed
+			PackageNode pkg = getPackageNode(classInfo.getPackage(), true);
+			// update all parts of package
+			String[] aliasParts = classInfo.getAliasPkg().split("\\.");
+			PackageNode subPkg = pkg;
+			for (int i = aliasParts.length - 1; i >= 0; i--) {
+				String aliasPart = aliasParts[i];
+				if (!subPkg.getName().equals(aliasPart)) {
+					subPkg.setAlias(aliasPart);
+				}
+				subPkg = subPkg.getParentPackage();
+			}
+			return pkg.getFullAlias();
+		}
 		PackageNode pkg;
 		DeobfClsInfo deobfClsInfo = clsMap.get(classInfo);
 		if (deobfClsInfo != null) {
@@ -357,10 +390,10 @@ public class Deobfuscator {
 		String alias = null;
 		String pkgName = null;
 		if (this.parseKotlinMetadata) {
-			ClassInfo kotlinCls = KotlinMetadataUtils.getClassName(cls);
+			ClsAliasPair kotlinCls = KotlinMetadataUtils.getClassAlias(cls);
 			if (kotlinCls != null) {
-				alias = prepareNameFull(kotlinCls.getShortName(), "C");
-				pkgName = kotlinCls.getPackage();
+				alias = kotlinCls.getName();
+				pkgName = kotlinCls.getPkg();
 			}
 		}
 		if (alias == null && this.useSourceNameAsAlias) {
@@ -395,7 +428,9 @@ public class Deobfuscator {
 			return "Enum";
 		}
 		String result = "";
-		if (cls.getAccessFlags().isAbstract()) {
+		if (cls.getAccessFlags().isInterface()) {
+			result += "Interface";
+		} else if (cls.getAccessFlags().isAbstract()) {
 			result += "Abstract";
 		}
 
@@ -443,7 +478,7 @@ public class Deobfuscator {
 
 	@Nullable
 	private String getAliasFromSourceFile(ClassNode cls) {
-		SourceFileAttr sourceFileAttr = cls.get(AType.SOURCE_FILE);
+		SourceFileAttr sourceFileAttr = cls.get(JadxAttrType.SOURCE_FILE);
 		if (sourceFileAttr == null) {
 			return null;
 		}
@@ -468,7 +503,7 @@ public class Deobfuscator {
 		if (otherCls != null) {
 			return null;
 		}
-		cls.remove(AType.SOURCE_FILE);
+		cls.remove(JadxAttrType.SOURCE_FILE);
 		return name;
 	}
 
@@ -552,6 +587,7 @@ public class Deobfuscator {
 		if (!pkg.hasAlias()) {
 			String pkgName = pkg.getName();
 			if ((args.isDeobfuscationOn() && shouldRename(pkgName))
+					&& (pkg.getParentPackage() != rootPackage || !TldHelper.contains(pkgName)) // check if first level is a valid tld
 					|| (args.isRenameValid() && !NameMapper.isValidIdentifier(pkgName))
 					|| (args.isRenamePrintable() && !NameMapper.isAllCharsPrintable(pkgName))) {
 				String pkgAlias = String.format("p%03d%s", pkgIndex++, prepareNamePart(pkg.getName()));
@@ -570,20 +606,6 @@ public class Deobfuscator {
 			return 'x' + Integer.toHexString(name.hashCode());
 		}
 		return NameMapper.removeInvalidCharsMiddle(name);
-	}
-
-	private String prepareNameFull(String name, String prefix) {
-		if (name.length() > maxLength) {
-			return makeHashName(name, prefix);
-		}
-		String result = NameMapper.removeInvalidChars(name, prefix);
-		if (result.isEmpty()) {
-			return makeHashName(name, prefix);
-		}
-		if (NameMapper.isReserved(result)) {
-			return prefix + result;
-		}
-		return result;
 	}
 
 	private static String makeHashName(String name, String invalidPrefix) {

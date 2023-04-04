@@ -33,9 +33,12 @@ public class NLS {
 
 		LANG_LOCALES.add(new LangLocale("en", "US")); // As default language
 		LANG_LOCALES.add(new LangLocale("zh", "CN"));
+		LANG_LOCALES.add(new LangLocale("zh", "TW"));
 		LANG_LOCALES.add(new LangLocale("es", "ES"));
 		LANG_LOCALES.add(new LangLocale("de", "DE"));
 		LANG_LOCALES.add(new LangLocale("ko", "KR"));
+		LANG_LOCALES.add(new LangLocale("pt", "BR"));
+		LANG_LOCALES.add(new LangLocale("ru", "RU"));
 
 		LANG_LOCALES.forEach(NLS::load);
 
