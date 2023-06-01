@@ -3,10 +3,12 @@ package jadx.core.utils;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -14,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import org.jetbrains.annotations.Nullable;
@@ -37,6 +40,13 @@ public class Utils {
 			if (obj.charAt(last) == ';') {
 				return obj.substring(1, last).replace('/', '.');
 			}
+		}
+		return obj;
+	}
+
+	public static String cutObject(String obj) {
+		if (obj.charAt(0) == 'L') {
+			return obj.substring(1, obj.length() - 1);
 		}
 		return obj;
 	}
@@ -116,13 +126,37 @@ public class Utils {
 		return sb.toString();
 	}
 
+	public static String currentStackTrace() {
+		return getStackTrace(new Exception());
+	}
+
+	public static String currentStackTrace(int skipFrames) {
+		Exception e = new Exception();
+		StackTraceElement[] stackTrace = e.getStackTrace();
+		int len = stackTrace.length;
+		if (skipFrames < len) {
+			e.setStackTrace(Arrays.copyOfRange(stackTrace, skipFrames, len));
+		}
+		return getStackTrace(e);
+	}
+
+	public static String getFullStackTrace(Throwable throwable) {
+		return getStackTrace(throwable, false);
+	}
+
 	public static String getStackTrace(Throwable throwable) {
+		return getStackTrace(throwable, true);
+	}
+
+	private static String getStackTrace(Throwable throwable, boolean filter) {
 		if (throwable == null) {
 			return "";
 		}
 		StringWriter sw = new StringWriter();
 		PrintWriter pw = new PrintWriter(sw, true);
-		filterRecursive(throwable);
+		if (filter) {
+			filterRecursive(throwable);
+		}
 		throwable.printStackTrace(pw);
 		return sw.getBuffer().toString();
 	}
@@ -343,6 +377,27 @@ public class Utils {
 			map.put(mapKey.apply(v), v);
 		}
 		return map;
+	}
+
+	/**
+	 * Simple DFS visit for tree (cycles not allowed)
+	 */
+	public static <T> void treeDfsVisit(T root, Function<T, List<T>> childrenProvider, Consumer<T> visitor) {
+		multiRootTreeDfsVisit(Collections.singletonList(root), childrenProvider, visitor);
+	}
+
+	public static <T> void multiRootTreeDfsVisit(List<T> roots, Function<T, List<T>> childrenProvider, Consumer<T> visitor) {
+		Deque<T> queue = new ArrayDeque<>(roots);
+		while (true) {
+			T current = queue.pollLast();
+			if (current == null) {
+				return;
+			}
+			visitor.accept(current);
+			for (T child : childrenProvider.apply(current)) {
+				queue.addLast(child);
+			}
+		}
 	}
 
 	@Nullable

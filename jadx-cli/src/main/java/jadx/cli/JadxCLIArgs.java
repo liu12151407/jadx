@@ -1,5 +1,6 @@
 package jadx.cli;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -22,8 +23,10 @@ import jadx.api.JadxArgs;
 import jadx.api.JadxArgs.RenameEnum;
 import jadx.api.JadxArgs.UseKotlinMethodsForVarNames;
 import jadx.api.JadxDecompiler;
-import jadx.api.args.DeobfuscationMapFileMode;
+import jadx.api.args.GeneratedRenamesMappingFileMode;
+import jadx.api.args.IntegerFormat;
 import jadx.api.args.ResourceNameSource;
+import jadx.api.args.UserRenamesMappingsMode;
 import jadx.core.utils.exceptions.JadxException;
 import jadx.core.utils.files.FileUtils;
 
@@ -79,7 +82,7 @@ public class JadxCLIArgs {
 	@Parameter(names = { "--no-imports" }, description = "disable use of imports, always write entire package name")
 	protected boolean useImports = true;
 
-	@Parameter(names = { "--no-debug-info" }, description = "disable debug info")
+	@Parameter(names = { "--no-debug-info" }, description = "disable debug info parsing and processing")
 	protected boolean debugInfo = true;
 
 	@Parameter(names = { "--add-debug-lines" }, description = "add comments with debug line numbers if available")
@@ -90,6 +93,9 @@ public class JadxCLIArgs {
 
 	@Parameter(names = { "--no-inline-methods" }, description = "disable methods inline")
 	protected boolean inlineMethods = true;
+
+	@Parameter(names = { "--no-move-inner-classes" }, description = "disable move inner classes into parent")
+	protected boolean moveInnerClasses = true;
 
 	@Parameter(names = { "--no-inline-kotlin-lambda" }, description = "disable inline for Kotlin lambdas")
 	protected boolean allowInlineKotlinLambda = true;
@@ -106,6 +112,22 @@ public class JadxCLIArgs {
 	@Parameter(names = { "--respect-bytecode-access-modifiers" }, description = "don't change original access modifiers")
 	protected boolean respectBytecodeAccessModifiers = false;
 
+	@Parameter(
+			names = { "--mappings-path" },
+			description = "deobfuscation mappings file or directory. Allowed formats: Tiny and Tiny v2 (both '.tiny'), Enigma (.mapping) or Enigma directory"
+	)
+	protected Path userRenamesMappingsPath;
+
+	@Parameter(
+			names = { "--mappings-mode" },
+			description = "set mode for handling the deobfuscation mapping file:"
+					+ "\n 'read' - just read, user can always save manually (default)"
+					+ "\n 'read-and-autosave-every-change' - read and autosave after every change"
+					+ "\n 'read-and-autosave-before-closing' - read and autosave before exiting the app or closing the project"
+					+ "\n 'ignore' - don't read or save (can be used to skip loading mapping files referenced in the project file)"
+	)
+	protected UserRenamesMappingsMode userRenamesMappingsMode = UserRenamesMappingsMode.getDefault();
+
 	@Parameter(names = { "--deobf" }, description = "activate deobfuscation")
 	protected boolean deobfuscationOn = false;
 
@@ -117,26 +139,24 @@ public class JadxCLIArgs {
 
 	@Parameter(
 			names = { "--deobf-cfg-file" },
-			description = "deobfuscation map file, default: same dir and name as input file with '.jobf' extension"
+			description = "deobfuscation mappings file used for JADX auto-generated names (in the JOBF file format),"
+					+ " default: same dir and name as input file with '.jobf' extension"
 	)
-	protected String deobfuscationMapFile;
+	protected String generatedRenamesMappingFile;
 
 	@Parameter(
 			names = { "--deobf-cfg-file-mode" },
-			description = "set mode for handle deobfuscation map file:"
+			description = "set mode for handling the JADX auto-generated names' deobfuscation map file:"
 					+ "\n 'read' - read if found, don't save (default)"
 					+ "\n 'read-or-save' - read if found, save otherwise (don't overwrite)"
 					+ "\n 'overwrite' - don't read, always save"
 					+ "\n 'ignore' - don't read and don't save",
 			converter = DeobfuscationMapFileModeConverter.class
 	)
-	protected DeobfuscationMapFileMode deobfuscationMapFileMode = DeobfuscationMapFileMode.READ;
+	protected GeneratedRenamesMappingFileMode generatedRenamesMappingFileMode = GeneratedRenamesMappingFileMode.getDefault();
 
 	@Parameter(names = { "--deobf-use-sourcename" }, description = "use source file name as class name alias")
 	protected boolean deobfuscationUseSourceNameAsAlias = false;
-
-	@Parameter(names = { "--deobf-parse-kotlin-metadata" }, description = "parse kotlin metadata to class and package names")
-	protected boolean deobfuscationParseKotlinMetadata = false;
 
 	@Parameter(
 			names = { "--deobf-res-name-source" },
@@ -166,6 +186,16 @@ public class JadxCLIArgs {
 			converter = RenameConverter.class
 	)
 	protected Set<RenameEnum> renameFlags = EnumSet.allOf(RenameEnum.class);
+
+	@Parameter(
+			names = { "--integer-format" },
+			description = "how integers are displayed:"
+					+ "\n 'auto' - automatically select (default)"
+					+ "\n 'decimal' - use decimal"
+					+ "\n 'hexadecimal' - use hexadecimal",
+			converter = IntegerFormatConverter.class
+	)
+	protected IntegerFormat integerFormat = IntegerFormat.AUTO;
 
 	@Parameter(names = { "--fs-case-sensitive" }, description = "treat filesystem as case sensitive, false by default")
 	protected boolean fsCaseSensitive = false;
@@ -234,6 +264,10 @@ public class JadxCLIArgs {
 	}
 
 	private boolean process(JCommanderWrapper<JadxCLIArgs> jcw) {
+		files.addAll(jcw.getUnknownOptions());
+		if (jcw.processCommands()) {
+			return false;
+		}
 		if (printHelp) {
 			jcw.printUsage();
 			return false;
@@ -273,13 +307,16 @@ public class JadxCLIArgs {
 		args.setCfgOutput(cfgOutput);
 		args.setRawCFGOutput(rawCfgOutput);
 		args.setReplaceConsts(replaceConsts);
+		if (userRenamesMappingsPath != null) {
+			args.setUserRenamesMappingsPath(userRenamesMappingsPath);
+		}
+		args.setUserRenamesMappingsMode(userRenamesMappingsMode);
 		args.setDeobfuscationOn(deobfuscationOn);
-		args.setDeobfuscationMapFile(FileUtils.toFile(deobfuscationMapFile));
-		args.setDeobfuscationMapFileMode(deobfuscationMapFileMode);
+		args.setGeneratedRenamesMappingFile(FileUtils.toFile(generatedRenamesMappingFile));
+		args.setGeneratedRenamesMappingFileMode(generatedRenamesMappingFileMode);
 		args.setDeobfuscationMinLength(deobfuscationMinLength);
 		args.setDeobfuscationMaxLength(deobfuscationMaxLength);
 		args.setUseSourceNameAsClassAlias(deobfuscationUseSourceNameAsAlias);
-		args.setParseKotlinMetadata(deobfuscationParseKotlinMetadata);
 		args.setUseKotlinMethodsForVarNames(useKotlinMethodsForVarNames);
 		args.setResourceNameSource(resourceNameSource);
 		args.setEscapeUnicode(escapeUnicode);
@@ -290,11 +327,13 @@ public class JadxCLIArgs {
 		args.setInsertDebugLines(addDebugLines);
 		args.setInlineAnonymousClasses(inlineAnonymousClasses);
 		args.setInlineMethods(inlineMethods);
+		args.setMoveInnerClasses(moveInnerClasses);
 		args.setAllowInlineKotlinLambda(allowInlineKotlinLambda);
 		args.setExtractFinally(extractFinally);
 		args.setRenameFlags(renameFlags);
 		args.setFsCaseSensitive(fsCaseSensitive);
 		args.setCommentsLevel(commentsLevel);
+		args.setIntegerFormat(integerFormat);
 		args.setUseDxInput(useDx);
 		args.setPluginOptions(pluginOptions);
 		return args;
@@ -372,12 +411,24 @@ public class JadxCLIArgs {
 		return inlineMethods;
 	}
 
+	public boolean isMoveInnerClasses() {
+		return moveInnerClasses;
+	}
+
 	public boolean isAllowInlineKotlinLambda() {
 		return allowInlineKotlinLambda;
 	}
 
 	public boolean isExtractFinally() {
 		return extractFinally;
+	}
+
+	public Path getUserRenamesMappingsPath() {
+		return userRenamesMappingsPath;
+	}
+
+	public UserRenamesMappingsMode getUserRenamesMappingsMode() {
+		return userRenamesMappingsMode;
 	}
 
 	public boolean isDeobfuscationOn() {
@@ -392,20 +443,16 @@ public class JadxCLIArgs {
 		return deobfuscationMaxLength;
 	}
 
-	public String getDeobfuscationMapFile() {
-		return deobfuscationMapFile;
+	public String getGeneratedRenamesMappingFile() {
+		return generatedRenamesMappingFile;
 	}
 
-	public DeobfuscationMapFileMode getDeobfuscationMapFileMode() {
-		return deobfuscationMapFileMode;
+	public GeneratedRenamesMappingFileMode getGeneratedRenamesMappingFileMode() {
+		return generatedRenamesMappingFileMode;
 	}
 
 	public boolean isDeobfuscationUseSourceNameAsAlias() {
 		return deobfuscationUseSourceNameAsAlias;
-	}
-
-	public boolean isDeobfuscationParseKotlinMetadata() {
-		return deobfuscationParseKotlinMetadata;
 	}
 
 	public ResourceNameSource getResourceNameSource() {
@@ -414,6 +461,10 @@ public class JadxCLIArgs {
 
 	public UseKotlinMethodsForVarNames getUseKotlinMethodsForVarNames() {
 		return useKotlinMethodsForVarNames;
+	}
+
+	public IntegerFormat getIntegerFormat() {
+		return integerFormat;
 	}
 
 	public boolean isEscapeUnicode() {
@@ -509,9 +560,9 @@ public class JadxCLIArgs {
 		}
 	}
 
-	public static class DeobfuscationMapFileModeConverter extends BaseEnumConverter<DeobfuscationMapFileMode> {
+	public static class DeobfuscationMapFileModeConverter extends BaseEnumConverter<GeneratedRenamesMappingFileMode> {
 		public DeobfuscationMapFileModeConverter() {
-			super(DeobfuscationMapFileMode::valueOf, DeobfuscationMapFileMode::values);
+			super(GeneratedRenamesMappingFileMode::valueOf, GeneratedRenamesMappingFileMode::values);
 		}
 	}
 
@@ -530,6 +581,12 @@ public class JadxCLIArgs {
 	public static class LogLevelConverter extends BaseEnumConverter<LogHelper.LogLevelEnum> {
 		public LogLevelConverter() {
 			super(LogHelper.LogLevelEnum::valueOf, LogHelper.LogLevelEnum::values);
+		}
+	}
+
+	public static class IntegerFormatConverter extends BaseEnumConverter<IntegerFormat> {
+		public IntegerFormatConverter() {
+			super(IntegerFormat::valueOf, IntegerFormat::values);
 		}
 	}
 

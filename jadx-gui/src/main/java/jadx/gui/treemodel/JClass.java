@@ -1,7 +1,11 @@
 package jadx.gui.treemodel;
 
+import java.util.List;
+import java.util.Set;
+
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
+import javax.swing.JPopupMenu;
 
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 import org.jetbrains.annotations.NotNull;
@@ -11,19 +15,26 @@ import jadx.api.JavaClass;
 import jadx.api.JavaField;
 import jadx.api.JavaMethod;
 import jadx.api.JavaNode;
+import jadx.api.data.ICodeRename;
+import jadx.api.data.impl.JadxCodeRename;
+import jadx.api.data.impl.JadxNodeRef;
+import jadx.core.deobf.NameMapper;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.info.AccessInfo;
+import jadx.core.dex.nodes.ICodeNode;
+import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.TabbedPane;
 import jadx.gui.ui.codearea.ClassCodeContentPanel;
+import jadx.gui.ui.dialog.RenameDialog;
 import jadx.gui.ui.panel.ContentPanel;
 import jadx.gui.utils.CacheObject;
+import jadx.gui.utils.Icons;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.UiUtils;
 
-public class JClass extends JLoadableNode {
+public class JClass extends JLoadableNode implements JRenameNode {
 	private static final long serialVersionUID = -1239986875244097177L;
 
-	private static final ImageIcon ICON_CLASS = UiUtils.openSvgIcon("nodes/class");
 	private static final ImageIcon ICON_CLASS_ABSTRACT = UiUtils.openSvgIcon("nodes/abstractClass");
 	private static final ImageIcon ICON_CLASS_PUBLIC = UiUtils.openSvgIcon("nodes/publicClass");
 	private static final ImageIcon ICON_CLASS_PRIVATE = UiUtils.openSvgIcon("nodes/privateClass");
@@ -36,16 +47,10 @@ public class JClass extends JLoadableNode {
 	private final transient JClass jParent;
 	private transient boolean loaded;
 
-	public JClass(JavaClass cls) {
-		this.cls = cls;
-		this.jParent = null;
-		this.loaded = false;
-	}
-
 	public JClass(JavaClass cls, JClass parent) {
 		this.cls = cls;
 		this.jParent = parent;
-		this.loaded = true;
+		this.loaded = parent != null;
 	}
 
 	public JavaClass getCls() {
@@ -124,6 +129,11 @@ public class JClass extends JLoadableNode {
 	}
 
 	@Override
+	public JPopupMenu onTreePopupMenu(MainWindow mainWindow) {
+		return RenameDialog.buildRenamePopup(mainWindow, this);
+	}
+
+	@Override
 	public Icon getIcon() {
 		AccessInfo accessInfo = cls.getAccessInfo();
 		if (accessInfo.isEnum()) {
@@ -147,12 +157,17 @@ public class JClass extends JLoadableNode {
 		if (accessInfo.isPublic()) {
 			return ICON_CLASS_PUBLIC;
 		}
-		return ICON_CLASS;
+		return Icons.CLASS;
 	}
 
 	@Override
 	public JavaNode getJavaNode() {
 		return cls;
+	}
+
+	@Override
+	public ICodeNode getCodeNodeRef() {
+		return cls.getClassNode();
 	}
 
 	@Override
@@ -175,6 +190,50 @@ public class JClass extends JLoadableNode {
 
 	public String getFullName() {
 		return cls.getFullName();
+	}
+
+	@Override
+	public String getTitle() {
+		return makeLongStringHtml();
+	}
+
+	@Override
+	public boolean isValidName(String newName) {
+		if (NameMapper.isValidIdentifier(newName)) {
+			return true;
+		}
+		if (cls.isInner()) {
+			// disallow to change package for inner classes
+			return false;
+		}
+		if (NameMapper.isValidFullIdentifier(newName)) {
+			return true;
+		}
+		// moving to default pkg
+		return newName.startsWith(".") && NameMapper.isValidIdentifier(newName.substring(1));
+	}
+
+	@Override
+	public ICodeRename buildCodeRename(String newName, Set<ICodeRename> renames) {
+		return new JadxCodeRename(JadxNodeRef.forCls(cls), newName);
+	}
+
+	@Override
+	public void removeAlias() {
+		cls.removeAlias();
+	}
+
+	@Override
+	public void addUpdateNodes(List<JavaNode> toUpdate) {
+		toUpdate.add(cls);
+		toUpdate.addAll(cls.getUseIn());
+	}
+
+	@Override
+	public void reload(MainWindow mainWindow) {
+		// TODO: rebuild packages only if class package has been changed
+		mainWindow.rebuildPackagesTree();
+		mainWindow.reloadTree();
 	}
 
 	@Override

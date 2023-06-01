@@ -3,6 +3,7 @@ package jadx.core.utils.files;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
+import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -17,6 +18,7 @@ import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -349,6 +351,10 @@ public class FileUtils {
 		return paths.stream().map(Path::toFile).collect(Collectors.toList());
 	}
 
+	public static String md5Sum(String str) {
+		return md5Sum(str.getBytes(StandardCharsets.UTF_8));
+	}
+
 	public static String md5Sum(byte[] data) {
 		try {
 			MessageDigest md = MessageDigest.getInstance("MD5");
@@ -356,6 +362,26 @@ public class FileUtils {
 			return bytesToHex(md.digest());
 		} catch (Exception e) {
 			throw new JadxRuntimeException("Failed to build hash", e);
+		}
+	}
+
+	/**
+	 * Hash timestamps of input files
+	 */
+	public static String buildInputsHash(List<Path> inputPaths) {
+		try (ByteArrayOutputStream bout = new ByteArrayOutputStream();
+				DataOutputStream data = new DataOutputStream(bout)) {
+			List<Path> inputFiles = FileUtils.expandDirs(inputPaths);
+			Collections.sort(inputFiles);
+			data.write(inputPaths.size());
+			data.write(inputFiles.size());
+			for (Path inputFile : inputFiles) {
+				FileTime modifiedTime = Files.getLastModifiedTime(inputFile);
+				data.writeLong(modifiedTime.toMillis());
+			}
+			return FileUtils.md5Sum(bout.toByteArray());
+		} catch (Exception e) {
+			throw new JadxRuntimeException("Failed to build hash for inputs", e);
 		}
 	}
 }

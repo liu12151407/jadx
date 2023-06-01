@@ -3,13 +3,13 @@ plugins {
 }
 
 dependencies {
-	api(project(':jadx-plugins:jadx-plugins-api'))
+	api(project(":jadx-plugins:jadx-input-api"))
 
 	implementation 'com.google.code.gson:gson:2.10.1'
 
 	// TODO: move resources decoding to separate plugin module
-	implementation 'com.android.tools.build:aapt2-proto:7.3.1-8691043'
-	implementation 'com.google.protobuf:protobuf-java:3.21.12' // forcing latest version
+	implementation 'com.android.tools.build:aapt2-proto:8.0.1-9289358'
+	implementation 'com.google.protobuf:protobuf-java:3.23.0' // forcing latest version
 
 	testImplementation 'org.apache.commons:commons-lang3:3.12.0'
 
@@ -19,7 +19,7 @@ dependencies {
 	testRuntimeOnly(project(':jadx-plugins:jadx-java-input'))
 	testRuntimeOnly(project(':jadx-plugins:jadx-raung-input'))
 
-	testImplementation 'org.eclipse.jdt:ecj:3.32.0'
+	testImplementation 'org.eclipse.jdt:ecj:3.33.0'
 	testImplementation 'tools.profiler:async-profiler:2.9'
 }
 

@@ -23,6 +23,7 @@ import jadx.gui.JadxWrapper;
 import jadx.gui.settings.JadxProject;
 import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JNode;
+import jadx.gui.treemodel.JResource;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.panel.ContentPanel;
 import jadx.gui.utils.CaretPositionFix;
@@ -49,6 +50,10 @@ public final class CodeArea extends AbstractCodeArea {
 		if (isJavaCode) {
 			((RSyntaxDocument) getDocument()).setSyntaxStyle(new JadxTokenMaker(this));
 			addMenuItems();
+		}
+
+		if (node instanceof JResource && node.makeString().endsWith(".json")) {
+			addMenuForJsonFile();
 		}
 
 		setHyperlinksEnabled(true);
@@ -99,6 +104,7 @@ public final class CodeArea extends AbstractCodeArea {
 		if (getText().isEmpty()) {
 			setText(getCodeInfo().getCodeStr());
 			setCaretPosition(0);
+			setLoaded();
 		}
 	}
 
@@ -119,6 +125,7 @@ public final class CodeArea extends AbstractCodeArea {
 		popup.addSeparator();
 		popup.add(new FridaAction(this));
 		popup.add(new XposedAction(this));
+		getMainWindow().getWrapper().getGuiPluginsContext().appendPopupMenus(this, popup);
 
 		// move caret on mouse right button click
 		popup.getMenu().addPopupMenuListener(new DefaultPopupMenuListener() {
@@ -135,26 +142,15 @@ public final class CodeArea extends AbstractCodeArea {
 		});
 	}
 
+	private void addMenuForJsonFile() {
+		JNodePopupBuilder popup = new JNodePopupBuilder(this, getPopupMenu());
+		popup.addSeparator();
+		popup.add(new JsonPrettifyAction(this));
+	}
+
 	public int adjustOffsetForToken(@Nullable Token token) {
 		if (token == null) {
 			return -1;
-		}
-		int type = token.getType();
-		final int sourceOffset;
-		if (node instanceof JClass) {
-			if (type == TokenTypes.IDENTIFIER) {
-				sourceOffset = token.getOffset();
-			} else if (type == TokenTypes.ANNOTATION && token.length() > 1) {
-				sourceOffset = token.getOffset() + 1;
-			} else {
-				return -1;
-			}
-		} else {
-			if (type == TokenTypes.MARKUP_TAG_ATTRIBUTE_VALUE) {
-				sourceOffset = token.getOffset() + 1; // skip quote at start (")
-			} else {
-				return -1;
-			}
 		}
 		// fast skip
 		if (token.length() == 1) {
@@ -163,7 +159,18 @@ public final class CodeArea extends AbstractCodeArea {
 				return -1;
 			}
 		}
-		return sourceOffset;
+		int type = token.getType();
+		if (node instanceof JClass) {
+			if (type == TokenTypes.IDENTIFIER || type == TokenTypes.FUNCTION) {
+				return token.getOffset();
+			}
+			if (type == TokenTypes.ANNOTATION && token.length() > 1) {
+				return token.getOffset() + 1;
+			}
+		} else if (type == TokenTypes.MARKUP_TAG_ATTRIBUTE_VALUE) {
+			return token.getOffset() + 1; // skip quote at start (")
+		}
+		return -1;
 	}
 
 	/**

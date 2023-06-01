@@ -460,4 +460,9 @@ public class OverrideMethodVisitor extends AbstractVisitor {
 			k++;
 		}
 	}
+
+	@Override
+	public String getName() {
+		return "OverrideMethodVisitor";
+	}
 }

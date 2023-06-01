@@ -7,7 +7,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
@@ -19,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
+import jadx.api.JadxArgs;
 import jadx.api.data.ICodeComment;
 import jadx.api.data.ICodeRename;
 import jadx.api.data.IJavaCodeRef;
@@ -31,6 +34,7 @@ import jadx.api.data.impl.JadxNodeRef;
 import jadx.api.plugins.utils.CommonFileUtils;
 import jadx.core.utils.GsonUtils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
+import jadx.core.utils.files.FileUtils;
 import jadx.gui.settings.data.ProjectData;
 import jadx.gui.settings.data.TabViewState;
 import jadx.gui.ui.MainWindow;
@@ -57,6 +61,13 @@ public class JadxProject {
 
 	public JadxProject(MainWindow mainWindow) {
 		this.mainWindow = mainWindow;
+	}
+
+	public void fillJadxArgs(JadxArgs jadxArgs) {
+		jadxArgs.setInputFiles(FileUtils.toFiles(getFilePaths()));
+		jadxArgs.setUserRenamesMappingsPath(getMappingsPath());
+		jadxArgs.setCodeData(getCodeData());
+		jadxArgs.getPluginOptions().putAll(data.getPluginOptions());
 	}
 
 	public @Nullable Path getWorkingDir() {
@@ -132,7 +143,7 @@ public class JadxProject {
 		changed();
 	}
 
-	public void saveOpenTabs(List<EditorViewState> tabs, int activeTab) {
+	public void saveOpenTabs(List<EditorViewState> tabs) {
 		List<TabViewState> tabStateList = tabs.stream()
 				.map(TabStateViewAdapter::build)
 				.filter(Objects::nonNull)
@@ -140,10 +151,7 @@ public class JadxProject {
 		if (tabStateList.isEmpty()) {
 			return;
 		}
-		boolean dataChanged;
-		dataChanged = data.setOpenTabs(tabStateList);
-		dataChanged |= data.setActiveTab(activeTab);
-		if (dataChanged) {
+		if (data.setOpenTabs(tabStateList)) {
 			changed();
 		}
 	}
@@ -155,8 +163,25 @@ public class JadxProject {
 				.collect(Collectors.toList());
 	}
 
-	public int getActiveTab() {
-		return data.getActiveTab();
+	public Path getMappingsPath() {
+		return data.getMappingsPath();
+	}
+
+	public void setMappingsPath(Path mappingsPath) {
+		data.setMappingsPath(mappingsPath);
+		changed();
+	}
+
+	/**
+	 * Do not expose options map directly to be able to intercept changes
+	 */
+	public void updatePluginOptions(Consumer<Map<String, String>> update) {
+		update.accept(data.getPluginOptions());
+		changed();
+	}
+
+	public @Nullable String getPluginOption(String key) {
+		return data.getPluginOptions().get(key);
 	}
 
 	public @NotNull Path getCacheDir() {

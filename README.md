@@ -65,7 +65,7 @@ For Windows, you can download it from [oracle.com](https://www.oracle.com/java/t
 You can use jadx in your java projects, check details on [wiki page](https://github.com/skylot/jadx/wiki/Use-jadx-as-a-library)
 
 ### Build from source
-JDK 8 or higher must be installed:
+JDK 11 or higher must be installed:
 ```
 git clone https://github.com/skylot/jadx.git
 cd jadx
@@ -79,7 +79,12 @@ and also packed to `build/jadx-<version>.zip`
 
 ### Usage
 ```
-jadx[-gui] [options] <input files> (.apk, .dex, .jar, .class, .smali, .zip, .aar, .arsc, .aab)
+jadx[-gui] [command] [options] <input files> (.apk, .dex, .jar, .class, .smali, .zip, .aar, .arsc, .aab)
+commands (use '<command> --help' for command options):
+  plugins	  - manage jadx plugins
+
+options:
+  -d, --output-dir                    - output directory
 options:
   -d, --output-dir                    - output directory
   -ds, --output-dir-src               - output directory for sources
@@ -98,25 +103,32 @@ options:
                                          'fallback' - raw instructions without modifications
   --show-bad-code                     - show inconsistent code (incorrectly decompiled)
   --no-imports                        - disable use of imports, always write entire package name
-  --no-debug-info                     - disable debug info
+  --no-debug-info                     - disable debug info parsing and processing
   --add-debug-lines                   - add comments with debug line numbers if available
   --no-inline-anonymous               - disable anonymous classes inline
   --no-inline-methods                 - disable methods inline
+  --no-move-inner-classes             - disable move inner classes into parent
+  --no-inline-kotlin-lambda           - disable inline for Kotlin lambdas
   --no-finally                        - don't extract finally block
   --no-replace-consts                 - don't replace constant value with matching constant field
   --escape-unicode                    - escape non latin characters in strings (with \u)
   --respect-bytecode-access-modifiers - don't change original access modifiers
+  --mappings-path                     - deobfuscation mappings file or directory. Allowed formats: Tiny and Tiny v2 (both '.tiny'), Enigma (.mapping) or Enigma directory
+  --mappings-mode                     - set mode for handling the deobfuscation mapping file:
+                                         'read' - just read, user can always save manually (default)
+                                         'read-and-autosave-every-change' - read and autosave after every change
+                                         'read-and-autosave-before-closing' - read and autosave before exiting the app or closing the project
+                                         'ignore' - don't read or save (can be used to skip loading mapping files referenced in the project file)
   --deobf                             - activate deobfuscation
   --deobf-min                         - min length of name, renamed if shorter, default: 3
   --deobf-max                         - max length of name, renamed if longer, default: 64
-  --deobf-cfg-file                    - deobfuscation map file, default: same dir and name as input file with '.jobf' extension
-  --deobf-cfg-file-mode               - set mode for handle deobfuscation map file:
+  --deobf-cfg-file                    - deobfuscation mappings file used for JADX auto-generated names (in the JOBF file format), default: same dir and name as input file with '.jobf' extension
+  --deobf-cfg-file-mode               - set mode for handling the JADX auto-generated names' deobfuscation map file:
                                          'read' - read if found, don't save (default)
                                          'read-or-save' - read if found, save otherwise (don't overwrite)
                                          'overwrite' - don't read, always save
                                          'ignore' - don't read and don't save
   --deobf-use-sourcename              - use source file name as class name alias
-  --deobf-parse-kotlin-metadata       - parse kotlin metadata to class and package names
   --deobf-res-name-source             - better name source for resources:
                                          'auto' - automatically select best name (default)
                                          'resources' - use resources names
@@ -128,6 +140,10 @@ options:
                                          'printable' - remove non-printable chars from identifiers,
                                         or single 'none' - to disable all renames
                                         or single 'all' - to enable all (default)
+  --integer-format                    - how integers are displayed:
+                                         'auto' - automatically select (default)
+                                         'decimal' - use decimal
+                                         'hexadecimal' - use hexadecimal
   --fs-case-sensitive                 - treat filesystem as case sensitive, false by default
   --cfg                               - save methods control flow graph to dot file
   --raw-cfg                           - save methods control flow graph (use raw instructions)
@@ -146,6 +162,17 @@ Plugin options (-P<name>=<value>):
  2) java-convert: Convert .class, .jar and .aar files to dex
     - java-convert.mode               - convert mode, values: [dx, d8, both], default: both
     - java-convert.d8-desugar         - use desugar in d8, values: [yes, no], default: no
+ 3) kotlin-metadata: Use kotlin.Metadata annotation for code generation
+    - kotlin-metadata.class-alias     - rename class alias, values: [yes, no], default: yes
+    - kotlin-metadata.method-args     - rename function arguments, values: [yes, no], default: yes
+    - kotlin-metadata.fields          - rename fields, values: [yes, no], default: yes
+    - kotlin-metadata.companion       - rename companion object, values: [yes, no], default: yes
+    - kotlin-metadata.data-class      - add data class modifier, values: [yes, no], default: yes
+    - kotlin-metadata.to-string       - rename fields using toString, values: [yes, no], default: yes
+    - kotlin-metadata.getters         - rename simple getters to field names, values: [yes, no], default: yes
+ 4) rename-mappings: various mappings support
+    - rename-mappings.format          - mapping format, values: [auto, TINY, TINY_2, ENIGMA, ENIGMA_DIR, MCP, SRG, TSRG, TSRG2, PROGUARD], default: auto
+    - rename-mappings.invert          - invert mapping, values: [yes, no], default: no
 
 Examples:
   jadx -d out classes.dex

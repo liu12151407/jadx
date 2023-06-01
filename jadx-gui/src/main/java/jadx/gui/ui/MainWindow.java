@@ -32,13 +32,12 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
-import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import javax.swing.AbstractAction;
 import javax.swing.Action;
@@ -49,7 +48,6 @@ import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
-import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -61,8 +59,6 @@ import javax.swing.JTree;
 import javax.swing.SwingUtilities;
 import javax.swing.ToolTipManager;
 import javax.swing.WindowConstants;
-import javax.swing.event.MenuEvent;
-import javax.swing.event.MenuListener;
 import javax.swing.event.TreeExpansionEvent;
 import javax.swing.event.TreeWillExpandListener;
 import javax.swing.tree.DefaultMutableTreeNode;
@@ -80,15 +76,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import ch.qos.logback.classic.Level;
-import net.fabricmc.mappingio.format.MappingFormat;
 
 import jadx.api.JadxArgs;
 import jadx.api.JavaNode;
 import jadx.api.ResourceFile;
 import jadx.api.plugins.utils.CommonFileUtils;
 import jadx.core.Jadx;
+import jadx.core.export.TemplateFile;
 import jadx.core.utils.ListUtils;
 import jadx.core.utils.StringUtils;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.core.utils.files.FileUtils;
 import jadx.gui.JadxWrapper;
 import jadx.gui.device.debugger.BreakpointManager;
@@ -96,16 +93,17 @@ import jadx.gui.jobs.BackgroundExecutor;
 import jadx.gui.jobs.DecompileTask;
 import jadx.gui.jobs.ExportTask;
 import jadx.gui.jobs.TaskStatus;
-import jadx.gui.plugins.mappings.MappingExporter;
+import jadx.gui.logs.LogCollector;
+import jadx.gui.logs.LogOptions;
+import jadx.gui.logs.LogPanel;
+import jadx.gui.plugins.mappings.RenameMappingsGui;
 import jadx.gui.plugins.quark.QuarkDialog;
 import jadx.gui.settings.JadxProject;
 import jadx.gui.settings.JadxSettings;
-import jadx.gui.settings.JadxSettingsWindow;
+import jadx.gui.settings.ui.JadxSettingsWindow;
 import jadx.gui.treemodel.ApkSignature;
 import jadx.gui.treemodel.JClass;
-import jadx.gui.treemodel.JField;
 import jadx.gui.treemodel.JLoadableNode;
-import jadx.gui.treemodel.JMethod;
 import jadx.gui.treemodel.JNode;
 import jadx.gui.treemodel.JPackage;
 import jadx.gui.treemodel.JResource;
@@ -117,7 +115,6 @@ import jadx.gui.ui.codearea.EditorViewState;
 import jadx.gui.ui.dialog.ADBDialog;
 import jadx.gui.ui.dialog.AboutDialog;
 import jadx.gui.ui.dialog.LogViewerDialog;
-import jadx.gui.ui.dialog.RenameDialog;
 import jadx.gui.ui.dialog.SearchDialog;
 import jadx.gui.ui.filedialog.FileDialogWrapper;
 import jadx.gui.ui.filedialog.FileOpenMode;
@@ -125,7 +122,7 @@ import jadx.gui.ui.panel.ContentPanel;
 import jadx.gui.ui.panel.IssuesPanel;
 import jadx.gui.ui.panel.JDebuggerPanel;
 import jadx.gui.ui.panel.ProgressPanel;
-import jadx.gui.ui.popupmenu.JPackagePopupMenu;
+import jadx.gui.ui.popupmenu.RecentProjectsMenuListener;
 import jadx.gui.ui.treenodes.StartPageNode;
 import jadx.gui.ui.treenodes.SummaryNode;
 import jadx.gui.update.JadxUpdate;
@@ -141,7 +138,6 @@ import jadx.gui.utils.NLS;
 import jadx.gui.utils.SystemInfo;
 import jadx.gui.utils.UiUtils;
 import jadx.gui.utils.fileswatcher.LiveReloadWorker;
-import jadx.gui.utils.logs.LogCollector;
 import jadx.gui.utils.ui.ActionHandler;
 import jadx.gui.utils.ui.NodeLabel;
 
@@ -158,7 +154,6 @@ public class MainWindow extends JFrame {
 	public static final double SPLIT_PANE_RESIZE_WEIGHT = 0.15;
 
 	private static final ImageIcon ICON_ADD_FILES = UiUtils.openSvgIcon("ui/addFile");
-	private static final ImageIcon ICON_SAVE_ALL = UiUtils.openSvgIcon("ui/menu-saveall");
 	private static final ImageIcon ICON_RELOAD = UiUtils.openSvgIcon("ui/refresh");
 	private static final ImageIcon ICON_EXPORT = UiUtils.openSvgIcon("ui/export");
 	private static final ImageIcon ICON_EXIT = UiUtils.openSvgIcon("ui/exit");
@@ -186,10 +181,11 @@ public class MainWindow extends JFrame {
 
 	private transient Action newProjectAction;
 	private transient Action saveProjectAction;
-	private transient JMenu exportMappingsMenu;
 
-	private JPanel mainPanel;
-	private JSplitPane splitPane;
+	private transient JPanel mainPanel;
+	private transient JSplitPane treeSplitPane;
+	private transient JSplitPane rightSplitPane;
+	private transient JSplitPane bottomSplitPane;
 
 	private JTree tree;
 	private DefaultTreeModel treeModel;
@@ -212,11 +208,17 @@ public class MainWindow extends JFrame {
 	private transient ProgressPanel progressPane;
 	private transient Theme editorTheme;
 
-	private JDebuggerPanel debuggerPanel;
-	private JSplitPane verticalSplitter;
+	private transient IssuesPanel issuesPanel;
+	private transient @Nullable LogPanel logPanel;
+	private transient @Nullable JDebuggerPanel debuggerPanel;
 
-	private List<ILoadListener> loadListeners = new ArrayList<>();
+	private final List<ILoadListener> loadListeners = new ArrayList<>();
+	private final List<Consumer<JRoot>> treeUpdateListener = new ArrayList<>();
 	private boolean loaded;
+
+	private JMenu pluginsMenu;
+
+	private final transient RenameMappingsGui renameMappings;
 
 	public MainWindow(JadxSettings settings) {
 		this.settings = settings;
@@ -224,9 +226,11 @@ public class MainWindow extends JFrame {
 		this.project = new JadxProject(this);
 		this.wrapper = new JadxWrapper(this);
 		this.liveReloadWorker = new LiveReloadWorker(this);
+		this.renameMappings = new RenameMappingsGui(this);
 
 		resetCache();
 		FontUtils.registerBundledFonts();
+		setEditorTheme(settings.getEditorThemePath());
 		initUI();
 		this.backgroundExecutor = new BackgroundExecutor(settings, progressPane);
 		initMenuAndToolbar();
@@ -241,7 +245,7 @@ public class MainWindow extends JFrame {
 	public void init() {
 		pack();
 		setLocationAndPosition();
-		splitPane.setDividerLocation(settings.getTreeWidth());
+		treeSplitPane.setDividerLocation(settings.getTreeWidth());
 		heapUsageBar.setVisible(settings.isShowHeapUsageBar());
 		setVisible(true);
 		setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
@@ -334,7 +338,6 @@ public class MainWindow extends JFrame {
 			return;
 		}
 		closeAll();
-		exportMappingsMenu.setEnabled(false);
 		updateProject(new JadxProject(this));
 	}
 
@@ -378,29 +381,38 @@ public class MainWindow extends JFrame {
 		update();
 	}
 
-	private void exportMappings(MappingFormat mappingFormat) {
+	public void addNewScript() {
 		FileDialogWrapper fileDialog = new FileDialogWrapper(this, FileOpenMode.CUSTOM_SAVE);
-		fileDialog.setTitle(NLS.str("file.export_mappings_as"));
+		fileDialog.setTitle(NLS.str("file.save"));
 		Path workingDir = project.getWorkingDir();
 		Path baseDir = workingDir != null ? workingDir : settings.getLastSaveFilePath();
-		if (mappingFormat.hasSingleFile()) {
-			fileDialog.setSelectedFile(baseDir.resolve("mappings." + mappingFormat.fileExt));
-			fileDialog.setFileExtList(Collections.singletonList(mappingFormat.fileExt));
-			fileDialog.setSelectionMode(JFileChooser.FILES_ONLY);
-		} else {
-			fileDialog.setCurrentDir(baseDir);
-			fileDialog.setSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-		}
+		fileDialog.setSelectedFile(baseDir.resolve("script.jadx.kts"));
+		fileDialog.setFileExtList(Collections.singletonList("jadx.kts"));
+		fileDialog.setSelectionMode(JFileChooser.FILES_ONLY);
 		List<Path> paths = fileDialog.show();
 		if (paths.size() != 1) {
 			return;
 		}
-		Path savePath = paths.get(0);
-		LOG.info("Export mappings to: {}", savePath.toAbsolutePath());
-		backgroundExecutor.execute(NLS.str("progress.export_mappings"),
-				() -> new MappingExporter(wrapper.getDecompiler().getRoot())
-						.exportMappings(savePath, project.getCodeData(), mappingFormat),
-				s -> update());
+		Path scriptFile = paths.get(0);
+		try {
+			TemplateFile tmpl = TemplateFile.fromResources("/files/script.jadx.kts.tmpl");
+			FileUtils.writeFile(scriptFile, tmpl.build());
+		} catch (Exception e) {
+			LOG.error("Failed to save new script file: {}", scriptFile, e);
+		}
+		List<Path> inputs = project.getFilePaths();
+		inputs.add(scriptFile);
+		project.setFilePaths(inputs);
+		project.save();
+		reopen();
+	}
+
+	public void removeInput(Path file) {
+		List<Path> inputs = project.getFilePaths();
+		inputs.remove(file);
+		project.setFilePaths(inputs);
+		project.save();
+		reopen();
 	}
 
 	public void open(Path path) {
@@ -432,7 +444,6 @@ public class MainWindow extends JFrame {
 		// check if project file already saved with default name
 		Path projectPath = getProjectPathForFile(singleFile);
 		if (Files.exists(projectPath)) {
-			LOG.info("Loading project {}", projectPath);
 			openProject(projectPath, onFinish);
 			return true;
 		}
@@ -451,6 +462,7 @@ public class MainWindow extends JFrame {
 	}
 
 	private void openProject(Path path, Runnable onFinish) {
+		LOG.debug("Loading project: {}", path);
 		JadxProject jadxProject = JadxProject.load(this, path);
 		if (jadxProject == null) {
 			JOptionPane.showMessageDialog(
@@ -466,13 +478,28 @@ public class MainWindow extends JFrame {
 	}
 
 	private void loadFiles(Runnable onFinish) {
-		exportMappingsMenu.setEnabled(false);
 		if (project.getFilePaths().isEmpty()) {
 			return;
 		}
+		AtomicReference<Exception> wrapperException = new AtomicReference<>();
 		backgroundExecutor.execute(NLS.str("progress.load"),
-				wrapper::open,
+				() -> {
+					try {
+						wrapper.open();
+					} catch (Exception e) {
+						wrapperException.set(e);
+					}
+				},
 				status -> {
+					if (wrapperException.get() != null) {
+						closeAll();
+						Exception e = wrapperException.get();
+						if (e instanceof RuntimeException) {
+							throw (RuntimeException) e;
+						} else {
+							throw new JadxRuntimeException("Project load error", e);
+						}
+					}
 					if (status == TaskStatus.CANCEL_BY_MEMORY) {
 						showHeapUsageBar();
 						UiUtils.errorMessage(this, NLS.str("message.memoryLow"));
@@ -484,7 +511,6 @@ public class MainWindow extends JFrame {
 					}
 					checkLoadedStatus();
 					onOpen();
-					exportMappingsMenu.setEnabled(true);
 					onFinish.run();
 				});
 	}
@@ -504,13 +530,14 @@ public class MainWindow extends JFrame {
 		tabbedPane.closeAllTabs();
 		UiUtils.resetClipboardOwner();
 		System.gc();
+		update();
 	}
 
 	private void checkLoadedStatus() {
 		if (!wrapper.getClasses().isEmpty()) {
 			return;
 		}
-		int errors = LogCollector.getInstance().getErrors();
+		int errors = issuesPanel.getErrorsCount();
 		if (errors > 0) {
 			int result = JOptionPane.showConfirmDialog(this,
 					NLS.str("message.load_errors", errors),
@@ -518,7 +545,7 @@ public class MainWindow extends JFrame {
 					JOptionPane.OK_CANCEL_OPTION,
 					JOptionPane.ERROR_MESSAGE);
 			if (result == JOptionPane.OK_OPTION) {
-				LogViewerDialog.openWithLevel(this, Level.ERROR);
+				showLogViewer(LogOptions.allWithLevel(Level.ERROR));
 			}
 		} else {
 			UiUtils.showMessageBox(this, NLS.str("message.no_classes"));
@@ -526,9 +553,7 @@ public class MainWindow extends JFrame {
 	}
 
 	private void onOpen() {
-		deobfToggleBtn.setSelected(settings.isDeobfuscationOn());
 		initTree();
-		update();
 		updateLiveReload(project.isEnableLiveReload());
 		BreakpointManager.init(project.getFilePaths().get(0).toAbsolutePath().getParent());
 
@@ -539,6 +564,7 @@ public class MainWindow extends JFrame {
 					restoreOpenTabs(openTabs);
 					runInitialBackgroundJobs();
 					notifyLoadListeners(true);
+					update();
 				});
 	}
 
@@ -584,9 +610,12 @@ public class MainWindow extends JFrame {
 		update();
 	}
 
-	private void update() {
+	public void update() {
+		UiUtils.uiThreadGuard();
 		newProjectAction.setEnabled(!project.isInitial());
-		saveProjectAction.setEnabled(!project.isSaved());
+		saveProjectAction.setEnabled(loaded && !project.isSaved());
+		deobfToggleBtn.setSelected(settings.isDeobfuscationOn());
+		renameMappings.onUpdate(loaded);
 
 		Path projectPath = project.getProjectPath();
 		String pathString;
@@ -662,6 +691,7 @@ public class MainWindow extends JFrame {
 
 	public void reloadTree() {
 		treeReloading = true;
+		treeUpdateListener.forEach(listener -> listener.accept(treeRoot));
 
 		treeModel.reload();
 		List<String[]> treeExpansions = project.getTreeExpansions();
@@ -672,6 +702,11 @@ public class MainWindow extends JFrame {
 		}
 
 		treeReloading = false;
+	}
+
+	public void rebuildPackagesTree() {
+		cacheObject.setPackageHelper(null);
+		treeRoot.update();
 	}
 
 	private void expand(TreeNode node, List<String[]> treeExpansions) {
@@ -746,15 +781,12 @@ public class MainWindow extends JFrame {
 	}
 
 	private void treeRightClickAction(MouseEvent e) {
-		JNode obj = getJNodeUnderMouse(e);
-		if (obj instanceof JPackage) {
-			JPackagePopupMenu menu = new JPackagePopupMenu(this, (JPackage) obj);
-			menu.show(e.getComponent(), e.getX(), e.getY());
-		} else if (obj instanceof JClass || obj instanceof JField || obj instanceof JMethod) {
-			JMenuItem jmi = new JMenuItem(NLS.str("popup.rename"));
-			jmi.addActionListener(action -> RenameDialog.rename(this, obj));
-			JPopupMenu menu = new JPopupMenu();
-			menu.add(jmi);
+		JNode node = getJNodeUnderMouse(e);
+		if (node == null) {
+			return;
+		}
+		JPopupMenu menu = node.onTreePopupMenu(this);
+		if (menu != null) {
 			menu.show(e.getComponent(), e.getX(), e.getY());
 		}
 	}
@@ -786,7 +818,7 @@ public class MainWindow extends JFrame {
 	}
 
 	public void syncWithEditor() {
-		ContentPanel selectedContentPanel = tabbedPane.getSelectedCodePanel();
+		ContentPanel selectedContentPanel = tabbedPane.getSelectedContentPanel();
 		if (selectedContentPanel == null) {
 			return;
 		}
@@ -866,44 +898,14 @@ public class MainWindow extends JFrame {
 		liveReloadMenuItem = new JCheckBoxMenuItem(liveReload);
 		liveReloadMenuItem.setState(project.isEnableLiveReload());
 
-		Action exportMappingsAsTiny2 = new AbstractAction("Tiny v2 file") {
-			@Override
-			public void actionPerformed(ActionEvent e) {
-				exportMappings(MappingFormat.TINY_2);
-			}
-		};
-		exportMappingsAsTiny2.putValue(Action.SHORT_DESCRIPTION, "Tiny v2 file");
-
-		Action exportMappingsAsEnigma = new AbstractAction("Enigma file") {
-			@Override
-			public void actionPerformed(ActionEvent e) {
-				exportMappings(MappingFormat.ENIGMA);
-			}
-		};
-		exportMappingsAsEnigma.putValue(Action.SHORT_DESCRIPTION, "Enigma file");
-
-		Action exportMappingsAsEnigmaDir = new AbstractAction("Enigma directory") {
-			@Override
-			public void actionPerformed(ActionEvent e) {
-				exportMappings(MappingFormat.ENIGMA_DIR);
-			}
-		};
-		exportMappingsAsEnigmaDir.putValue(Action.SHORT_DESCRIPTION, "Enigma directory");
-
-		exportMappingsMenu = new JMenu(NLS.str("file.export_mappings_as"));
-		exportMappingsMenu.add(exportMappingsAsTiny2);
-		exportMappingsMenu.add(exportMappingsAsEnigma);
-		exportMappingsMenu.add(exportMappingsAsEnigmaDir);
-		exportMappingsMenu.setEnabled(false);
-
-		Action saveAllAction = new AbstractAction(NLS.str("file.save_all"), ICON_SAVE_ALL) {
+		Action saveAllAction = new AbstractAction(NLS.str("file.save_all"), Icons.SAVE_ALL) {
 			@Override
 			public void actionPerformed(ActionEvent e) {
 				saveAll(false);
 			}
 		};
 		saveAllAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("file.save_all"));
-		saveAllAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_S, UiUtils.ctrlButton()));
+		saveAllAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_E, UiUtils.ctrlButton()));
 
 		Action exportAction = new AbstractAction(NLS.str("file.export_gradle"), ICON_EXPORT) {
 			@Override
@@ -912,10 +914,10 @@ public class MainWindow extends JFrame {
 			}
 		};
 		exportAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("file.export_gradle"));
-		exportAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_E, UiUtils.ctrlButton()));
+		exportAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_E, UiUtils.ctrlButton() | KeyEvent.SHIFT_DOWN_MASK));
 
 		JMenu recentProjects = new JMenu(NLS.str("menu.recent_projects"));
-		recentProjects.addMenuListener(new RecentProjectsMenuListener(recentProjects));
+		recentProjects.addMenuListener(new RecentProjectsMenuListener(this, recentProjects));
 
 		Action prefsAction = new AbstractAction(NLS.str("menu.preferences"), ICON_PREF) {
 			@Override
@@ -954,6 +956,10 @@ public class MainWindow extends JFrame {
 			}
 		});
 
+		JCheckBoxMenuItem dockLog = new JCheckBoxMenuItem(NLS.str("menu.dock_log"));
+		dockLog.setState(settings.isDockLogViewer());
+		dockLog.addActionListener(event -> settings.setDockLogViewer(!settings.isDockLogViewer()));
+
 		Action syncAction = new AbstractAction(NLS.str("menu.sync"), ICON_SYNC) {
 			@Override
 			public void actionPerformed(ActionEvent e) {
@@ -966,7 +972,7 @@ public class MainWindow extends JFrame {
 		Action textSearchAction = new AbstractAction(NLS.str("menu.text_search"), ICON_SEARCH) {
 			@Override
 			public void actionPerformed(ActionEvent e) {
-				ContentPanel panel = tabbedPane.getSelectedCodePanel();
+				ContentPanel panel = tabbedPane.getSelectedContentPanel();
 				if (panel instanceof AbstractCodeContentPanel) {
 					AbstractCodeArea codeArea = ((AbstractCodeContentPanel) panel).getCodeArea();
 					String preferText = codeArea.getSelectedText();
@@ -1025,15 +1031,10 @@ public class MainWindow extends JFrame {
 		deobfMenuItem = new JCheckBoxMenuItem(deobfAction);
 		deobfMenuItem.setState(settings.isDeobfuscationOn());
 
-		Action logAction = new AbstractAction(NLS.str("menu.log"), ICON_LOG) {
-			@Override
-			public void actionPerformed(ActionEvent e) {
-				LogViewerDialog.open(MainWindow.this);
-			}
-		};
-		logAction.putValue(Action.SHORT_DESCRIPTION, NLS.str("menu.log"));
-		logAction.putValue(Action.ACCELERATOR_KEY, getKeyStroke(KeyEvent.VK_L,
-				UiUtils.ctrlButton() | KeyEvent.SHIFT_DOWN_MASK));
+		ActionHandler showLog = new ActionHandler(ev -> showLogViewer(LogOptions.current()));
+		showLog.setNameAndDesc(NLS.str("menu.log"));
+		showLog.setIcon(ICON_LOG);
+		showLog.setKeyBinding(getKeyStroke(KeyEvent.VK_L, UiUtils.ctrlButton() | KeyEvent.SHIFT_DOWN_MASK));
 
 		Action aboutAction = new AbstractAction(NLS.str("menu.about"), ICON_INFO) {
 			@Override
@@ -1089,8 +1090,7 @@ public class MainWindow extends JFrame {
 		file.addSeparator();
 		file.add(reload);
 		file.add(liveReloadMenuItem);
-		file.addSeparator();
-		file.add(exportMappingsMenu);
+		renameMappings.addMenuActions(file);
 		file.addSeparator();
 		file.add(saveAllAction);
 		file.add(exportAction);
@@ -1107,6 +1107,7 @@ public class MainWindow extends JFrame {
 		view.add(syncAction);
 		view.add(heapUsageBarMenuItem);
 		view.add(alwaysSelectOpened);
+		view.add(dockLog);
 
 		JMenu nav = new JMenu(NLS.str("menu.navigation"));
 		nav.setMnemonic(KeyEvent.VK_N);
@@ -1117,6 +1118,10 @@ public class MainWindow extends JFrame {
 		nav.add(backAction);
 		nav.add(forwardAction);
 
+		pluginsMenu = new JMenu(NLS.str("menu.plugins"));
+		pluginsMenu.setMnemonic(KeyEvent.VK_P);
+		pluginsMenu.setVisible(false);
+
 		JMenu tools = new JMenu(NLS.str("menu.tools"));
 		tools.setMnemonic(KeyEvent.VK_T);
 		tools.add(decompileAllAction);
@@ -1126,7 +1131,7 @@ public class MainWindow extends JFrame {
 
 		JMenu help = new JMenu(NLS.str("menu.help"));
 		help.setMnemonic(KeyEvent.VK_H);
-		help.add(logAction);
+		help.add(showLog);
 		if (Jadx.isDevVersion()) {
 			help.add(new AbstractAction("Show sample error report") {
 				@Override
@@ -1142,6 +1147,7 @@ public class MainWindow extends JFrame {
 		menuBar.add(view);
 		menuBar.add(nav);
 		menuBar.add(tools);
+		menuBar.add(pluginsMenu);
 		menuBar.add(help);
 		setJMenuBar(menuBar);
 
@@ -1179,7 +1185,7 @@ public class MainWindow extends JFrame {
 		toolbar.add(quarkAction);
 		toolbar.add(openDeviceAction);
 		toolbar.addSeparator();
-		toolbar.add(logAction);
+		toolbar.add(showLog);
 		toolbar.addSeparator();
 		toolbar.add(prefsAction);
 		toolbar.addSeparator();
@@ -1209,9 +1215,9 @@ public class MainWindow extends JFrame {
 	private void initUI() {
 		setMinimumSize(new Dimension(200, 150));
 		mainPanel = new JPanel(new BorderLayout());
-		splitPane = new JSplitPane();
-		splitPane.setResizeWeight(SPLIT_PANE_RESIZE_WEIGHT);
-		mainPanel.add(splitPane);
+		treeSplitPane = new JSplitPane();
+		treeSplitPane.setResizeWeight(SPLIT_PANE_RESIZE_WEIGHT);
+		mainPanel.add(treeSplitPane);
 
 		DefaultMutableTreeNode treeRootNode = new DefaultMutableTreeNode(NLS.str("msg.open_file"));
 		treeModel = new DefaultTreeModel(treeRootNode);
@@ -1292,7 +1298,7 @@ public class MainWindow extends JFrame {
 		});
 
 		progressPane = new ProgressPanel(this, true);
-		IssuesPanel issuesPanel = new IssuesPanel(this);
+		issuesPanel = new IssuesPanel(this);
 
 		JPanel leftPane = new JPanel(new BorderLayout());
 		JScrollPane treeScrollPane = new JScrollPane(tree);
@@ -1304,22 +1310,27 @@ public class MainWindow extends JFrame {
 
 		leftPane.add(treeScrollPane, BorderLayout.CENTER);
 		leftPane.add(bottomPane, BorderLayout.PAGE_END);
-		splitPane.setLeftComponent(leftPane);
+		treeSplitPane.setLeftComponent(leftPane);
 
 		tabbedPane = new TabbedPane(this);
 		tabbedPane.setMinimumSize(new Dimension(150, 150));
-		splitPane.setRightComponent(tabbedPane);
+
+		rightSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+		rightSplitPane.setTopComponent(tabbedPane);
+		rightSplitPane.setResizeWeight(SPLIT_PANE_RESIZE_WEIGHT);
+
+		treeSplitPane.setRightComponent(rightSplitPane);
 
 		new DropTarget(this, DnDConstants.ACTION_COPY, new MainDropTarget(this));
 
 		heapUsageBar = new HeapUsageBar();
 		mainPanel.add(heapUsageBar, BorderLayout.SOUTH);
 
-		verticalSplitter = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
-		verticalSplitter.setTopComponent(splitPane);
-		verticalSplitter.setResizeWeight(SPLIT_PANE_RESIZE_WEIGHT);
+		bottomSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+		bottomSplitPane.setTopComponent(treeSplitPane);
+		bottomSplitPane.setResizeWeight(SPLIT_PANE_RESIZE_WEIGHT);
 
-		mainPanel.add(verticalSplitter, BorderLayout.CENTER);
+		mainPanel.add(bottomSplitPane, BorderLayout.CENTER);
 		setContentPane(mainPanel);
 		setTitle(DEFAULT_TITLE);
 	}
@@ -1438,6 +1449,11 @@ public class MainWindow extends JFrame {
 	}
 
 	public void loadSettings() {
+		// queue update to not interrupt current UI tasks
+		UiUtils.uiRun(this::updateUiSettings);
+	}
+
+	private void updateUiSettings() {
 		LafManager.updateLaf(settings);
 
 		Font font = settings.getFont();
@@ -1449,6 +1465,9 @@ public class MainWindow extends JFrame {
 		tree.setRowHeight(-1);
 
 		tabbedPane.loadSettings();
+		if (logPanel != null) {
+			logPanel.loadSettings();
+		}
 	}
 
 	private void closeWindow() {
@@ -1456,7 +1475,7 @@ public class MainWindow extends JFrame {
 		if (!ensureProjectIsSaved()) {
 			return;
 		}
-		settings.setTreeWidth(splitPane.getDividerLocation());
+		settings.setTreeWidth(treeSplitPane.getDividerLocation());
 		settings.saveWindowPos(this);
 		settings.setMainWindowExtendedState(getExtendedState());
 		if (debuggerPanel != null) {
@@ -1471,7 +1490,7 @@ public class MainWindow extends JFrame {
 	}
 
 	private void saveOpenTabs() {
-		project.saveOpenTabs(tabbedPane.getEditorViewStates(), tabbedPane.getSelectedIndex());
+		project.saveOpenTabs(tabbedPane.getEditorViewStates());
 	}
 
 	private void restoreOpenTabs(List<EditorViewState> openTabs) {
@@ -1481,11 +1500,6 @@ public class MainWindow extends JFrame {
 		}
 		for (EditorViewState viewState : openTabs) {
 			tabbedPane.restoreEditorViewState(viewState);
-		}
-		try {
-			tabbedPane.setSelectedIndex(project.getActiveTab());
-		} catch (Exception e) {
-			LOG.warn("Failed to restore active tab", e);
 		}
 	}
 
@@ -1502,9 +1516,11 @@ public class MainWindow extends JFrame {
 	}
 
 	private void saveSplittersInfo() {
-		settings.setMainWindowVerticalSplitterLoc(verticalSplitter.getDividerLocation());
-		settings.setDebuggerStackFrameSplitterLoc(debuggerPanel.getLeftSplitterLocation());
-		settings.setDebuggerVarTreeSplitterLoc(debuggerPanel.getRightSplitterLocation());
+		settings.setMainWindowVerticalSplitterLoc(bottomSplitPane.getDividerLocation());
+		if (debuggerPanel != null) {
+			settings.setDebuggerStackFrameSplitterLoc(debuggerPanel.getLeftSplitterLocation());
+			settings.setDebuggerVarTreeSplitterLoc(debuggerPanel.getRightSplitterLocation());
+		}
 	}
 
 	public void addLoadListener(ILoadListener loadListener) {
@@ -1516,6 +1532,10 @@ public class MainWindow extends JFrame {
 	public void notifyLoadListeners(boolean loaded) {
 		this.loaded = loaded;
 		loadListeners.removeIf(listener -> listener.update(loaded));
+	}
+
+	public void addTreeUpdateListener(Consumer<JRoot> listener) {
+		treeUpdateListener.add(listener);
 	}
 
 	public JadxWrapper getWrapper() {
@@ -1557,8 +1577,10 @@ public class MainWindow extends JFrame {
 
 	public void destroyDebuggerPanel() {
 		saveSplittersInfo();
-		debuggerPanel.setVisible(false);
-		debuggerPanel = null;
+		if (debuggerPanel != null) {
+			debuggerPanel.setVisible(false);
+			debuggerPanel = null;
+		}
 	}
 
 	public void showHeapUsageBar() {
@@ -1570,48 +1592,51 @@ public class MainWindow extends JFrame {
 		if (debuggerPanel == null) {
 			debuggerPanel = new JDebuggerPanel(this);
 			debuggerPanel.loadSettings();
-			verticalSplitter.setBottomComponent(debuggerPanel);
+			bottomSplitPane.setBottomComponent(debuggerPanel);
 			int loc = settings.getMainWindowVerticalSplitterLoc();
 			if (loc == 0) {
 				loc = 300;
 			}
-			verticalSplitter.setDividerLocation(loc);
+			bottomSplitPane.setDividerLocation(loc);
 		}
 	}
 
-	private class RecentProjectsMenuListener implements MenuListener {
-		private final JMenu menu;
-
-		public RecentProjectsMenuListener(JMenu menu) {
-			this.menu = menu;
+	public void showLogViewer(LogOptions logOptions) {
+		if (settings.isDockLogViewer()) {
+			showDockedLog(logOptions);
+		} else {
+			LogViewerDialog.open(this, logOptions);
 		}
+	}
 
-		@Override
-		public void menuSelected(MenuEvent menuEvent) {
-			Set<Path> current = new HashSet<>(project.getFilePaths());
-			List<JMenuItem> items = settings.getRecentProjects()
-					.stream()
-					.filter(path -> !current.contains(path))
-					.map(path -> {
-						JMenuItem menuItem = new JMenuItem(path.toAbsolutePath().toString());
-						menuItem.addActionListener(e -> open(Collections.singletonList(path)));
-						return menuItem;
-					}).collect(Collectors.toList());
-
-			menu.removeAll();
-			if (items.isEmpty()) {
-				menu.add(new JMenuItem(NLS.str("menu.no_recent_projects")));
-			} else {
-				items.forEach(menu::add);
-			}
+	private void showDockedLog(LogOptions logOptions) {
+		if (logPanel != null) {
+			logPanel.applyLogOptions(logOptions);
+			return;
 		}
+		Runnable undock = () -> {
+			hideDockedLog();
+			settings.setDockLogViewer(false);
+			LogViewerDialog.open(this, logOptions);
+		};
+		logPanel = new LogPanel(this, logOptions, undock, this::hideDockedLog);
+		rightSplitPane.setBottomComponent(logPanel);
+	}
 
-		@Override
-		public void menuDeselected(MenuEvent e) {
+	private void hideDockedLog() {
+		if (logPanel == null) {
+			return;
 		}
+		logPanel.dispose();
+		logPanel = null;
+		rightSplitPane.setBottomComponent(null);
+	}
 
-		@Override
-		public void menuCanceled(MenuEvent e) {
-		}
+	public JMenu getPluginsMenu() {
+		return pluginsMenu;
+	}
+
+	public RenameMappingsGui getRenameMappings() {
+		return renameMappings;
 	}
 }

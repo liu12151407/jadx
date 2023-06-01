@@ -8,11 +8,13 @@ import java.util.Map;
 import java.util.Objects;
 
 import jadx.api.plugins.input.data.AccessFlags;
+import jadx.api.plugins.input.data.attributes.JadxAttrType;
 import jadx.core.Consts;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.FieldReplaceAttr;
 import jadx.core.dex.attributes.nodes.MethodReplaceAttr;
+import jadx.core.dex.attributes.nodes.RenameReasonAttr;
 import jadx.core.dex.attributes.nodes.SkipMethodArgsAttr;
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.info.ClassInfo;
@@ -79,8 +81,9 @@ public class ClassModifier extends AbstractVisitor {
 		boolean inline = cls.isAnonymous();
 		if (inline || cls.getClassInfo().isInner()) {
 			for (FieldNode field : cls.getFields()) {
-				if (field.getAccessFlags().isSynthetic() && field.getType().isObject()) {
-					ClassInfo clsInfo = ClassInfo.fromType(cls.root(), field.getType());
+				ArgType fldType = field.getType();
+				if (field.getAccessFlags().isSynthetic() && fldType.isObject() && !fldType.isGenericType()) {
+					ClassInfo clsInfo = ClassInfo.fromType(cls.root(), fldType);
 					ClassNode fieldsCls = cls.root().resolveClass(clsInfo);
 					ClassInfo parentClass = cls.getClassInfo().getParentClass();
 					if (fieldsCls != null
@@ -274,17 +277,18 @@ public class ClassModifier extends AbstractVisitor {
 			}
 		}
 		// remove confirmed, change visibility and name if needed
-		if (!wrappedAccFlags.isPublic()) {
+		if (!wrappedAccFlags.isPublic() && !mth.root().getArgs().isRespectBytecodeAccModifiers()) {
 			// must be public
 			FixAccessModifiers.changeVisibility(wrappedMth, AccessFlags.PUBLIC);
 		}
 		String alias = mth.getAlias();
 		if (!Objects.equals(wrappedMth.getAlias(), alias)) {
-			wrappedMth.getMethodInfo().setAlias(alias);
+			wrappedMth.rename(alias);
+			RenameReasonAttr.forNode(wrappedMth).append("merged with bridge method [inline-methods]");
 		}
 		wrappedMth.addAttr(new MethodReplaceAttr(mth));
 		wrappedMth.copyAttributeFrom(mth, AType.METHOD_OVERRIDE);
-		wrappedMth.addDebugComment("Method merged with bridge method");
+		wrappedMth.addDebugComment("Method merged with bridge method: " + mth.getMethodInfo().getShortId());
 		return true;
 	}
 
@@ -305,19 +309,24 @@ public class ClassModifier extends AbstractVisitor {
 	 * Remove public empty constructors (static or default)
 	 */
 	private static void removeEmptyMethods(MethodNode mth) {
+		if (!mth.getArgRegs().isEmpty()) {
+			return;
+		}
 		AccessInfo af = mth.getAccessFlags();
-		boolean publicConstructor = af.isConstructor() && af.isPublic();
+		boolean publicConstructor = mth.isConstructor() && af.isPublic();
 		boolean clsInit = mth.getMethodInfo().isClassInit() && af.isStatic();
-		if ((publicConstructor || clsInit) && mth.getArgRegs().isEmpty()) {
-			List<BlockNode> bb = mth.getBasicBlocks();
-			if (bb == null || bb.isEmpty() || BlockUtils.isAllBlocksEmpty(bb)) {
-				if (clsInit) {
+		if (publicConstructor || clsInit) {
+			if (!BlockUtils.isAllBlocksEmpty(mth.getBasicBlocks())) {
+				return;
+			}
+			if (clsInit) {
+				mth.add(AFlag.DONT_GENERATE);
+			} else {
+				// don't remove default constructor if other constructors exists or constructor has annotations
+				if (mth.isDefaultConstructor()
+						&& !isNonDefaultConstructorExists(mth)
+						&& !mth.contains(JadxAttrType.ANNOTATION_LIST)) {
 					mth.add(AFlag.DONT_GENERATE);
-				} else {
-					// don't remove default constructor if other constructors exists
-					if (mth.isDefaultConstructor() && !isNonDefaultConstructorExists(mth)) {
-						mth.add(AFlag.DONT_GENERATE);
-					}
 				}
 			}
 		}

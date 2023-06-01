@@ -8,6 +8,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -40,7 +41,11 @@ import jadx.api.JadxArgs;
 import jadx.api.JadxDecompiler;
 import jadx.api.JadxInternalAccess;
 import jadx.api.JavaClass;
-import jadx.api.args.DeobfuscationMapFileMode;
+import jadx.api.args.GeneratedRenamesMappingFileMode;
+import jadx.api.data.IJavaNodeRef;
+import jadx.api.data.impl.JadxCodeData;
+import jadx.api.data.impl.JadxCodeRename;
+import jadx.api.data.impl.JadxNodeRef;
 import jadx.api.metadata.ICodeMetadata;
 import jadx.api.metadata.annotations.InsnCodeOffset;
 import jadx.core.dex.attributes.AFlag;
@@ -139,7 +144,7 @@ public abstract class IntegrationTest extends TestUtils {
 		args.setFsCaseSensitive(false); // use same value on all systems
 		args.setCommentsLevel(CommentsLevel.DEBUG);
 		args.setDeobfuscationOn(false);
-		args.setDeobfuscationMapFileMode(DeobfuscationMapFileMode.IGNORE);
+		args.setGeneratedRenamesMappingFileMode(GeneratedRenamesMappingFileMode.IGNORE);
 	}
 
 	@AfterEach
@@ -570,7 +575,7 @@ public abstract class IntegrationTest extends TestUtils {
 
 	protected void enableDeobfuscation() {
 		args.setDeobfuscationOn(true);
-		args.setDeobfuscationMapFileMode(DeobfuscationMapFileMode.IGNORE);
+		args.setGeneratedRenamesMappingFileMode(GeneratedRenamesMappingFileMode.IGNORE);
 		args.setDeobfuscationMinLength(2);
 		args.setDeobfuscationMaxLength(64);
 	}
@@ -617,5 +622,31 @@ public abstract class IntegrationTest extends TestUtils {
 	// Use only for debug purpose
 	protected void saveTestJar() {
 		this.saveTestJar = true;
+	}
+
+	protected void addClsRename(String fullClsName, String newName) {
+		JadxNodeRef clsRef = JadxNodeRef.forCls(fullClsName);
+		getCodeData().getRenames().add(new JadxCodeRename(clsRef, newName));
+	}
+
+	protected void addMthRename(String fullClsName, String mthSignature, String newName) {
+		JadxNodeRef mthRef = new JadxNodeRef(IJavaNodeRef.RefType.METHOD, fullClsName, mthSignature);
+		getCodeData().getRenames().add(new JadxCodeRename(mthRef, newName));
+	}
+
+	protected void addFldRename(String fullClsName, String fldSignature, String newName) {
+		JadxNodeRef fldRef = new JadxNodeRef(IJavaNodeRef.RefType.FIELD, fullClsName, fldSignature);
+		getCodeData().getRenames().add(new JadxCodeRename(fldRef, newName));
+	}
+
+	protected JadxCodeData getCodeData() {
+		JadxCodeData codeData = (JadxCodeData) getArgs().getCodeData();
+		if (codeData == null) {
+			codeData = new JadxCodeData();
+			codeData.setRenames(new ArrayList<>());
+			codeData.setComments(new ArrayList<>());
+			getArgs().setCodeData(codeData);
+		}
+		return codeData;
 	}
 }

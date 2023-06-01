@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import jadx.api.CommentsLevel;
 import jadx.api.ICodeWriter;
 import jadx.api.JadxArgs;
+import jadx.api.args.IntegerFormat;
 import jadx.api.metadata.annotations.InsnCodeOffset;
 import jadx.api.metadata.annotations.VarNode;
 import jadx.api.plugins.input.data.AccessFlags;
@@ -548,12 +549,12 @@ public class MethodGen {
 	 * Return fallback variant of method codegen
 	 */
 	public static MethodGen getFallbackMethodGen(MethodNode mth) {
-		ClassGen clsGen = new ClassGen(mth.getParentClass(), null, false, true, true);
+		ClassGen clsGen = new ClassGen(mth.getParentClass(), null, false, true, true, IntegerFormat.AUTO);
 		return new MethodGen(clsGen, mth);
 	}
 
 	public static String getLabelName(BlockNode block) {
-		return String.format("L%d", block.getId());
+		return String.format("L%d", block.getCId());
 	}
 
 	public static String getLabelName(IfNode insn) {

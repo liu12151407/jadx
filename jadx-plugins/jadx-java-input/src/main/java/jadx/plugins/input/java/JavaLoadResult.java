@@ -9,16 +9,19 @@ import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.api.plugins.input.ICodeLoader;
 import jadx.api.plugins.input.data.IClassData;
-import jadx.api.plugins.input.data.ILoadResult;
-import jadx.api.plugins.input.data.IResourceData;
 
-public class JavaLoadResult implements ILoadResult {
+public class JavaLoadResult implements ICodeLoader {
 	private static final Logger LOG = LoggerFactory.getLogger(JavaLoadResult.class);
 
 	private final List<JavaClassReader> readers;
 	@Nullable
 	private final Closeable closeable;
+
+	public JavaLoadResult(List<JavaClassReader> readers) {
+		this(readers, null);
+	}
 
 	public JavaLoadResult(List<JavaClassReader> readers, @Nullable Closeable closeable) {
 		this.readers = readers;
@@ -37,17 +40,12 @@ public class JavaLoadResult implements ILoadResult {
 	}
 
 	@Override
-	public void visitResources(Consumer<IResourceData> consumer) {
-	}
-
-	@Override
 	public boolean isEmpty() {
 		return readers.isEmpty();
 	}
 
 	@Override
 	public void close() throws IOException {
-		readers.clear();
 		if (closeable != null) {
 			closeable.close();
 		}

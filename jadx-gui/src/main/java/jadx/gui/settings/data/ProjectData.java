@@ -3,7 +3,9 @@ package jadx.gui.settings.data;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import org.jetbrains.annotations.Nullable;
@@ -17,10 +19,11 @@ public class ProjectData {
 	private List<String[]> treeExpansions = new ArrayList<>();
 	private JadxCodeData codeData = new JadxCodeData();
 	private List<TabViewState> openTabs = Collections.emptyList();
-	private int activeTab = -1;
+	private @Nullable Path mappingsPath;
 	private @Nullable Path cacheDir;
 	private boolean enableLiveReload = false;
 	private List<String> searchHistory = new ArrayList<>();
+	protected Map<String, String> pluginOptions = new HashMap<>();
 
 	public List<Path> getFiles() {
 		return files;
@@ -58,11 +61,6 @@ public class ProjectData {
 		return openTabs;
 	}
 
-	/**
-	 *
-	 * @param openTabs
-	 * @return <code>true></code> if a change was saved
-	 */
 	public boolean setOpenTabs(List<TabViewState> openTabs) {
 		if (this.openTabs.equals(openTabs)) {
 			return false;
@@ -71,21 +69,13 @@ public class ProjectData {
 		return true;
 	}
 
-	public int getActiveTab() {
-		return activeTab;
+	@Nullable
+	public Path getMappingsPath() {
+		return mappingsPath;
 	}
 
-	/**
-	 *
-	 * @param activeTab
-	 * @return <code>true></code> if a change was saved
-	 */
-	public boolean setActiveTab(int activeTab) {
-		if (this.activeTab == activeTab) {
-			return false;
-		}
-		this.activeTab = activeTab;
-		return true;
+	public void setMappingsPath(Path mappingsPath) {
+		this.mappingsPath = mappingsPath;
 	}
 
 	@Nullable
@@ -111,5 +101,9 @@ public class ProjectData {
 
 	public void setSearchHistory(List<String> searchHistory) {
 		this.searchHistory = searchHistory;
+	}
+
+	public Map<String, String> getPluginOptions() {
+		return pluginOptions;
 	}
 }

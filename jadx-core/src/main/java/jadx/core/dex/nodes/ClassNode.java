@@ -32,6 +32,7 @@ import jadx.api.plugins.input.data.attributes.types.InnerClassesAttr;
 import jadx.api.plugins.input.data.attributes.types.InnerClsInfo;
 import jadx.api.plugins.input.data.attributes.types.SourceFileAttr;
 import jadx.api.plugins.input.data.impl.ListConsumer;
+import jadx.api.usage.IUsageInfoData;
 import jadx.core.Consts;
 import jadx.core.ProcessClass;
 import jadx.core.dex.attributes.AFlag;
@@ -53,11 +54,13 @@ import jadx.core.utils.exceptions.JadxRuntimeException;
 import static jadx.core.dex.nodes.ProcessState.LOADED;
 import static jadx.core.dex.nodes.ProcessState.NOT_LOADED;
 
-public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeNode, Comparable<ClassNode> {
+public class ClassNode extends NotificationAttrNode
+		implements ILoadable, ICodeNode, IPackageUpdate, Comparable<ClassNode> {
 	private final RootNode root;
 	private final IClassData clsData;
 
 	private final ClassInfo clsInfo;
+	private PackageNode packageNode;
 	private AccessInfo accessFlags;
 	private ArgType superClass;
 	private List<ArgType> interfaces;
@@ -72,7 +75,7 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 	// store smali
 	private String smali;
 	// store parent for inner classes or 'this' otherwise
-	private ClassNode parentClass;
+	private ClassNode parentClass = this;
 
 	private volatile ProcessState state = ProcessState.NOT_LOADED;
 	private LoadStage loadStage = LoadStage.NONE;
@@ -102,11 +105,12 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 	public ClassNode(RootNode root, IClassData cls) {
 		this.root = root;
 		this.clsInfo = ClassInfo.fromType(root, ArgType.object(cls.getType()));
+		this.packageNode = PackageNode.getForClass(root, clsInfo.getPackage(), this);
 		this.clsData = cls.copy();
-		initialLoad(clsData);
+		load(clsData, false);
 	}
 
-	private void initialLoad(IClassData cls) {
+	private void load(IClassData cls, boolean reloading) {
 		try {
 			addAttrs(cls.getAttributes());
 			this.accessFlags = new AccessInfo(getAccessFlags(cls), AFType.CLASS);
@@ -116,13 +120,11 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 			ListConsumer<IFieldData, FieldNode> fieldsConsumer = new ListConsumer<>(fld -> FieldNode.build(this, fld));
 			ListConsumer<IMethodData, MethodNode> methodsConsumer = new ListConsumer<>(mth -> MethodNode.build(this, mth));
 			cls.visitFieldsAndMethods(fieldsConsumer, methodsConsumer);
-			if (this.fields != null && this.methods != null) {
-				// TODO: temporary solution for restore usage info in reloaded methods and fields
-				restoreUsageData(this.fields, this.methods, fieldsConsumer.getResult(), methodsConsumer.getResult());
-			}
 			this.fields = fieldsConsumer.getResult();
 			this.methods = methodsConsumer.getResult();
-
+			if (reloading) {
+				restoreUsageData();
+			}
 			initStaticValues(fields);
 			processAttributes(this);
 			buildCache();
@@ -136,21 +138,10 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 		}
 	}
 
-	private void restoreUsageData(List<FieldNode> oldFields, List<MethodNode> oldMethods,
-			List<FieldNode> newFields, List<MethodNode> newMethods) {
-		Map<FieldInfo, FieldNode> oldFieldMap = Utils.groupBy(oldFields, FieldNode::getFieldInfo);
-		for (FieldNode newField : newFields) {
-			FieldNode oldField = oldFieldMap.get(newField.getFieldInfo());
-			if (oldField != null) {
-				newField.setUseIn(oldField.getUseIn());
-			}
-		}
-		Map<MethodInfo, MethodNode> oldMethodsMap = Utils.groupBy(oldMethods, MethodNode::getMethodInfo);
-		for (MethodNode newMethod : newMethods) {
-			MethodNode oldMethod = oldMethodsMap.get(newMethod.getMethodInfo());
-			if (oldMethod != null) {
-				newMethod.setUseIn(oldMethod.getUseIn());
-			}
+	private void restoreUsageData() {
+		IUsageInfoData usageInfoData = root.getArgs().getUsageInfoCache().get(root);
+		if (usageInfoData != null) {
+			usageInfoData.applyForClass(this);
 		}
 	}
 
@@ -234,7 +225,7 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 		this.methods = new ArrayList<>();
 		this.fields = new ArrayList<>();
 		this.accessFlags = new AccessInfo(accessFlags, AFType.CLASS);
-		this.parentClass = this;
+		this.packageNode = PackageNode.getForClass(root, clsInfo.getPackage(), this);
 	}
 
 	private void initStaticValues(List<FieldNode> fields) {
@@ -353,12 +344,12 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 		unload();
 		clearAttributes();
 		root().getConstValues().removeForClass(this);
-		initialLoad(clsData);
+		load(clsData, true);
 
 		innerClasses.forEach(ClassNode::deepUnload);
 	}
 
-	private void unloadFromCache() {
+	public void unloadFromCache() {
 		if (isInner()) {
 			return;
 		}
@@ -563,8 +554,68 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 				parentClass = parent;
 				return;
 			}
+			// undo inner mark in class info
+			clsInfo.notInner(root);
 		}
 		parentClass = this;
+	}
+
+	/**
+	 * Change class name and package (if full name provided)
+	 * Leading dot can be used to move to default package.
+	 * Package for inner classes can't be changed.
+	 */
+	@Override
+	public void rename(String newName) {
+		int lastDot = newName.lastIndexOf('.');
+		if (lastDot == -1) {
+			clsInfo.changeShortName(newName);
+			return;
+		}
+		if (isInner()) {
+			addWarn("Can't change package for inner class: " + this + " to " + newName);
+			return;
+		}
+		// change class package
+		String newPkg = newName.substring(0, lastDot);
+		String newShortName = newName.substring(lastDot + 1);
+		if (changeClassNodePackage(newPkg)) {
+			clsInfo.changePkgAndName(newPkg, newShortName);
+		} else {
+			clsInfo.changeShortName(newShortName);
+		}
+	}
+
+	private boolean changeClassNodePackage(String fullPkg) {
+		if (clsInfo.isInner()) {
+			throw new JadxRuntimeException("Can't change package for inner class");
+		}
+		if (fullPkg.equals(clsInfo.getAliasPkg())) {
+			return false;
+		}
+		root.removeClsFromPackage(packageNode, this);
+		packageNode = PackageNode.getForClass(root, fullPkg, this);
+		root.sortPackages();
+		return true;
+	}
+
+	public void removeAlias() {
+		if (!clsInfo.isInner()) {
+			changeClassNodePackage(clsInfo.getPackage());
+		}
+		clsInfo.removeAlias();
+	}
+
+	@Override
+	public void onParentPackageUpdate(PackageNode updatedPkg) {
+		if (isInner()) {
+			return;
+		}
+		clsInfo.changePkg(packageNode.getAliasPkgInfo().getFullName());
+	}
+
+	public PackageNode getPackageNode() {
+		return packageNode;
 	}
 
 	public ClassNode getTopParentClass() {
@@ -617,8 +668,7 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 	/**
 	 * Get all inner and inlined classes recursively
 	 *
-	 * @param resultClassesSet
-	 *                         all identified inner and inlined classes are added to this set
+	 * @param resultClassesSet all identified inner and inlined classes are added to this set
 	 */
 	public void getInnerAndInlinedClassesRecursive(Set<ClassNode> resultClassesSet) {
 		for (ClassNode innerCls : innerClasses) {
@@ -717,6 +767,15 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 		return clsInfo;
 	}
 
+	public String getName() {
+		return clsInfo.getShortName();
+	}
+
+	public String getAlias() {
+		return clsInfo.getAliasShortName();
+	}
+
+	@Deprecated
 	public String getShortName() {
 		return clsInfo.getAliasShortName();
 	}
@@ -866,7 +925,7 @@ public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeN
 
 	@Override
 	public int compareTo(@NotNull ClassNode o) {
-		return this.getFullName().compareTo(o.getFullName());
+		return this.clsInfo.compareTo(o.clsInfo);
 	}
 
 	@Override

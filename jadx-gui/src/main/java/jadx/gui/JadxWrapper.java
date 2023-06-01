@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 import org.jetbrains.annotations.NotNull;
@@ -20,20 +21,22 @@ import jadx.api.JavaPackage;
 import jadx.api.ResourceFile;
 import jadx.api.impl.InMemoryCodeCache;
 import jadx.api.metadata.ICodeNodeRef;
-import jadx.api.plugins.JadxPlugin;
-import jadx.api.plugins.JadxPluginManager;
+import jadx.api.usage.impl.EmptyUsageInfoCache;
+import jadx.api.usage.impl.InMemoryUsageInfoCache;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.ProcessState;
 import jadx.core.dex.nodes.RootNode;
-import jadx.core.dex.visitors.rename.RenameVisitor;
 import jadx.core.utils.exceptions.JadxRuntimeException;
-import jadx.core.utils.files.FileUtils;
+import jadx.gui.cache.code.CodeStringCache;
+import jadx.gui.cache.code.disk.BufferCodeCache;
+import jadx.gui.cache.code.disk.DiskCodeCache;
+import jadx.gui.cache.usage.UsageInfoCache;
+import jadx.gui.plugins.context.GuiPluginsContext;
 import jadx.gui.settings.JadxProject;
 import jadx.gui.settings.JadxSettings;
 import jadx.gui.ui.MainWindow;
-import jadx.gui.utils.codecache.CodeStringCache;
-import jadx.gui.utils.codecache.disk.BufferCodeCache;
-import jadx.gui.utils.codecache.disk.DiskCodeCache;
+import jadx.gui.utils.CacheObject;
+import jadx.plugins.tools.JadxExternalPluginsLoader;
 
 import static jadx.core.dex.nodes.ProcessState.GENERATED_AND_UNLOADED;
 import static jadx.core.dex.nodes.ProcessState.NOT_LOADED;
@@ -47,6 +50,7 @@ public class JadxWrapper {
 
 	private final MainWindow mainWindow;
 	private volatile @Nullable JadxDecompiler decompiler;
+	private GuiPluginsContext guiPluginsContext;
 
 	public JadxWrapper(MainWindow mainWindow) {
 		this.mainWindow = mainWindow;
@@ -58,11 +62,13 @@ public class JadxWrapper {
 			synchronized (DECOMPILER_UPDATE_SYNC) {
 				JadxProject project = getProject();
 				JadxArgs jadxArgs = getSettings().toJadxArgs();
-				jadxArgs.setInputFiles(FileUtils.toFiles(project.getFilePaths()));
-				jadxArgs.setCodeData(project.getCodeData());
+				jadxArgs.setPluginLoader(new JadxExternalPluginsLoader());
+				project.fillJadxArgs(jadxArgs);
 
-				this.decompiler = new JadxDecompiler(jadxArgs);
-				this.decompiler.load();
+				decompiler = new JadxDecompiler(jadxArgs);
+				initGuiPluginsContext();
+				initUsageCache(jadxArgs);
+				decompiler.load();
 				initCodeCache();
 			}
 		} catch (Exception e) {
@@ -86,6 +92,10 @@ public class JadxWrapper {
 				if (decompiler != null) {
 					decompiler.close();
 					decompiler = null;
+				}
+				if (guiPluginsContext != null) {
+					resetGuiPluginsContext();
+					guiPluginsContext = null;
 				}
 			}
 		} catch (Exception e) {
@@ -112,6 +122,33 @@ public class JadxWrapper {
 	private BufferCodeCache buildBufferedDiskCache() {
 		DiskCodeCache diskCache = new DiskCodeCache(getDecompiler().getRoot(), getProject().getCacheDir());
 		return new BufferCodeCache(diskCache);
+	}
+
+	private void initUsageCache(JadxArgs jadxArgs) {
+		switch (getSettings().getUsageCacheMode()) {
+			case NONE:
+				jadxArgs.setUsageInfoCache(new EmptyUsageInfoCache());
+				break;
+			case MEMORY:
+				jadxArgs.setUsageInfoCache(new InMemoryUsageInfoCache());
+				break;
+			case DISK:
+				jadxArgs.setUsageInfoCache(new UsageInfoCache(getProject().getCacheDir(), jadxArgs.getInputFiles()));
+				break;
+		}
+	}
+
+	private void initGuiPluginsContext() {
+		guiPluginsContext = new GuiPluginsContext(mainWindow);
+		decompiler.getPluginManager().setGuiContext(guiPluginsContext);
+	}
+
+	public GuiPluginsContext getGuiPluginsContext() {
+		return guiPluginsContext;
+	}
+
+	public void resetGuiPluginsContext() {
+		guiPluginsContext.reset();
 	}
 
 	/**
@@ -191,13 +228,10 @@ public class JadxWrapper {
 		getSettings().sync();
 	}
 
-	public List<JadxPlugin> getAllPlugins() {
-		if (decompiler != null) {
-			return decompiler.getPluginManager().getAllPlugins();
+	public Optional<JadxDecompiler> getCurrentDecompiler() {
+		synchronized (DECOMPILER_UPDATE_SYNC) {
+			return Optional.ofNullable(decompiler);
 		}
-		JadxPluginManager pluginManager = new JadxPluginManager();
-		pluginManager.load();
-		return pluginManager.getAllPlugins();
 	}
 
 	/**
@@ -214,10 +248,6 @@ public class JadxWrapper {
 	// TODO: forbid usage of this method
 	public RootNode getRootNode() {
 		return getDecompiler().getRoot();
-	}
-
-	public void reInitRenameVisitor() {
-		new RenameVisitor().init(getRootNode());
 	}
 
 	public void reloadCodeData() {
@@ -254,6 +284,10 @@ public class JadxWrapper {
 
 	public JadxSettings getSettings() {
 		return mainWindow.getSettings();
+	}
+
+	public CacheObject getCache() {
+		return mainWindow.getCacheObject();
 	}
 
 	/**
