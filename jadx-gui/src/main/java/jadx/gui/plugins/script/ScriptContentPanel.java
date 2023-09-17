@@ -29,13 +29,14 @@ import jadx.gui.settings.LineNumbersMode;
 import jadx.gui.treemodel.JInputScript;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.TabbedPane;
+import jadx.gui.ui.action.ActionModel;
+import jadx.gui.ui.action.JadxGuiAction;
 import jadx.gui.ui.codearea.AbstractCodeArea;
 import jadx.gui.ui.codearea.AbstractCodeContentPanel;
 import jadx.gui.ui.codearea.SearchBar;
 import jadx.gui.utils.Icons;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.UiUtils;
-import jadx.gui.utils.ui.ActionHandler;
 import jadx.gui.utils.ui.NodeLabel;
 import jadx.plugins.script.ide.ScriptAnalyzeResult;
 import jadx.plugins.script.ide.ScriptServices;
@@ -89,15 +90,14 @@ public class ScriptContentPanel extends AbstractCodeContentPanel {
 	}
 
 	private JPanel buildScriptActionsPanel() {
-		ActionHandler runAction = new ActionHandler(this::runScript);
-		runAction.setNameAndDesc(NLS.str("script.run"));
-		runAction.setIcon(Icons.RUN);
-		runAction.attachKeyBindingFor(scriptArea, KeyStroke.getKeyStroke(KeyEvent.VK_F8, 0));
+		JadxGuiAction runAction = new JadxGuiAction(ActionModel.SCRIPT_RUN, this::runScript);
+		JadxGuiAction saveAction = new JadxGuiAction(ActionModel.SCRIPT_SAVE, scriptArea::save);
 
-		ActionHandler saveAction = new ActionHandler(scriptArea::save);
-		saveAction.setNameAndDesc(NLS.str("script.save"));
-		saveAction.setIcon(Icons.SAVE_ALL);
-		saveAction.setKeyBinding(KeyStroke.getKeyStroke(KeyEvent.VK_S, UiUtils.ctrlButton()));
+		runAction.setShortcutComponent(scriptArea);
+		saveAction.setShortcutComponent(scriptArea);
+
+		tabbedPane.getMainWindow().getShortcutsController().bindImmediate(runAction);
+		tabbedPane.getMainWindow().getShortcutsController().bindImmediate(saveAction);
 
 		JButton save = saveAction.makeButton();
 		scriptArea.getScriptNode().addChangeListener(save::setEnabled);
@@ -144,8 +144,7 @@ public class ScriptContentPanel extends AbstractCodeContentPanel {
 				scriptLog.error("Passes reload failed", e);
 			}
 		}, taskStatus -> {
-			tabbedPane.reloadInactiveTabs();
-			mainWindow.reloadTree();
+			mainWindow.passesReloaded();
 		});
 	}
 
@@ -155,17 +154,17 @@ public class ScriptContentPanel extends AbstractCodeContentPanel {
 			String code = scriptArea.getText();
 			String fileName = scriptArea.getNode().getName();
 
-			ScriptServices scriptServices = new ScriptServices(fileName);
-			ScriptAnalyzeResult result = scriptServices.analyze(code, scriptArea.getCaretPosition());
+			ScriptServices scriptServices = new ScriptServices();
+			ScriptAnalyzeResult result = scriptServices.analyze(fileName, code);
+			boolean success = result.getSuccess();
 			List<ScriptDiagnostic> issues = result.getIssues();
-			boolean success = true;
 			for (ScriptDiagnostic issue : issues) {
 				Severity severity = issue.getSeverity();
 				if (severity == Severity.ERROR || severity == Severity.FATAL) {
 					scriptLog.error("{}", issue.render(false, true, true, true));
 					success = false;
-				} else {
-					scriptLog.warn("Compiler issue: {}", issue);
+				} else if (severity == Severity.WARNING) {
+					scriptLog.warn("Compile issue: {}", issue);
 				}
 			}
 			List<JadxLintError> lintErrs = Collections.emptyList();
@@ -178,7 +177,7 @@ public class ScriptContentPanel extends AbstractCodeContentPanel {
 			errorService.addLintErrors(lintErrs);
 			errorService.apply();
 			if (!success) {
-				resultLabel.setText("Compiler issues: " + issues.size());
+				resultLabel.setText("Compile issues: " + issues.size());
 				showScriptLog();
 			} else if (!lintErrs.isEmpty()) {
 				resultLabel.setText("Lint issues: " + lintErrs.size());

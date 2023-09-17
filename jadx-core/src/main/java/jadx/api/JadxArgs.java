@@ -12,7 +12,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,6 +33,7 @@ import jadx.api.usage.IUsageInfoCache;
 import jadx.api.usage.impl.InMemoryUsageInfoCache;
 import jadx.core.deobf.DeobfAliasProvider;
 import jadx.core.deobf.DeobfCondition;
+import jadx.core.plugins.PluginContext;
 import jadx.core.utils.files.FileUtils;
 
 public class JadxArgs implements Closeable {
@@ -153,6 +156,8 @@ public class JadxArgs implements Closeable {
 	private Map<String, String> pluginOptions = new HashMap<>();
 
 	private JadxPluginLoader pluginLoader = new JadxBasePluginLoader();
+
+	private boolean loadJadxClsSetFile = true;
 
 	public JadxArgs() {
 		// use default options
@@ -649,10 +654,18 @@ public class JadxArgs implements Closeable {
 		this.pluginLoader = pluginLoader;
 	}
 
+	public boolean isLoadJadxClsSetFile() {
+		return loadJadxClsSetFile;
+	}
+
+	public void setLoadJadxClsSetFile(boolean loadJadxClsSetFile) {
+		this.loadJadxClsSetFile = loadJadxClsSetFile;
+	}
+
 	/**
 	 * Hash of all options that can change result code
 	 */
-	public String makeCodeArgsHash() {
+	public String makeCodeArgsHash(@Nullable JadxDecompiler decompiler) {
 		String argStr = "args:" + decompilationMode + useImports + showInconsistentCode
 				+ inlineAnonymousClasses + inlineMethods + moveInnerClasses + allowInlineKotlinLambda
 				+ deobfuscationOn + deobfuscationMinLength + deobfuscationMaxLength
@@ -661,8 +674,19 @@ public class JadxArgs implements Closeable {
 				+ insertDebugLines + extractFinally
 				+ debugInfo + useSourceNameAsClassAlias + escapeUnicode + replaceConsts
 				+ respectBytecodeAccModifiers + fsCaseSensitive + renameFlags
-				+ commentsLevel + useDxInput + integerFormat;
+				+ commentsLevel + useDxInput + integerFormat
+				+ "|" + buildPluginsHash(decompiler);
 		return FileUtils.md5Sum(argStr);
+	}
+
+	private static String buildPluginsHash(@Nullable JadxDecompiler decompiler) {
+		if (decompiler == null) {
+			return "";
+		}
+		return decompiler.getPluginManager().getResolvedPluginContexts()
+				.stream()
+				.map(PluginContext::getInputsHash)
+				.collect(Collectors.joining(":"));
 	}
 
 	@Override

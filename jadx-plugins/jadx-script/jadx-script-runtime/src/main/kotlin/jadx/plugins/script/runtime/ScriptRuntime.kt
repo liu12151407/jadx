@@ -3,10 +3,13 @@
 
 package jadx.plugins.script.runtime
 
+import io.github.oshai.kotlinlogging.KLogger
+import io.github.oshai.kotlinlogging.KotlinLogging
 import jadx.api.JadxArgs
 import jadx.api.JadxDecompiler
 import jadx.api.JavaClass
 import jadx.api.plugins.JadxPluginContext
+import jadx.api.plugins.events.IJadxEvents
 import jadx.api.plugins.pass.JadxPass
 import jadx.plugins.script.runtime.data.Debug
 import jadx.plugins.script.runtime.data.Decompile
@@ -17,8 +20,7 @@ import jadx.plugins.script.runtime.data.Rename
 import jadx.plugins.script.runtime.data.Replace
 import jadx.plugins.script.runtime.data.Search
 import jadx.plugins.script.runtime.data.Stages
-import mu.KLogger
-import mu.KotlinLogging
+import org.jetbrains.annotations.ApiStatus.Internal
 import java.io.File
 
 const val JADX_SCRIPT_LOG_PREFIX = "JadxScript:"
@@ -50,6 +52,9 @@ class JadxScriptInstance(
 	val gui: Gui by lazy { Gui(this, scriptData.pluginContext.guiContext) }
 	val debug: Debug by lazy { Debug(this) }
 
+	val events: IJadxEvents
+		get() = scriptData.pluginContext.events()
+
 	val args: JadxArgs
 		get() = decompiler.args
 
@@ -69,5 +74,5 @@ class JadxScriptInstance(
 	}
 
 	val internalDecompiler: JadxDecompiler
-		get() = decompiler
+		@Internal get() = decompiler
 }

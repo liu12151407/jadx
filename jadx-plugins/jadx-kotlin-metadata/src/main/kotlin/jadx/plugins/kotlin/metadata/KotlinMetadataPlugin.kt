@@ -16,9 +16,12 @@ class KotlinMetadataPlugin : JadxPlugin {
 
 	override fun init(context: JadxPluginContext) {
 		context.registerOptions(options)
-		context.addPass(KotlinMetadataPreparePass(options))
-		context.addPass(KotlinMetadataDecompilePass(options))
-		context.registerInputsHashSupplier { options.toString() }
+		if (options.isPreparePassNeeded()) {
+			context.addPass(KotlinMetadataPreparePass(options))
+		}
+		if (options.isDecompilePassNeeded()) {
+			context.addPass(KotlinMetadataDecompilePass(options))
+		}
 	}
 
 	companion object {

@@ -44,4 +44,39 @@ public interface JadxGuiContext {
 	boolean registerGlobalKeyBinding(String id, String keyBinding, Runnable action);
 
 	void copyToClipboard(String str);
+
+	/**
+	 * Access to GUI settings
+	 */
+	JadxGuiSettings settings();
+
+	ICodeNodeRef getNodeUnderCaret();
+
+	ICodeNodeRef getNodeUnderMouse();
+
+	ICodeNodeRef getEnclosingNodeUnderCaret();
+
+	ICodeNodeRef getEnclosingNodeUnderMouse();
+
+	/**
+	 * Jump to a code ref
+	 *
+	 * @return if successfully jumped to the code ref
+	 */
+	boolean open(ICodeNodeRef ref);
+
+	/**
+	 * Reload code in active tab
+	 */
+	void reloadActiveTab();
+
+	/**
+	 * Reload code in all open tabs
+	 */
+	void reloadAllTabs();
+
+	/**
+	 * Save node rename in a project and run all needed UI updates
+	 */
+	void applyNodeRename(ICodeNodeRef node);
 }

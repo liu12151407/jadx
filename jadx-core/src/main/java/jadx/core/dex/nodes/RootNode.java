@@ -245,7 +245,9 @@ public class RootNode {
 		try {
 			if (this.clsp == null) {
 				ClspGraph newClsp = new ClspGraph(this);
-				newClsp.load();
+				if (args.isLoadJadxClsSetFile()) {
+					newClsp.loadClsSetFile();
+				}
 				newClsp.addApp(classes);
 				newClsp.initCache();
 				this.clsp = newClsp;
@@ -311,7 +313,7 @@ public class RootNode {
 		}
 		classes.forEach(ClassNode::updateParentClass);
 		for (PackageNode pkg : packages) {
-			pkg.getClasses().removeIf(ClassNode::isInner);
+			pkg.getClasses().removeIf(cls -> cls.getClassInfo().isInner());
 		}
 	}
 

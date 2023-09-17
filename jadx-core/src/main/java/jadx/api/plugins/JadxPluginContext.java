@@ -6,6 +6,7 @@ import org.jetbrains.annotations.Nullable;
 
 import jadx.api.JadxArgs;
 import jadx.api.JadxDecompiler;
+import jadx.api.plugins.events.IJadxEvents;
 import jadx.api.plugins.gui.JadxGuiContext;
 import jadx.api.plugins.input.JadxCodeInput;
 import jadx.api.plugins.options.JadxPluginOptions;
@@ -25,10 +26,15 @@ public interface JadxPluginContext {
 
 	/**
 	 * Function to calculate hash of all options which can change output code.
-	 * Hash for input files ({@link JadxArgs#getInputFiles()}) already calculated,
-	 * so this method can omit these files.
+	 * Hash for input files ({@link JadxArgs#getInputFiles()}) and registered options
+	 * calculated by default implementations.
 	 */
 	void registerInputsHashSupplier(Supplier<String> supplier);
+
+	/**
+	 * Subscribe and send events
+	 */
+	IJadxEvents events();
 
 	@Nullable
 	JadxGuiContext getGuiContext();

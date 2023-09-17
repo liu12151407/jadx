@@ -40,6 +40,26 @@ class Gui(
 		context().copyToClipboard(str)
 	}
 
+	fun open(ref: ICodeNodeRef): Boolean = context().open(ref)
+
+	fun reloadActiveTab() = context().reloadActiveTab()
+
+	fun reloadAllTabs() = context().reloadAllTabs()
+
+	val nodeUnderCaret: ICodeNodeRef?
+		get() = context().nodeUnderCaret
+	val nodeUnderMouse: ICodeNodeRef?
+		get() = context().nodeUnderMouse
+	val enclosingNodeUnderCaret: ICodeNodeRef?
+		get() = context().enclosingNodeUnderCaret
+	val enclosingNodeUnderMouse: ICodeNodeRef?
+		get() = context().enclosingNodeUnderMouse
+
+	/**
+	 * Save node rename in a project and run all needed UI updates
+	 */
+	fun applyNodeRename(node: ICodeNodeRef) = context().applyNodeRename(node)
+
 	private fun context(): JadxGuiContext =
 		guiContext ?: throw IllegalStateException("GUI plugins context not available!")
 }

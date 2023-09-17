@@ -42,14 +42,15 @@ class KotlinMetadataDecompilePass(
 		return false
 	}
 
-	override fun visit(mth: MethodNode?) { /* no op */
+	override fun visit(mth: MethodNode?) {
+		/* no op */
 	}
 
 	private fun renameMethodArgs(wrapper: KmClassWrapper) {
 		val args = wrapper.getMethodArgs()
 		args.forEach { (_, list) ->
 			list.forEach { (rArg, alias) ->
-				// TODO comment not being added ?
+				// TODO: comment not being added?
 				RenameReasonAttr.forNode(rArg).append(METADATA_REASON)
 				rArg.name = alias
 			}

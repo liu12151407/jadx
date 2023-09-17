@@ -1,30 +1,43 @@
 package jadx.plugins.script
 
-import jadx.api.JadxDecompiler
 import jadx.api.plugins.JadxPluginContext
 import jadx.plugins.script.runtime.JadxScriptData
 import jadx.plugins.script.runtime.JadxScriptTemplate
 import jadx.plugins.script.runtime.data.JadxScriptAllOptions
+import kotlin.script.experimental.api.CompiledScript
 import kotlin.script.experimental.api.EvaluationResult
 import kotlin.script.experimental.api.ResultValue
 import kotlin.script.experimental.api.ResultWithDiagnostics
-import kotlin.script.experimental.api.ScriptCompilationConfiguration
 import kotlin.script.experimental.api.ScriptDiagnostic.Severity
 import kotlin.script.experimental.api.ScriptEvaluationConfiguration
-import kotlin.script.experimental.api.compilerOptions
+import kotlin.script.experimental.api.SourceCode
 import kotlin.script.experimental.api.constructorArgs
 import kotlin.script.experimental.host.toScriptSource
 import kotlin.script.experimental.jvmhost.BasicJvmScriptingHost
 import kotlin.script.experimental.jvmhost.createJvmCompilationConfigurationFromTemplate
 import kotlin.script.experimental.jvmhost.createJvmEvaluationConfigurationFromTemplate
 import kotlin.system.measureTimeMillis
+import kotlin.time.DurationUnit
+import kotlin.time.toDuration
 
 class ScriptEval {
 
-	private val scriptingHost = BasicJvmScriptingHost()
+	companion object {
+		val scriptingHost = BasicJvmScriptingHost()
+
+		val compileConf = createJvmCompilationConfigurationFromTemplate<JadxScriptTemplate>()
+
+		private val baseEvalConf = createJvmEvaluationConfigurationFromTemplate<JadxScriptTemplate>()
+
+		private fun buildEvalConf(scriptData: JadxScriptData): ScriptEvaluationConfiguration {
+			return ScriptEvaluationConfiguration(baseEvalConf) {
+				constructorArgs(scriptData)
+			}
+		}
+	}
 
 	fun process(init: JadxPluginContext, scriptOptions: JadxScriptAllOptions): List<JadxScriptData> {
-		val jadx = init.decompiler as JadxDecompiler
+		val jadx = init.decompiler
 		val scripts = jadx.args.inputFiles.filter { f -> f.name.endsWith(".jadx.kts") }
 		if (scripts.isEmpty()) {
 			return emptyList()
@@ -38,29 +51,21 @@ class ScriptEval {
 		return scriptDataList
 	}
 
-	fun buildCompileConf(): ScriptCompilationConfiguration {
-		return createJvmCompilationConfigurationFromTemplate<JadxScriptTemplate> {
-			// forcing compiler to not use modules while building script classpath
-			// because shadow jar remove all modules-info.class (https://github.com/johnrengelman/shadow/issues/710)
-			compilerOptions("-Xjdk-release=1.8")
-		}
-	}
-
-	fun buildEvalConf(scriptData: JadxScriptData): ScriptEvaluationConfiguration {
-		return createJvmEvaluationConfigurationFromTemplate<JadxScriptTemplate> {
-			constructorArgs(scriptData)
-		}
+	suspend fun compile(script: SourceCode): ResultWithDiagnostics<CompiledScript> {
+		return scriptingHost.compiler(script, compileConf)
 	}
 
 	private fun eval(scriptData: JadxScriptData) {
 		scriptData.log.debug { "Loading script: ${scriptData.scriptFile.absolutePath}" }
 		val execTime = measureTimeMillis {
-			val compilationConf = buildCompileConf()
-			val evalConf = buildEvalConf(scriptData)
-			val result = scriptingHost.eval(scriptData.scriptFile.toScriptSource(), compilationConf, evalConf)
+			val result = scriptingHost.eval(
+				scriptData.scriptFile.toScriptSource(),
+				compileConf,
+				buildEvalConf(scriptData),
+			)
 			processEvalResult(result, scriptData)
 		}
-		scriptData.log.debug { "Script '${scriptData.scriptName}' executed in $execTime ms" }
+		scriptData.log.debug { "Script '${scriptData.scriptName}' executed in ${execTime.toDuration(DurationUnit.MILLISECONDS)}" }
 	}
 
 	private fun processEvalResult(res: ResultWithDiagnostics<EvaluationResult>, scriptData: JadxScriptData) {
@@ -71,7 +76,7 @@ class ScriptEval {
 				Severity.FATAL, Severity.ERROR -> log.error(r.exception) { "Script execution error: $msg" }
 				Severity.WARNING -> log.warn { "Script execution issue: $msg" }
 				Severity.INFO -> log.info { "Script report: $msg" }
-				Severity.DEBUG -> {} /* ignore, too verbose */
+				Severity.DEBUG -> {} // ignore, too verbose
 			}
 		}
 		when (res) {

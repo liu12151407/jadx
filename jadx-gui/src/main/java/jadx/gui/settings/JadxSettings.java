@@ -1,6 +1,10 @@
 package jadx.gui.settings;
 
-import java.awt.*;
+import java.awt.Font;
+import java.awt.GraphicsDevice;
+import java.awt.GraphicsEnvironment;
+import java.awt.Rectangle;
+import java.awt.Window;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -13,7 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
-import javax.swing.*;
+import javax.swing.JFrame;
 
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.jetbrains.annotations.Nullable;
@@ -33,18 +37,21 @@ import jadx.cli.JadxCLIArgs;
 import jadx.cli.LogHelper;
 import jadx.gui.cache.code.CodeCacheMode;
 import jadx.gui.cache.usage.UsageCacheMode;
+import jadx.gui.settings.data.ShortcutsWrapper;
 import jadx.gui.ui.MainWindow;
+import jadx.gui.ui.action.ActionModel;
 import jadx.gui.ui.codearea.EditorTheme;
 import jadx.gui.utils.FontUtils;
 import jadx.gui.utils.LafManager;
 import jadx.gui.utils.LangLocale;
 import jadx.gui.utils.NLS;
+import jadx.gui.utils.shortcut.Shortcut;
 
 public class JadxSettings extends JadxCLIArgs {
 	private static final Logger LOG = LoggerFactory.getLogger(JadxSettings.class);
 
 	private static final Path USER_HOME = Paths.get(System.getProperty("user.home"));
-	private static final int RECENT_PROJECTS_COUNT = 15;
+	private static final int RECENT_PROJECTS_COUNT = 30;
 	private static final int CURRENT_SETTINGS_VERSION = 18;
 
 	private static final Font DEFAULT_FONT = new RSyntaxTextArea().getFont();
@@ -69,6 +76,10 @@ public class JadxSettings extends JadxCLIArgs {
 	private boolean autoStartJobs = false;
 	private String excludedPackages = "";
 	private boolean autoSaveProject = true;
+	private Map<ActionModel, Shortcut> shortcuts = new HashMap<>();
+
+	@JadxSettingsAdapter.GsonExclude
+	private ShortcutsWrapper shortcutsWrapper = null;
 
 	private boolean showHeapUsageBar = false;
 	private boolean alwaysSelectOpened = false;
@@ -93,8 +104,10 @@ public class JadxSettings extends JadxCLIArgs {
 	private String adbDialogHost = "localhost";
 	private String adbDialogPort = "5037";
 
-	private CodeCacheMode codeCacheMode = CodeCacheMode.DISK_WITH_CACHE;
+	private CodeCacheMode codeCacheMode = CodeCacheMode.DISK;
 	private UsageCacheMode usageCacheMode = UsageCacheMode.DISK;
+	private @Nullable String cacheDir = null; // null - default (system), "." - at project dir, other - custom
+
 	private boolean jumpOnDoubleClick = true;
 
 	/**
@@ -206,8 +219,9 @@ public class JadxSettings extends JadxCLIArgs {
 		if (projectPath == null) {
 			return;
 		}
-		recentProjects.remove(projectPath);
-		recentProjects.add(0, projectPath);
+		Path normPath = projectPath.toAbsolutePath().normalize();
+		recentProjects.remove(normPath);
+		recentProjects.add(0, normPath);
 		int count = recentProjects.size();
 		if (count > RECENT_PROJECTS_COUNT) {
 			recentProjects.subList(RECENT_PROJECTS_COUNT, count).clear();
@@ -433,6 +447,14 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setAutoSaveProject(boolean autoSaveProject) {
 		this.autoSaveProject = autoSaveProject;
+	}
+
+	public ShortcutsWrapper getShortcuts() {
+		if (shortcutsWrapper == null) {
+			shortcutsWrapper = new ShortcutsWrapper();
+			shortcutsWrapper.updateShortcuts(shortcuts);
+		}
+		return shortcutsWrapper;
 	}
 
 	public void setExportAsGradleProject(boolean exportAsGradleProject) {
@@ -679,6 +701,14 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setUsageCacheMode(UsageCacheMode usageCacheMode) {
 		this.usageCacheMode = usageCacheMode;
+	}
+
+	public @Nullable String getCacheDir() {
+		return cacheDir;
+	}
+
+	public void setCacheDir(@Nullable String cacheDir) {
+		this.cacheDir = cacheDir;
 	}
 
 	public boolean isJumpOnDoubleClick() {

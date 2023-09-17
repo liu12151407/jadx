@@ -127,6 +127,7 @@ public class ClassNode extends NotificationAttrNode
 			}
 			initStaticValues(fields);
 			processAttributes(this);
+			processSpecialClasses(this);
 			buildCache();
 
 			// TODO: implement module attribute parsing
@@ -165,6 +166,15 @@ public class ClassNode extends NotificationAttrNode
 		this.generics = generics;
 		this.superClass = superClass;
 		this.interfaces = interfaces;
+	}
+
+	private static void processSpecialClasses(ClassNode cls) {
+		AccessInfo flags = cls.getAccessFlags();
+		if (flags.isSynthetic() && flags.isInterface() && flags.isAbstract()
+				&& cls.getName().equals("package-info")) {
+			cls.add(AFlag.PACKAGE_INFO);
+			cls.add(AFlag.DONT_RENAME);
+		}
 	}
 
 	private static void processAttributes(ClassNode cls) {
@@ -341,8 +351,8 @@ public class ClassNode extends NotificationAttrNode
 			// manually added class
 			return;
 		}
-		unload();
 		clearAttributes();
+		unload();
 		root().getConstValues().removeForClass(this);
 		load(clsData, true);
 
@@ -572,7 +582,7 @@ public class ClassNode extends NotificationAttrNode
 			clsInfo.changeShortName(newName);
 			return;
 		}
-		if (isInner()) {
+		if (clsInfo.isInner()) {
 			addWarn("Can't change package for inner class: " + this + " to " + newName);
 			return;
 		}
@@ -588,7 +598,7 @@ public class ClassNode extends NotificationAttrNode
 
 	private boolean changeClassNodePackage(String fullPkg) {
 		if (clsInfo.isInner()) {
-			throw new JadxRuntimeException("Can't change package for inner class");
+			throw new JadxRuntimeException("Can't change package for inner class: " + clsInfo);
 		}
 		if (fullPkg.equals(clsInfo.getAliasPkg())) {
 			return false;
@@ -608,7 +618,7 @@ public class ClassNode extends NotificationAttrNode
 
 	@Override
 	public void onParentPackageUpdate(PackageNode updatedPkg) {
-		if (isInner()) {
+		if (clsInfo.isInner()) {
 			return;
 		}
 		clsInfo.changePkg(packageNode.getAliasPkgInfo().getFullName());
@@ -811,7 +821,13 @@ public class ClassNode extends NotificationAttrNode
 		}
 		sb.append(String.format("###### Class %s (%s)", getFullName(), getRawName()));
 		sb.append(ICodeWriter.NL);
-		sb.append(clsData.getDisassembledCode());
+		try {
+			sb.append(clsData.getDisassembledCode());
+		} catch (Throwable e) {
+			sb.append("Failed to disassemble class:");
+			sb.append(ICodeWriter.NL);
+			sb.append(Utils.getStackTrace(e));
+		}
 	}
 
 	public IClassData getClsData() {

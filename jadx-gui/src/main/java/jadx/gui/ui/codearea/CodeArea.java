@@ -31,6 +31,7 @@ import jadx.gui.utils.DefaultPopupMenuListener;
 import jadx.gui.utils.JNodeCache;
 import jadx.gui.utils.JumpPosition;
 import jadx.gui.utils.UiUtils;
+import jadx.gui.utils.shortcut.ShortcutsController;
 
 /**
  * The {@link AbstractCodeArea} implementation used for displaying Java code and text based
@@ -42,9 +43,12 @@ public final class CodeArea extends AbstractCodeArea {
 	private static final long serialVersionUID = 6312736869579635796L;
 
 	private @Nullable ICodeInfo cachedCodeInfo;
+	private final ShortcutsController shortcutsController;
 
 	CodeArea(ContentPanel contentPanel, JNode node) {
 		super(contentPanel, node);
+		this.shortcutsController = getMainWindow().getShortcutsController();
+
 		setSyntaxEditingStyle(node.getSyntaxName());
 		boolean isJavaCode = node instanceof JClass;
 		if (isJavaCode) {
@@ -115,7 +119,8 @@ public final class CodeArea extends AbstractCodeArea {
 	}
 
 	private void addMenuItems() {
-		JNodePopupBuilder popup = new JNodePopupBuilder(this, getPopupMenu());
+		ShortcutsController shortcutsController = getMainWindow().getShortcutsController();
+		JNodePopupBuilder popup = new JNodePopupBuilder(this, getPopupMenu(), shortcutsController);
 		popup.addSeparator();
 		popup.add(new FindUsageAction(this));
 		popup.add(new GoToDeclarationAction(this));
@@ -143,7 +148,8 @@ public final class CodeArea extends AbstractCodeArea {
 	}
 
 	private void addMenuForJsonFile() {
-		JNodePopupBuilder popup = new JNodePopupBuilder(this, getPopupMenu());
+		ShortcutsController shortcutsController = getMainWindow().getShortcutsController();
+		JNodePopupBuilder popup = new JNodePopupBuilder(this, getPopupMenu(), shortcutsController);
 		popup.addSeparator();
 		popup.add(new JsonPrettifyAction(this));
 	}
@@ -214,10 +220,40 @@ public final class CodeArea extends AbstractCodeArea {
 	}
 
 	@Nullable
+	public JNode getEnclosingNodeUnderCaret() {
+		int caretPos = getCaretPosition();
+		Token token = modelToToken(caretPos);
+		if (token == null) {
+			return null;
+		}
+		int start = adjustOffsetForToken(token);
+		if (start == -1) {
+			start = caretPos;
+		}
+		return getEnclosingJNodeAtOffset(start);
+	}
+
+	@Nullable
 	public JNode getNodeUnderMouse() {
 		Point pos = UiUtils.getMousePosition(this);
 		int offset = adjustOffsetForToken(viewToToken(pos));
 		return getJNodeAtOffset(offset);
+	}
+
+	@Nullable
+	public JNode getEnclosingNodeUnderMouse() {
+		Point pos = UiUtils.getMousePosition(this);
+		int offset = adjustOffsetForToken(viewToToken(pos));
+		return getEnclosingJNodeAtOffset(offset);
+	}
+
+	@Nullable
+	public JNode getEnclosingJNodeAtOffset(int offset) {
+		JavaNode javaNode = getEnclosingJavaNode(offset);
+		if (javaNode != null) {
+			return convertJavaNode(javaNode);
+		}
+		return null;
 	}
 
 	@Nullable
@@ -247,6 +283,15 @@ public final class CodeArea extends AbstractCodeArea {
 	public JavaNode getClosestJavaNode(int offset) {
 		try {
 			return getJadxWrapper().getDecompiler().getClosestJavaNode(getCodeInfo(), offset);
+		} catch (Exception e) {
+			LOG.error("Can't get java node by offset: {}", offset, e);
+			return null;
+		}
+	}
+
+	public JavaNode getEnclosingJavaNode(int offset) {
+		try {
+			return getJadxWrapper().getDecompiler().getEnclosingNode(getCodeInfo(), offset);
 		} catch (Exception e) {
 			LOG.error("Can't get java node by offset: {}", offset, e);
 			return null;
@@ -300,6 +345,8 @@ public final class CodeArea extends AbstractCodeArea {
 
 	@Override
 	public void dispose() {
+		shortcutsController.unbindActionsForComponent(this);
+
 		super.dispose();
 		cachedCodeInfo = null;
 	}

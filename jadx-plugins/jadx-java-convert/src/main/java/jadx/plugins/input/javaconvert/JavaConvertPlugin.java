@@ -23,7 +23,7 @@ public class JavaConvertPlugin implements JadxPlugin, JadxCodeInput {
 	public JadxPluginInfo getPluginInfo() {
 		return new JadxPluginInfo(
 				PLUGIN_ID,
-				"JavaConvert",
+				"Java Convert",
 				"Convert .class, .jar and .aar files to dex",
 				"java-input");
 	}
@@ -32,7 +32,6 @@ public class JavaConvertPlugin implements JadxPlugin, JadxCodeInput {
 	public void init(JadxPluginContext context) {
 		context.registerOptions(options);
 		context.addCodeInput(this);
-		context.registerInputsHashSupplier(options::getOptionsHash);
 	}
 
 	@Override

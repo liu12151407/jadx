@@ -27,12 +27,12 @@ class ResXmlGenTest {
 		List<ResContainer> files = resXmlGen.makeResourcesXml();
 
 		assertEquals(1, files.size());
-		assertEquals("res/values/attrs.xml", files.get(0).getFileName());
+		assertEquals("res/values/attrs.xml", files.get(0).getName());
 		assertEquals("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 				+ "<resources>\n"
 				+ "    <attr name=\"size\" format=\"dimension\">\n"
 				+ "    </attr>\n"
-				+ "</resources>", files.get(0).getText().toString());
+				+ "</resources>", adaptLineEndings(files.get(0).getText().toString()));
 	}
 
 	@Test
@@ -48,13 +48,13 @@ class ResXmlGenTest {
 		List<ResContainer> files = resXmlGen.makeResourcesXml();
 
 		assertEquals(1, files.size());
-		assertEquals("res/values/attrs.xml", files.get(0).getFileName());
+		assertEquals("res/values/attrs.xml", files.get(0).getName());
 		assertEquals("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 				+ "<resources>\n"
 				+ "    <attr name=\"size\">\n"
 				+ "        <enum name=\"android:string.aerr_wait\" value=\"1\" />\n"
 				+ "    </attr>\n"
-				+ "</resources>", files.get(0).getText().toString());
+				+ "</resources>", adaptLineEndings(files.get(0).getText().toString()));
 	}
 
 	@Test
@@ -70,13 +70,34 @@ class ResXmlGenTest {
 		List<ResContainer> files = resXmlGen.makeResourcesXml();
 
 		assertEquals(1, files.size());
-		assertEquals("res/values/attrs.xml", files.get(0).getFileName());
+		assertEquals("res/values/attrs.xml", files.get(0).getName());
 		assertEquals("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 				+ "<resources>\n"
 				+ "    <attr name=\"size\">\n"
 				+ "        <flag name=\"android:string.aerr_wait\" value=\"1\" />\n"
 				+ "    </attr>\n"
-				+ "</resources>", files.get(0).getText().toString());
+				+ "</resources>", adaptLineEndings(files.get(0).getText().toString()));
+	}
+
+	@Test
+	void testAttrMin() {
+		ResourceStorage resStorage = new ResourceStorage();
+		ResourceEntry re = new ResourceEntry(2130903103, "jadx.gui.app", "attr", "size", "");
+		re.setNamedValues(
+				Lists.list(new RawNamedValue(16777216, new RawValue(16, 4)), new RawNamedValue(16777217, new RawValue(16, 1))));
+		resStorage.add(re);
+
+		ValuesParser vp = new ValuesParser(null, resStorage.getResourcesNames());
+		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
+		List<ResContainer> files = resXmlGen.makeResourcesXml();
+
+		assertEquals(1, files.size());
+		assertEquals("res/values/attrs.xml", files.get(0).getName());
+		assertEquals("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+				+ "<resources>\n"
+				+ "    <attr name=\"size\" format=\"integer\" min=\"1\">\n"
+				+ "    </attr>\n"
+				+ "</resources>", adaptLineEndings(files.get(0).getText().toString()));
 	}
 
 	@Test
@@ -95,7 +116,7 @@ class ResXmlGenTest {
 		List<ResContainer> files = resXmlGen.makeResourcesXml();
 
 		assertEquals(1, files.size());
-		assertEquals("res/values/styles.xml", files.get(0).getFileName());
+		assertEquals("res/values/styles.xml", files.get(0).getName());
 		assertEquals("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 				+ "<resources>\n"
 				+ "    <style name=\"JadxGui\" parent=\"\">\n"
@@ -103,7 +124,7 @@ class ResXmlGenTest {
 				+ "    </style>\n"
 				+ "    <style name=\"JadxGui.Dialog\" parent=\"@style/JadxGui\">\n"
 				+ "    </style>\n"
-				+ "</resources>", files.get(0).getText().toString());
+				+ "</resources>", adaptLineEndings(files.get(0).getText().toString()));
 	}
 
 	@Test
@@ -114,16 +135,40 @@ class ResXmlGenTest {
 		re.setNamedValues(Lists.list());
 		resStorage.add(re);
 
-		ValuesParser vp = new ValuesParser(new String[] { "Jadx Decompiler App" }, resStorage.getResourcesNames());
+		BinaryXMLStrings strings = new BinaryXMLStrings();
+		strings.put(0, "Jadx Decompiler App");
+		ValuesParser vp = new ValuesParser(strings, resStorage.getResourcesNames());
 		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
 		List<ResContainer> files = resXmlGen.makeResourcesXml();
 
 		assertEquals(1, files.size());
-		assertEquals("res/values/strings.xml", files.get(0).getFileName());
+		assertEquals("res/values/strings.xml", files.get(0).getName());
 		assertEquals("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 				+ "<resources>\n"
 				+ "    <string name=\"app_name\">Jadx Decompiler App</string>\n"
-				+ "</resources>", files.get(0).getText().toString());
+				+ "</resources>", adaptLineEndings(files.get(0).getText().toString()));
+	}
+
+	@Test
+	void testStringFormattedFalse() {
+		ResourceStorage resStorage = new ResourceStorage();
+		ResourceEntry re = new ResourceEntry(2130903103, "jadx.gui.app", "string", "app_name", "");
+		re.setSimpleValue(new RawValue(3, 0));
+		re.setNamedValues(Lists.list());
+		resStorage.add(re);
+
+		BinaryXMLStrings strings = new BinaryXMLStrings();
+		strings.put(0, "%s at %s");
+		ValuesParser vp = new ValuesParser(strings, resStorage.getResourcesNames());
+		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
+		List<ResContainer> files = resXmlGen.makeResourcesXml();
+
+		assertEquals(1, files.size());
+		assertEquals("res/values/strings.xml", files.get(0).getName());
+		assertEquals("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+				+ "<resources>\n"
+				+ "    <string name=\"app_name\" formatted=\"false\">%s at %s</string>\n"
+				+ "</resources>", adaptLineEndings(files.get(0).getText().toString()));
 	}
 
 	@Test
@@ -134,17 +179,26 @@ class ResXmlGenTest {
 				Lists.list(new RawNamedValue(16777216, new RawValue(3, 0))));
 		resStorage.add(re);
 
-		ValuesParser vp = new ValuesParser(new String[] { "Let's go" }, resStorage.getResourcesNames());
+		BinaryXMLStrings strings = new BinaryXMLStrings();
+		strings.put(0, "Let's go");
+		ValuesParser vp = new ValuesParser(strings, resStorage.getResourcesNames());
 		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
 		List<ResContainer> files = resXmlGen.makeResourcesXml();
 
 		assertEquals(1, files.size());
-		assertEquals("res/values/arrays.xml", files.get(0).getFileName());
+		assertEquals("res/values/arrays.xml", files.get(0).getName());
 		assertEquals("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 				+ "<resources>\n"
 				+ "    <array name=\"single_quote_escape_sample\">\n"
 				+ "        <item>Let\\'s go</item>\n"
 				+ "    </array>\n"
-				+ "</resources>", files.get(0).getText().toString());
+				+ "</resources>", adaptLineEndings(files.get(0).getText().toString()));
+	}
+
+	private static String adaptLineEndings(String input) {
+		if (System.lineSeparator().equals("\n")) {
+			return input; // no adaption necessary
+		}
+		return input.replaceAll(System.lineSeparator(), "\n");
 	}
 }

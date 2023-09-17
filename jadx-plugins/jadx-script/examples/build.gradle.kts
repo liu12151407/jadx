@@ -8,7 +8,7 @@ dependencies {
 	implementation(kotlin("stdlib-common"))
 	implementation(kotlin("script-runtime"))
 
-	implementation("io.github.microutils:kotlin-logging-jvm:3.0.5")
+	implementation("io.github.oshai:kotlin-logging-jvm:5.1.0")
 
 	// script context support in IDE is poor, use stubs and manual imports for now
 	// kotlinScriptDef(project(":jadx-plugins:jadx-script:jadx-script-runtime"))
@@ -22,7 +22,9 @@ sourceSets {
 	main {
 		kotlin.srcDirs(
 			"scripts",
-			"context"
+			"scripts/deobf",
+			"scripts/gui",
+			"context",
 		)
 	}
 }
