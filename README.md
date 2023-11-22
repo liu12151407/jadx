@@ -85,8 +85,6 @@ commands (use '<command> --help' for command options):
 
 options:
   -d, --output-dir                    - output directory
-options:
-  -d, --output-dir                    - output directory
   -ds, --output-dir-src               - output directory for sources
   -dr, --output-dir-res               - output directory for resources
   -r, --no-res                        - do not decode resources
@@ -122,6 +120,7 @@ options:
   --deobf                             - activate deobfuscation
   --deobf-min                         - min length of name, renamed if shorter, default: 3
   --deobf-max                         - max length of name, renamed if longer, default: 64
+  --deobf-whitelist                   - space separated list of classes (full name) and packages (ends with '.*') to exclude from deobfuscation, default: android.support.v4.* android.support.v7.* android.support.v4.os.* android.support.annotation.Px androidx.core.os.* androidx.annotation.Px
   --deobf-cfg-file                    - deobfuscation mappings file used for JADX auto-generated names (in the JOBF file format), default: same dir and name as input file with '.jobf' extension
   --deobf-cfg-file-mode               - set mode for handling the JADX auto-generated names' deobfuscation map file:
                                          'read' - read if found, don't save (default)
@@ -173,6 +172,11 @@ Plugin options (-P<name>=<value>):
  4) rename-mappings: various mappings support
     - rename-mappings.format          - mapping format, values: [auto, TINY, TINY_2, ENIGMA, ENIGMA_DIR, MCP, SRG, TSRG, TSRG2, PROGUARD], default: auto
     - rename-mappings.invert          - invert mapping, values: [yes, no], default: no
+
+Environment variables:
+  JADX_DISABLE_ZIP_SECURITY - set to 'true' to disable all security checks for zip files
+  JADX_ZIP_MAX_ENTRIES_COUNT - maximum allowed number of entries in zip files (default: 100 000)
+  JADX_TMP_DIR - custom temp directory, using system by default
 
 Examples:
   jadx -d out classes.dex

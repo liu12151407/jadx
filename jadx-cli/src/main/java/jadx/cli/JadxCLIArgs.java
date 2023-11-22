@@ -2,6 +2,7 @@ package jadx.cli;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
@@ -27,6 +28,7 @@ import jadx.api.args.GeneratedRenamesMappingFileMode;
 import jadx.api.args.IntegerFormat;
 import jadx.api.args.ResourceNameSource;
 import jadx.api.args.UserRenamesMappingsMode;
+import jadx.core.deobf.conditions.DeobfWhitelist;
 import jadx.core.utils.exceptions.JadxException;
 import jadx.core.utils.files.FileUtils;
 
@@ -136,6 +138,12 @@ public class JadxCLIArgs {
 
 	@Parameter(names = { "--deobf-max" }, description = "max length of name, renamed if longer")
 	protected int deobfuscationMaxLength = 64;
+
+	@Parameter(
+			names = { "--deobf-whitelist" },
+			description = "space separated list of classes (full name) and packages (ends with '.*') to exclude from deobfuscation"
+	)
+	protected String deobfuscationWhitelistStr = DeobfWhitelist.DEFAULT_STR;
 
 	@Parameter(
 			names = { "--deobf-cfg-file" },
@@ -316,6 +324,7 @@ public class JadxCLIArgs {
 		args.setGeneratedRenamesMappingFileMode(generatedRenamesMappingFileMode);
 		args.setDeobfuscationMinLength(deobfuscationMinLength);
 		args.setDeobfuscationMaxLength(deobfuscationMaxLength);
+		args.setDeobfuscationWhitelist(Arrays.asList(deobfuscationWhitelistStr.split(" ")));
 		args.setUseSourceNameAsClassAlias(deobfuscationUseSourceNameAsAlias);
 		args.setUseKotlinMethodsForVarNames(useKotlinMethodsForVarNames);
 		args.setResourceNameSource(resourceNameSource);
@@ -441,6 +450,10 @@ public class JadxCLIArgs {
 
 	public int getDeobfuscationMaxLength() {
 		return deobfuscationMaxLength;
+	}
+
+	public String getDeobfuscationWhitelistStr() {
+		return deobfuscationWhitelistStr;
 	}
 
 	public String getGeneratedRenamesMappingFile() {

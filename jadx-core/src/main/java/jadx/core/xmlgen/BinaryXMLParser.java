@@ -37,7 +37,7 @@ import jadx.core.xmlgen.entry.ValuesParser;
 public class BinaryXMLParser extends CommonBinaryParser {
 	private static final Logger LOG = LoggerFactory.getLogger(BinaryXMLParser.class);
 
-	private static final boolean ATTR_NEW_LINE = false;
+	private static final boolean ATTR_NEW_LINE = true;
 
 	private final Map<Integer, String> resNames;
 	private Map<String, String> nsMap;
@@ -70,6 +70,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 	}
 
 	public synchronized ICodeInfo parse(InputStream inputStream) throws IOException {
+		resourceIds = null;
 		is = new ParserStream(inputStream);
 		if (!isBinaryXml()) {
 			return ResourcesLoader.loadToCodeWriter(inputStream);

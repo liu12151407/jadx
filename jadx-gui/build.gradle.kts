@@ -1,7 +1,7 @@
 plugins {
 	id("jadx-kotlin")
 	id("application")
-	id("edu.sc.seis.launch4j") version "3.0.4"
+	id("edu.sc.seis.launch4j") version "3.0.5"
 	id("com.github.johnrengelman.shadow") version "8.1.1"
 	id("org.beryx.runtime") version "1.13.0"
 }
@@ -17,12 +17,12 @@ dependencies {
 	// jadx-script autocomplete support
 	implementation(project(":jadx-plugins:jadx-script:jadx-script-ide"))
 	implementation(project(":jadx-plugins:jadx-script:jadx-script-runtime"))
-	implementation("org.jetbrains.kotlin:kotlin-scripting-common:1.9.10")
+	implementation(kotlin("scripting-common"))
 	implementation("com.fifesoft:autocomplete:3.3.1")
 
 	// use KtLint for format and check jadx scripts
-	implementation("com.pinterest.ktlint:ktlint-rule-engine:1.0.0")
-	implementation("com.pinterest.ktlint:ktlint-ruleset-standard:1.0.0")
+	implementation("com.pinterest.ktlint:ktlint-rule-engine:1.0.1")
+	implementation("com.pinterest.ktlint:ktlint-ruleset-standard:1.0.1")
 
 	implementation("com.beust:jcommander:1.82")
 	implementation("ch.qos.logback:logback-classic:1.4.11")
@@ -32,19 +32,18 @@ dependencies {
 	implementation(files("libs/jfontchooser-1.0.5.jar"))
 	implementation("hu.kazocsaba:image-viewer:1.2.3")
 
-	implementation("com.formdev:flatlaf:3.2.1")
-	implementation("com.formdev:flatlaf-intellij-themes:3.2.1")
-	implementation("com.formdev:flatlaf-extras:3.2.1")
-	implementation("com.formdev:svgSalamander:1.1.4")
+	implementation("com.formdev:flatlaf:3.2.5")
+	implementation("com.formdev:flatlaf-intellij-themes:3.2.5")
+	implementation("com.formdev:flatlaf-extras:3.2.5")
 
 	implementation("com.google.code.gson:gson:2.10.1")
 	implementation("org.apache.commons:commons-lang3:3.13.0")
-	implementation("org.apache.commons:commons-text:1.10.0")
-	implementation("commons-io:commons-io:2.13.0")
+	implementation("org.apache.commons:commons-text:1.11.0")
+	implementation("commons-io:commons-io:2.15.0")
 
 	implementation("io.reactivex.rxjava2:rxjava:2.2.21")
 	implementation("com.github.akarnokd:rxjava2-swing:0.3.7")
-	implementation("com.android.tools.build:apksig:8.1.1")
+	implementation("com.android.tools.build:apksig:8.1.3")
 	implementation("io.github.skylot:jdwp:2.0.0")
 
 	testImplementation(project(":jadx-core").dependencyProject.sourceSets.getByName("test").output)
@@ -59,16 +58,18 @@ tasks.test {
 application {
 	applicationName = ("jadx-gui")
 	mainClass.set("jadx.gui.JadxGUI")
-	applicationDefaultJvmArgs = listOf(
-		"-Xms128M",
-		"-XX:MaxRAMPercentage=70.0",
-		"-Dawt.useSystemAAFontSettings=lcd",
-		"-Dswing.aatext=true",
-		"-Djava.util.Arrays.useLegacyMergeSort=true",
-		"-Djdk.util.zip.disableZip64ExtraFieldValidation=true", // disable zip checks (#1962)
-		"-XX:+IgnoreUnrecognizedVMOptions",
-		"--add-opens=java.base/java.lang=ALL-UNNAMED", // for ktlint formatter
-	)
+	applicationDefaultJvmArgs =
+		listOf(
+			"-Xms128M",
+			"-XX:MaxRAMPercentage=70.0",
+			"-Dawt.useSystemAAFontSettings=lcd",
+			"-Dswing.aatext=true",
+			"-Djava.util.Arrays.useLegacyMergeSort=true",
+			// disable zip checks (#1962)
+			"-Djdk.util.zip.disableZip64ExtraFieldValidation=true",
+			// needed for ktlint formatter
+			"-XX:+IgnoreUnrecognizedVMOptions", "--add-opens=java.base/java.lang=ALL-UNNAMED",
+		)
 	applicationDistribution.from("$rootDir") {
 		include("README.md")
 		include("NOTICE")
@@ -91,9 +92,10 @@ tasks.shadowJar {
 
 tasks.existing(CreateStartScripts::class) {
 	doLast {
-		val newContent = windowsScript.readText()
-			.replace("java.exe", "javaw.exe")
-			.replace("\"%JAVA_EXE%\" %DEFAULT_JVM_OPTS%", "start \"jadx-gui\" /B \"%JAVA_EXE%\" %DEFAULT_JVM_OPTS%")
+		val newContent =
+			windowsScript.readText()
+				.replace("java.exe", "javaw.exe")
+				.replace("\"%JAVA_EXE%\" %DEFAULT_JVM_OPTS%", "start \"jadx-gui\" /B \"%JAVA_EXE%\" %DEFAULT_JVM_OPTS%")
 		windowsScript.writeText(newContent)
 	}
 }

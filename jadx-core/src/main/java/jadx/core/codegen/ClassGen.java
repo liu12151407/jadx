@@ -514,7 +514,7 @@ public class ClassGen {
 			}
 			code.add(';');
 			if (isFieldsPresents()) {
-				code.startLine();
+				code.newLine();
 			}
 		}
 	}
@@ -657,6 +657,10 @@ public class ClassGen {
 		if (useCls.equals(extClsInfo)) {
 			return shortName;
 		}
+		if (extClsInfo.getAliasPkg().isEmpty()) {
+			// omit import for default package
+			return shortName;
+		}
 		if (isClassInnerFor(useCls, extClsInfo)) {
 			return shortName;
 		}
@@ -676,10 +680,6 @@ public class ClassGen {
 		}
 		// don't add import if this class from same package
 		if (extClsInfo.getPackage().equals(useCls.getPackage()) && !extClsInfo.isInner()) {
-			return shortName;
-		}
-		// ignore classes from default package
-		if (extClsInfo.isDefaultPackage()) {
 			return shortName;
 		}
 		if (extClsInfo.getAliasPkg().equals(useCls.getAliasPkg())) {

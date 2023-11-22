@@ -32,7 +32,8 @@ import jadx.api.plugins.loader.JadxPluginLoader;
 import jadx.api.usage.IUsageInfoCache;
 import jadx.api.usage.impl.InMemoryUsageInfoCache;
 import jadx.core.deobf.DeobfAliasProvider;
-import jadx.core.deobf.DeobfCondition;
+import jadx.core.deobf.conditions.DeobfWhitelist;
+import jadx.core.deobf.conditions.JadxRenameConditions;
 import jadx.core.plugins.PluginContext;
 import jadx.core.utils.files.FileUtils;
 
@@ -104,6 +105,11 @@ public class JadxArgs implements Closeable {
 	private int deobfuscationMaxLength = Integer.MAX_VALUE;
 
 	/**
+	 * List of classes and packages (ends with '.*') to exclude from deobfuscation
+	 */
+	private List<String> deobfuscationWhitelist = DeobfWhitelist.DEFAULT_LIST;
+
+	/**
 	 * Nodes alias provider for deobfuscator and rename visitor
 	 */
 	private IAliasProvider aliasProvider = new DeobfAliasProvider();
@@ -111,7 +117,7 @@ public class JadxArgs implements Closeable {
 	/**
 	 * Condition to rename node in deobfuscator
 	 */
-	private IRenameCondition renameCondition = new DeobfCondition();
+	private IRenameCondition renameCondition = JadxRenameConditions.buildDefault();
 
 	private boolean escapeUnicode = false;
 	private boolean replaceConsts = true;
@@ -434,6 +440,14 @@ public class JadxArgs implements Closeable {
 		this.deobfuscationMaxLength = deobfuscationMaxLength;
 	}
 
+	public List<String> getDeobfuscationWhitelist() {
+		return this.deobfuscationWhitelist;
+	}
+
+	public void setDeobfuscationWhitelist(List<String> deobfuscationWhitelist) {
+		this.deobfuscationWhitelist = deobfuscationWhitelist;
+	}
+
 	public File getGeneratedRenamesMappingFile() {
 		return generatedRenamesMappingFile;
 	}
@@ -668,7 +682,7 @@ public class JadxArgs implements Closeable {
 	public String makeCodeArgsHash(@Nullable JadxDecompiler decompiler) {
 		String argStr = "args:" + decompilationMode + useImports + showInconsistentCode
 				+ inlineAnonymousClasses + inlineMethods + moveInnerClasses + allowInlineKotlinLambda
-				+ deobfuscationOn + deobfuscationMinLength + deobfuscationMaxLength
+				+ deobfuscationOn + deobfuscationMinLength + deobfuscationMaxLength + deobfuscationWhitelist
 				+ resourceNameSource
 				+ useKotlinMethodsForVarNames
 				+ insertDebugLines + extractFinally
@@ -714,6 +728,7 @@ public class JadxArgs implements Closeable {
 				+ ", extractFinally=" + extractFinally
 				+ ", deobfuscationMinLength=" + deobfuscationMinLength
 				+ ", deobfuscationMaxLength=" + deobfuscationMaxLength
+				+ ", deobfuscationWhitelist=" + deobfuscationWhitelist
 				+ ", escapeUnicode=" + escapeUnicode
 				+ ", replaceConsts=" + replaceConsts
 				+ ", respectBytecodeAccModifiers=" + respectBytecodeAccModifiers
