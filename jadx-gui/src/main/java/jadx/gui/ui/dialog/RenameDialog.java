@@ -15,12 +15,15 @@ import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
 import javax.swing.WindowConstants;
 
 import org.jetbrains.annotations.NotNull;
 
 import jadx.api.metadata.ICodeNodeRef;
 import jadx.api.plugins.events.types.NodeRenamedByUser;
+import jadx.core.utils.Utils;
+import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JNode;
 import jadx.gui.treemodel.JPackage;
 import jadx.gui.treemodel.JRenameNode;
@@ -41,19 +44,26 @@ public class RenameDialog extends JDialog {
 	private transient JButton renameBtn;
 
 	public static boolean rename(MainWindow mainWindow, JRenameNode node) {
-		RenameDialog renameDialog = new RenameDialog(mainWindow, node);
-		UiUtils.uiRun(() -> renameDialog.setVisible(true));
-		UiUtils.uiRun(renameDialog::initRenameField); // wait for UI events to propagate
+		SwingUtilities.invokeLater(() -> {
+			RenameDialog renameDialog = new RenameDialog(mainWindow, node);
+			renameDialog.initRenameField();
+			renameDialog.setVisible(true);
+		});
 		return true;
 	}
 
 	public static JPopupMenu buildRenamePopup(MainWindow mainWindow, JRenameNode node) {
+		JPopupMenu menu = new JPopupMenu();
+		menu.add(buildRenamePopupMenuItem(mainWindow, node));
+		return menu;
+	}
+
+	public static JMenuItem buildRenamePopupMenuItem(MainWindow mainWindow, JRenameNode node) {
 		JMenuItem jmi = new JMenuItem(NLS.str("popup.rename"));
 		jmi.addActionListener(action -> RenameDialog.rename(mainWindow, node));
 		jmi.setEnabled(node.canRename());
-		JPopupMenu menu = new JPopupMenu();
-		menu.add(jmi);
-		return menu;
+
+		return jmi;
 	}
 
 	private RenameDialog(MainWindow mainWindow, JRenameNode node) {
@@ -94,19 +104,23 @@ public class RenameDialog extends JDialog {
 			return;
 		}
 		String oldName = node.getName();
-		if (newName.isEmpty()) {
+		String newNodeName;
+		boolean reset = newName.isEmpty();
+		if (reset) {
 			node.removeAlias();
-			sendRenameEvent(oldName, node.getJavaNode().getName());
+			newNodeName = Utils.getOrElse(node.getJavaNode().getName(), "");
 		} else {
-			sendRenameEvent(oldName, newName);
+			newNodeName = newName;
 		}
+		sendRenameEvent(oldName, newNodeName, reset);
 		dispose();
 	}
 
-	private void sendRenameEvent(String oldName, String newName) {
+	private void sendRenameEvent(String oldName, String newName, boolean reset) {
 		ICodeNodeRef nodeRef = node.getJavaNode().getCodeNodeRef();
 		NodeRenamedByUser event = new NodeRenamedByUser(nodeRef, oldName, newName);
 		event.setRenameNode(node);
+		event.setResetName(reset);
 		mainWindow.events().send(event);
 	}
 
@@ -155,13 +169,15 @@ public class RenameDialog extends JDialog {
 		renamePane.setLayout(new FlowLayout(FlowLayout.LEFT));
 		renamePane.add(lbl);
 		renamePane.add(nodeLabel);
-		renamePane.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+		renamePane.setBorder(BorderFactory.createEmptyBorder(10, 10, 0, 10));
 
 		JPanel textPane = new JPanel();
 		textPane.setLayout(new BoxLayout(textPane, BoxLayout.PAGE_AXIS));
-		textPane.add(Box.createRigidArea(new Dimension(0, 5)));
 		textPane.add(renameField);
-		textPane.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+		if (node instanceof JClass) {
+			textPane.add(new JLabel(NLS.str("rename_dialog.class_help")));
+		}
+		textPane.setBorder(BorderFactory.createEmptyBorder(5, 10, 10, 10));
 
 		JPanel buttonPane = initButtonsPanel();
 

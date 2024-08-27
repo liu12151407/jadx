@@ -29,12 +29,12 @@ import jadx.api.args.IntegerFormat;
 import jadx.api.args.ResourceNameSource;
 import jadx.api.args.UserRenamesMappingsMode;
 import jadx.core.deobf.conditions.DeobfWhitelist;
-import jadx.core.utils.exceptions.JadxException;
+import jadx.core.utils.exceptions.JadxArgsValidateException;
 import jadx.core.utils.files.FileUtils;
 
 public class JadxCLIArgs {
 
-	@Parameter(description = "<input files> (.apk, .dex, .jar, .class, .smali, .zip, .aar, .arsc, .aab)")
+	@Parameter(description = "<input files> (.apk, .dex, .jar, .class, .smali, .zip, .aar, .arsc, .aab, .xapk, .jadx.kts)")
 	protected List<String> files = new ArrayList<>(1);
 
 	@Parameter(names = { "-d", "--output-dir" }, description = "output directory")
@@ -80,6 +80,9 @@ public class JadxCLIArgs {
 
 	@Parameter(names = { "--show-bad-code" }, description = "show inconsistent code (incorrectly decompiled)")
 	protected boolean showInconsistentCode = false;
+
+	@Parameter(names = { "--no-xml-pretty-print" }, description = "do not prettify XML")
+	protected boolean skipXmlPrettyPrint = false;
 
 	@Parameter(names = { "--no-imports" }, description = "disable use of imports, always write entire package name")
 	protected boolean useImports = true;
@@ -284,14 +287,13 @@ public class JadxCLIArgs {
 			System.out.println(JadxDecompiler.getVersion());
 			return false;
 		}
-		try {
-			if (threadsCount <= 0) {
-				throw new JadxException("Threads count must be positive, got: " + threadsCount);
+		if (threadsCount <= 0) {
+			throw new JadxArgsValidateException("Threads count must be positive, got: " + threadsCount);
+		}
+		for (String fileName : files) {
+			if (fileName.startsWith("-")) {
+				throw new JadxArgsValidateException("Unknown option: " + fileName);
 			}
-		} catch (JadxException e) {
-			System.err.println("ERROR: " + e.getMessage());
-			jcw.printUsage();
-			return false;
 		}
 		return true;
 	}
@@ -331,6 +333,7 @@ public class JadxCLIArgs {
 		args.setEscapeUnicode(escapeUnicode);
 		args.setRespectBytecodeAccModifiers(respectBytecodeAccessModifiers);
 		args.setExportAsGradleProject(exportAsGradleProject);
+		args.setSkipXmlPrettyPrint(skipXmlPrettyPrint);
 		args.setUseImports(useImports);
 		args.setDebugInfo(debugInfo);
 		args.setInsertDebugLines(addDebugLines);
@@ -504,6 +507,10 @@ public class JadxCLIArgs {
 		return exportAsGradleProject;
 	}
 
+	public boolean isSkipXmlPrettyPrint() {
+		return skipXmlPrettyPrint;
+	}
+
 	public boolean isRenameCaseSensitive() {
 		return renameFlags.contains(RenameEnum.CASE);
 	}
@@ -551,8 +558,8 @@ public class JadxCLIArgs {
 			for (String s : value.split(",")) {
 				try {
 					set.add(RenameEnum.valueOf(s.trim().toUpperCase(Locale.ROOT)));
-				} catch (IllegalArgumentException e) {
-					throw new IllegalArgumentException(
+				} catch (Exception e) {
+					throw new JadxArgsValidateException(
 							'\'' + s + "' is unknown for parameter " + paramName
 									+ ", possible values are " + enumValuesString(RenameEnum.values()));
 				}
@@ -617,7 +624,7 @@ public class JadxCLIArgs {
 			try {
 				return parse.apply(stringAsEnumName(value));
 			} catch (Exception e) {
-				throw new IllegalArgumentException(
+				throw new JadxArgsValidateException(
 						'\'' + value + "' is unknown, possible values are: " + enumValuesString(values.get()));
 			}
 		}

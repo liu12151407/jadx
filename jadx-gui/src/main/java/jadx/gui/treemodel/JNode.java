@@ -16,8 +16,8 @@ import jadx.api.ICodeInfo;
 import jadx.api.JavaNode;
 import jadx.api.metadata.ICodeNodeRef;
 import jadx.gui.ui.MainWindow;
-import jadx.gui.ui.TabbedPane;
 import jadx.gui.ui.panel.ContentPanel;
+import jadx.gui.ui.tab.TabbedPane;
 
 public abstract class JNode extends DefaultMutableTreeNode implements Comparable<JNode> {
 
@@ -66,6 +66,10 @@ public abstract class JNode extends DefaultMutableTreeNode implements Comparable
 			return null;
 		}
 		return javaNode.getName();
+	}
+
+	public boolean supportsQuickTabs() {
+		return true;
 	}
 
 	public @Nullable JPopupMenu onTreePopupMenu(MainWindow mainWindow) {

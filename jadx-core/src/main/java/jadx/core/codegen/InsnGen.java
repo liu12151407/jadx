@@ -15,6 +15,7 @@ import jadx.api.metadata.annotations.InsnCodeOffset;
 import jadx.api.metadata.annotations.VarNode;
 import jadx.api.plugins.input.data.MethodHandleType;
 import jadx.api.plugins.input.data.annotations.EncodedValue;
+import jadx.core.codegen.utils.CodeGenUtils;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.FieldInitInsnAttr;
@@ -51,6 +52,7 @@ import jadx.core.dex.instructions.args.LiteralArg;
 import jadx.core.dex.instructions.args.Named;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.args.SSAVar;
+import jadx.core.dex.instructions.java.JsrNode;
 import jadx.core.dex.instructions.mods.ConstructorInsn;
 import jadx.core.dex.instructions.mods.TernaryInsn;
 import jadx.core.dex.nodes.BlockNode;
@@ -59,7 +61,6 @@ import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.nodes.RootNode;
-import jadx.core.utils.CodeGenUtils;
 import jadx.core.utils.RegionUtils;
 import jadx.core.utils.exceptions.CodegenException;
 import jadx.core.utils.exceptions.JadxRuntimeException;
@@ -633,6 +634,17 @@ public class InsnGen {
 				}
 				break;
 
+			case JAVA_JSR:
+				fallbackOnlyInsn(insn);
+				code.add("jsr -> ").add(MethodGen.getLabelName(((JsrNode) insn).getTarget()));
+				break;
+
+			case JAVA_RET:
+				fallbackOnlyInsn(insn);
+				code.add("ret ");
+				addArg(code, insn.getArg(0));
+				break;
+
 			default:
 				throw new CodegenException(mth, "Unknown instruction: " + insn.getType());
 		}
@@ -924,7 +936,7 @@ public class InsnGen {
 		makeInlinedLambdaMethod(code, customNode, callMth);
 	}
 
-	private void makeRefLambda(ICodeWriter code, InvokeCustomNode customNode) {
+	private void makeRefLambda(ICodeWriter code, InvokeCustomNode customNode) throws CodegenException {
 		InsnNode callInsn = customNode.getCallInsn();
 		if (callInsn instanceof ConstructorInsn) {
 			MethodInfo callMth = ((ConstructorInsn) callInsn).getCallMth();
@@ -938,7 +950,7 @@ public class InsnGen {
 			if (customNode.getHandleType() == MethodHandleType.INVOKE_STATIC) {
 				useClass(code, callMth.getDeclClass());
 			} else {
-				code.add("this");
+				addArg(code, customNode.getArg(0));
 			}
 			code.add("::").add(callMth.getAlias());
 		}

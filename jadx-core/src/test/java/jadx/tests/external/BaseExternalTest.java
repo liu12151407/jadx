@@ -10,7 +10,6 @@ import org.slf4j.LoggerFactory;
 
 import jadx.api.CommentsLevel;
 import jadx.api.ICodeInfo;
-import jadx.api.ICodeWriter;
 import jadx.api.JadxArgs;
 import jadx.api.JadxDecompiler;
 import jadx.api.JadxInternalAccess;
@@ -20,13 +19,10 @@ import jadx.api.metadata.annotations.NodeDeclareRef;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.nodes.RootNode;
-import jadx.core.utils.DebugChecks;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.tests.api.utils.TestUtils;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.is;
+import static jadx.tests.api.utils.assertj.JadxAssertions.assertThat;
 
 public abstract class BaseExternalTest extends TestUtils {
 	private static final Logger LOG = LoggerFactory.getLogger(BaseExternalTest.class);
@@ -40,7 +36,6 @@ public abstract class BaseExternalTest extends TestUtils {
 	}
 
 	protected JadxArgs prepare(File input) {
-		DebugChecks.checksEnabled = false;
 		JadxArgs args = new JadxArgs();
 		args.getInputFiles().add(input);
 		args.setOutDir(new File("../jadx-external-tests-tmp"));
@@ -83,7 +78,7 @@ public abstract class BaseExternalTest extends TestUtils {
 				}
 			}
 		}
-		assertThat("No classes processed", processed, greaterThan(0));
+		assertThat(processed).as("No classes processed").isGreaterThan(0);
 	}
 
 	private boolean processCls(@Nullable String mthPattern, ClassNode classNode) {
@@ -186,13 +181,13 @@ public abstract class BaseExternalTest extends TestUtils {
 	}
 
 	protected int getCommentStartPos(ICodeInfo codeInfo, int pos) {
-		String emptyLine = ICodeWriter.NL + ICodeWriter.NL;
+		String emptyLine = "\n\n";
 		int emptyLinePos = codeInfo.getCodeStr().lastIndexOf(emptyLine, pos);
 		return emptyLinePos == -1 ? pos : emptyLinePos + emptyLine.length();
 	}
 
 	private void printErrorReport(JadxDecompiler jadx) {
 		jadx.printErrorsReport();
-		assertThat(jadx.getErrorsCount(), is(0));
+		assertThat(jadx.getErrorsCount()).isEqualTo(0);
 	}
 }

@@ -41,6 +41,7 @@ import jadx.core.dex.visitors.typeinference.TypeCompare;
 import jadx.core.utils.BlockUtils;
 import jadx.core.utils.InsnRemover;
 import jadx.core.utils.ListUtils;
+import jadx.core.utils.blocks.BlockSet;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
 public class BlockExceptionHandler {
@@ -65,6 +66,10 @@ public class BlockExceptionHandler {
 			removeMonitorExitFromExcHandler(mth, eh);
 		}
 		BlockProcessor.removeMarkedBlocks(mth);
+
+		BlockSet sorted = new BlockSet(mth);
+		BlockUtils.visitDFS(mth, sorted::set);
+		removeUnusedExcHandlers(mth, tryBlocks, sorted);
 		return true;
 	}
 
@@ -326,6 +331,17 @@ public class BlockExceptionHandler {
 			return false;
 		}
 		BlockNode bottom = searchBottomBlock(mth, blocks);
+		BlockNode splitReturn;
+		if (bottom != null && bottom.isReturnBlock()) {
+			if (Consts.DEBUG_EXC_HANDLERS) {
+				LOG.debug("TryCatch #{} bottom block ({}) is return, split", tryCatchBlock.id(), bottom);
+			}
+			splitReturn = bottom;
+			bottom = BlockSplitter.blockSplitTop(mth, bottom);
+			bottom.add(AFlag.SYNTHETIC);
+		} else {
+			splitReturn = null;
+		}
 		if (Consts.DEBUG_EXC_HANDLERS) {
 			LOG.debug("TryCatch #{} split: top {}, bottom: {}", tryCatchBlock.id(), top, bottom);
 		}
@@ -344,6 +360,18 @@ public class BlockExceptionHandler {
 			bottomSplitterBlock.add(AFlag.EXC_BOTTOM_SPLITTER);
 			bottomSplitterBlock.add(AFlag.SYNTHETIC);
 			BlockSplitter.connect(bottom, bottomSplitterBlock);
+			if (splitReturn != null) {
+				// redirect handler to return block instead synthetic split block to avoid self-loop
+				BlockSet bottomPreds = BlockSet.from(mth, bottom.getPredecessors());
+				for (ExceptionHandler handler : tryCatchBlock.getHandlers()) {
+					if (bottomPreds.intersects(handler.getBlocks())) {
+						BlockNode lastBlock = bottomPreds.intersect(handler.getBlocks()).getOne();
+						if (lastBlock != null) {
+							BlockSplitter.replaceConnection(lastBlock, bottom, splitReturn);
+						}
+					}
+				}
+			}
 		}
 
 		if (Consts.DEBUG_EXC_HANDLERS) {
@@ -585,5 +613,28 @@ public class BlockExceptionHandler {
 			return first.compareTo(second);
 		}
 		return r;
+	}
+
+	/**
+	 * Remove excHandlers that were not used when connecting.
+	 * Check first if the blocks are unreachable.
+	 */
+	private static void removeUnusedExcHandlers(MethodNode mth, List<TryCatchBlockAttr> tryBlocks, BlockSet blocks) {
+		for (ExceptionHandler eh : mth.getExceptionHandlers()) {
+			boolean notProcessed = true;
+			BlockNode handlerBlock = eh.getHandlerBlock();
+			if (handlerBlock == null || blocks.get(handlerBlock)) {
+				continue;
+			}
+			for (TryCatchBlockAttr tcb : tryBlocks) {
+				if (tcb.getHandlers().contains(eh)) {
+					notProcessed = false;
+					break;
+				}
+			}
+			if (notProcessed) {
+				BlockProcessor.removeUnreachableBlock(handlerBlock, mth);
+			}
+		}
 	}
 }

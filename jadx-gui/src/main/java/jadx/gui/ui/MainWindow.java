@@ -7,7 +7,6 @@ import java.awt.DisplayMode;
 import java.awt.Font;
 import java.awt.GraphicsDevice;
 import java.awt.GraphicsEnvironment;
-import java.awt.Rectangle;
 import java.awt.dnd.DnDConstants;
 import java.awt.dnd.DropTarget;
 import java.awt.event.ActionEvent;
@@ -41,10 +40,12 @@ import javax.swing.AbstractAction;
 import javax.swing.Action;
 import javax.swing.Box;
 import javax.swing.ImageIcon;
+import javax.swing.JCheckBox;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JDialog;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
+import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -138,11 +139,13 @@ import jadx.gui.ui.panel.IssuesPanel;
 import jadx.gui.ui.panel.JDebuggerPanel;
 import jadx.gui.ui.panel.ProgressPanel;
 import jadx.gui.ui.popupmenu.RecentProjectsMenuListener;
+import jadx.gui.ui.tab.QuickTabsTree;
+import jadx.gui.ui.tab.TabbedPane;
+import jadx.gui.ui.tab.TabsController;
+import jadx.gui.ui.tab.dnd.TabDndController;
 import jadx.gui.ui.treenodes.StartPageNode;
 import jadx.gui.ui.treenodes.SummaryNode;
 import jadx.gui.update.JadxUpdate;
-import jadx.gui.update.JadxUpdate.IUpdateCallback;
-import jadx.gui.update.data.Release;
 import jadx.gui.utils.CacheObject;
 import jadx.gui.utils.FontUtils;
 import jadx.gui.utils.ILoadListener;
@@ -201,10 +204,12 @@ public class MainWindow extends JFrame {
 	private transient JSplitPane treeSplitPane;
 	private transient JSplitPane rightSplitPane;
 	private transient JSplitPane bottomSplitPane;
+	private transient JSplitPane quickTabsAndCodeSplitPane;
 
 	private JTree tree;
 	private DefaultTreeModel treeModel;
 	private JRoot treeRoot;
+	private TabsController tabsController;
 	private TabbedPane tabbedPane;
 	private HeapUsageBar heapUsageBar;
 	private transient boolean treeReloading;
@@ -226,6 +231,7 @@ public class MainWindow extends JFrame {
 	private transient IssuesPanel issuesPanel;
 	private transient @Nullable LogPanel logPanel;
 	private transient @Nullable JDebuggerPanel debuggerPanel;
+	private transient @Nullable QuickTabsTree quickTabsTree;
 
 	private final List<ILoadListener> loadListeners = new ArrayList<>();
 	private final List<Consumer<JRoot>> treeUpdateListener = new ArrayList<>();
@@ -248,6 +254,7 @@ public class MainWindow extends JFrame {
 		this.cacheManager = new CacheManager(settings);
 		this.shortcutsController = new ShortcutsController(settings);
 
+		JadxEventQueue.register();
 		resetCache();
 		FontUtils.registerBundledFonts();
 		setEditorTheme(settings.getEditorThemePath());
@@ -307,15 +314,18 @@ public class MainWindow extends JFrame {
 		if (!settings.isCheckForUpdates()) {
 			return;
 		}
-		JadxUpdate.check(new IUpdateCallback() {
-			@Override
-			public void onUpdate(Release r) {
-				SwingUtilities.invokeLater(() -> {
-					updateLink.setText(NLS.str("menu.update_label", r.getName()));
-					updateLink.setVisible(true);
-				});
+		JadxUpdate.check(settings.getJadxUpdateChannel(), release -> SwingUtilities.invokeLater(() -> {
+			switch (settings.getJadxUpdateChannel()) {
+				case STABLE:
+					updateLink.setUrl(JadxUpdate.JADX_RELEASES_URL);
+					break;
+				case UNSTABLE:
+					updateLink.setUrl(JadxUpdate.JADX_ARTIFACTS_URL);
+					break;
 			}
-		});
+			updateLink.setText(NLS.str("menu.update_label", release.getName()));
+			updateLink.setVisible(true);
+		}));
 	}
 
 	public void openFileDialog() {
@@ -362,6 +372,7 @@ public class MainWindow extends JFrame {
 	}
 
 	private void saveProject() {
+		saveOpenTabs();
 		if (!project.isSaveFileSelected()) {
 			saveProjectAs();
 		} else {
@@ -456,6 +467,9 @@ public class MainWindow extends JFrame {
 	}
 
 	private boolean openSingleFile(Path singleFile, Runnable onFinish) {
+		if (singleFile.getFileName() == null) {
+			return false;
+		}
 		String fileExtension = CommonFileUtils.getFileExtension(singleFile.getFileName().toString());
 		if (fileExtension != null && fileExtension.equalsIgnoreCase(JadxProject.PROJECT_EXTENSION)) {
 			openProject(singleFile, onFinish);
@@ -552,7 +566,7 @@ public class MainWindow extends JFrame {
 		resetCache();
 		LogCollector.getInstance().reset();
 		wrapper.close();
-		tabbedPane.closeAllTabs();
+		tabsController.forceCloseAllTabs();
 		UiUtils.resetClipboardOwner();
 		System.gc();
 		update();
@@ -627,16 +641,43 @@ public class MainWindow extends JFrame {
 
 	private boolean ensureProjectIsSaved() {
 		if (!project.isSaved() && !project.isInitial()) {
+			// Check if we saved settings that indicate what to do
+
+			if (settings.getSaveOption() == JadxSettings.SAVEOPTION.NEVER) {
+				return true;
+			}
+
+			if (settings.getSaveOption() == JadxSettings.SAVEOPTION.ALWAYS) {
+				saveProject();
+				return true;
+			}
+
+			JCheckBox remember = new JCheckBox(NLS.str("confirm.remember"));
+			JLabel message = new JLabel(NLS.str("confirm.not_saved_message"));
+
+			JPanel inner = new JPanel(new BorderLayout());
+			inner.add(remember, BorderLayout.SOUTH);
+			inner.add(message, BorderLayout.NORTH);
+
 			int res = JOptionPane.showConfirmDialog(
 					this,
-					NLS.str("confirm.not_saved_message"),
+					inner,
 					NLS.str("confirm.not_saved_title"),
 					JOptionPane.YES_NO_CANCEL_OPTION);
 			if (res == JOptionPane.CANCEL_OPTION) {
 				return false;
 			}
 			if (res == JOptionPane.YES_OPTION) {
+				if (remember.isSelected()) {
+					settings.setSaveOption(JadxSettings.SAVEOPTION.ALWAYS);
+					settings.sync();
+				}
 				saveProject();
+			} else if (res == JOptionPane.NO_OPTION) {
+				if (remember.isSelected()) {
+					settings.setSaveOption(JadxSettings.SAVEOPTION.NEVER);
+					settings.sync();
+				}
 			}
 		}
 		return true;
@@ -852,27 +893,11 @@ public class MainWindow extends JFrame {
 
 	@Nullable
 	private JNode getJNodeUnderMouse(MouseEvent mouseEvent) {
-		TreePath path = tree.getClosestPathForLocation(mouseEvent.getX(), mouseEvent.getY());
-		if (path == null) {
-			return null;
+		TreeNode treeNode = UiUtils.getTreeNodeUnderMouse(tree, mouseEvent);
+		if (treeNode instanceof JNode) {
+			return (JNode) treeNode;
 		}
-		// allow 'closest' path only at the right of the item row
-		Rectangle pathBounds = tree.getPathBounds(path);
-		if (pathBounds != null) {
-			int y = mouseEvent.getY();
-			if (y < pathBounds.y || y > (pathBounds.y + pathBounds.height)) {
-				return null;
-			}
-			if (mouseEvent.getX() < pathBounds.x) {
-				// exclude expand/collapse events
-				return null;
-			}
-		}
-		Object obj = path.getLastPathComponent();
-		if (obj instanceof JNode) {
-			tree.setSelectionPath(path);
-			return (JNode) obj;
-		}
+
 		return null;
 	}
 
@@ -917,7 +942,7 @@ public class MainWindow extends JFrame {
 		SearchDialog.search(MainWindow.this, SearchDialog.SearchPreset.TEXT);
 	}
 
-	public void gotoMainActivity() {
+	public void goToMainActivity() {
 		AndroidManifestParser parser = new AndroidManifestParser(
 				AndroidManifestParser.getAndroidManifest(getWrapper().getResources()),
 				EnumSet.of(AppAttribute.MAIN_ACTIVITY));
@@ -930,18 +955,48 @@ public class MainWindow extends JFrame {
 		}
 		try {
 			ApplicationParams results = parser.parse();
-			if (results.getMainActivityName() == null) {
+			if (results.getMainActivity() == null) {
 				throw new JadxRuntimeException("Failed to get main activity name from manifest");
 			}
-			JavaClass mainActivityClass = results.getMainActivity(getWrapper().getDecompiler());
+			JavaClass mainActivityClass = results.getMainActivityJavaClass(getWrapper().getDecompiler());
 			if (mainActivityClass == null) {
-				throw new JadxRuntimeException("Failed to find main activity class: " + results.getMainActivityName());
+				throw new JadxRuntimeException("Failed to find main activity class: " + results.getMainActivity());
 			}
 			tabbedPane.codeJump(getCacheObject().getNodeCache().makeFrom(mainActivityClass));
 		} catch (Exception e) {
 			LOG.error("Main activity not found", e);
 			JOptionPane.showMessageDialog(MainWindow.this,
 					NLS.str("error_dialog.not_found", "Main Activity"),
+					NLS.str("error_dialog.title"),
+					JOptionPane.ERROR_MESSAGE);
+		}
+	}
+
+	public void goToApplication() {
+		AndroidManifestParser parser = new AndroidManifestParser(
+				AndroidManifestParser.getAndroidManifest(getWrapper().getResources()),
+				EnumSet.of(AppAttribute.APPLICATION));
+		if (!parser.isManifestFound()) {
+			JOptionPane.showMessageDialog(MainWindow.this,
+					NLS.str("error_dialog.not_found", "AndroidManifest.xml"),
+					NLS.str("error_dialog.title"),
+					JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		try {
+			ApplicationParams results = parser.parse();
+			if (results.getApplication() == null) {
+				throw new JadxRuntimeException("Failed to get application from manifest");
+			}
+			JavaClass applicationClass = results.getApplicationJavaClass(getWrapper().getDecompiler());
+			if (applicationClass == null) {
+				throw new JadxRuntimeException("Failed to find application class: " + results.getApplication());
+			}
+			tabbedPane.codeJump(getCacheObject().getNodeCache().makeFrom(applicationClass));
+		} catch (Exception e) {
+			LOG.error("Application not found", e);
+			JOptionPane.showMessageDialog(MainWindow.this,
+					NLS.str("error_dialog.not_found", "Application"),
 					NLS.str("error_dialog.title"),
 					JOptionPane.ERROR_MESSAGE);
 		}
@@ -995,14 +1050,27 @@ public class MainWindow extends JFrame {
 		dockLog.setState(settings.isDockLogViewer());
 		dockLog.addActionListener(event -> settings.setDockLogViewer(!settings.isDockLogViewer()));
 
+		JCheckBoxMenuItem dockQuickTabs = new JCheckBoxMenuItem(NLS.str("menu.dock_quick_tabs"));
+		dockQuickTabs.setState(settings.isDockQuickTabs());
+		dockQuickTabs.addActionListener(event -> {
+			boolean visible = quickTabsTree == null;
+			setQuickTabsVisibility(visible);
+			settings.setDockQuickTabs(visible);
+		});
+		if (dockQuickTabs.getState()) {
+			setQuickTabsVisibility(true);
+		}
+
 		JadxGuiAction syncAction = new JadxGuiAction(ActionModel.SYNC, this::syncWithEditor);
 		JadxGuiAction textSearchAction = new JadxGuiAction(ActionModel.TEXT_SEARCH, this::textSearch);
 		JadxGuiAction clsSearchAction = new JadxGuiAction(ActionModel.CLASS_SEARCH,
 				() -> SearchDialog.search(MainWindow.this, SearchDialog.SearchPreset.CLASS));
 		JadxGuiAction commentSearchAction = new JadxGuiAction(ActionModel.COMMENT_SEARCH,
 				() -> SearchDialog.search(MainWindow.this, SearchDialog.SearchPreset.COMMENT));
-		JadxGuiAction gotoMainActivityAction = new JadxGuiAction(ActionModel.GOTO_MAIN_ACTIVITY,
-				this::gotoMainActivity);
+		JadxGuiAction goToMainActivityAction = new JadxGuiAction(ActionModel.GO_TO_MAIN_ACTIVITY,
+				this::goToMainActivity);
+		JadxGuiAction goToApplicationAction = new JadxGuiAction(ActionModel.GO_TO_APPLICATION,
+				this::goToApplication);
 		JadxGuiAction decompileAllAction = new JadxGuiAction(ActionModel.DECOMPILE_ALL, this::requestFullDecompilation);
 		JadxGuiAction resetCacheAction = new JadxGuiAction(ActionModel.RESET_CACHE, this::resetCodeCache);
 		JadxGuiAction deobfAction = new JadxGuiAction(ActionModel.DEOBF, this::toggleDeobfuscation);
@@ -1056,13 +1124,15 @@ public class MainWindow extends JFrame {
 		view.add(heapUsageBarMenuItem);
 		view.add(alwaysSelectOpened);
 		view.add(dockLog);
+		view.add(dockQuickTabs);
 
 		JMenu nav = new JadxMenu(NLS.str("menu.navigation"), shortcutsController);
 		nav.setMnemonic(KeyEvent.VK_N);
 		nav.add(textSearchAction);
 		nav.add(clsSearchAction);
 		nav.add(commentSearchAction);
-		nav.add(gotoMainActivityAction);
+		nav.add(goToMainActivityAction);
+		nav.add(goToApplicationAction);
 		nav.addSeparator();
 		nav.add(backAction);
 		nav.add(forwardAction);
@@ -1108,7 +1178,7 @@ public class MainWindow extends JFrame {
 		flatPkgButton.addActionListener(flatPkgAction);
 		flatPkgButton.setToolTipText(NLS.str("menu.flatten"));
 
-		updateLink = new Link("", JadxUpdate.JADX_RELEASES_URL);
+		updateLink = new Link();
 		updateLink.setVisible(false);
 
 		JToolBar toolbar = new JToolBar();
@@ -1127,7 +1197,8 @@ public class MainWindow extends JFrame {
 		toolbar.add(textSearchAction);
 		toolbar.add(clsSearchAction);
 		toolbar.add(commentSearchAction);
-		toolbar.add(gotoMainActivityAction);
+		toolbar.add(goToMainActivityAction);
+		toolbar.add(goToApplicationAction);
 		toolbar.addSeparator();
 		toolbar.add(backAction);
 		toolbar.add(forwardAction);
@@ -1155,7 +1226,8 @@ public class MainWindow extends JFrame {
 			textSearchAction.setEnabled(loaded);
 			clsSearchAction.setEnabled(loaded);
 			commentSearchAction.setEnabled(loaded);
-			gotoMainActivityAction.setEnabled(loaded);
+			goToMainActivityAction.setEnabled(loaded);
+			goToApplicationAction.setEnabled(loaded);
 			backAction.setEnabled(loaded);
 			backVariantAction.setEnabled(loaded);
 			forwardAction.setEnabled(loaded);
@@ -1273,11 +1345,18 @@ public class MainWindow extends JFrame {
 		leftPane.add(bottomPane, BorderLayout.PAGE_END);
 		treeSplitPane.setLeftComponent(leftPane);
 
-		tabbedPane = new TabbedPane(this);
+		tabsController = new TabsController(this);
+		tabbedPane = new TabbedPane(this, tabsController);
 		tabbedPane.setMinimumSize(new Dimension(150, 150));
+		new TabDndController(tabbedPane, settings);
+
+		quickTabsAndCodeSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
+		quickTabsAndCodeSplitPane.setResizeWeight(0.15);
+		quickTabsAndCodeSplitPane.setDividerSize(0);
+		quickTabsAndCodeSplitPane.setRightComponent(tabbedPane);
 
 		rightSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
-		rightSplitPane.setTopComponent(tabbedPane);
+		rightSplitPane.setTopComponent(quickTabsAndCodeSplitPane);
 		rightSplitPane.setResizeWeight(SPLIT_PANE_RESIZE_WEIGHT);
 
 		treeSplitPane.setRightComponent(rightSplitPane);
@@ -1410,6 +1489,9 @@ public class MainWindow extends JFrame {
 		if (logPanel != null) {
 			logPanel.loadSettings();
 		}
+		if (quickTabsTree != null) {
+			quickTabsTree.loadSettings();
+		}
 
 		shortcutsController.loadSettings();
 	}
@@ -1434,7 +1516,7 @@ public class MainWindow extends JFrame {
 	}
 
 	private void saveOpenTabs() {
-		project.saveOpenTabs(tabbedPane.getEditorViewStates());
+		project.saveOpenTabs(tabsController.getEditorViewStates());
 	}
 
 	private void restoreOpenTabs(List<EditorViewState> openTabs) {
@@ -1443,8 +1525,9 @@ public class MainWindow extends JFrame {
 			return;
 		}
 		for (EditorViewState viewState : openTabs) {
-			tabbedPane.restoreEditorViewState(viewState);
+			tabsController.restoreEditorViewState(viewState);
 		}
+		tabsController.notifyRestoreEditorViewStateDone();
 	}
 
 	private void preLoadOpenTabs(List<EditorViewState> openTabs) {
@@ -1492,6 +1575,10 @@ public class MainWindow extends JFrame {
 
 	public TabbedPane getTabbedPane() {
 		return tabbedPane;
+	}
+
+	public TabsController getTabsController() {
+		return tabsController;
 	}
 
 	public JadxSettings getSettings() {
@@ -1580,6 +1667,25 @@ public class MainWindow extends JFrame {
 		logPanel.dispose();
 		logPanel = null;
 		rightSplitPane.setBottomComponent(null);
+	}
+
+	private void setQuickTabsVisibility(boolean visible) {
+		if (visible) {
+			if (quickTabsTree == null) {
+				quickTabsTree = new QuickTabsTree(this);
+			}
+
+			quickTabsAndCodeSplitPane.setLeftComponent(quickTabsTree);
+			quickTabsAndCodeSplitPane.setDividerSize(5);
+		} else {
+			quickTabsAndCodeSplitPane.setLeftComponent(null);
+			quickTabsAndCodeSplitPane.setDividerSize(0);
+
+			if (quickTabsTree != null) {
+				quickTabsTree.dispose();
+				quickTabsTree = null;
+			}
+		}
 	}
 
 	public JMenu getPluginsMenu() {

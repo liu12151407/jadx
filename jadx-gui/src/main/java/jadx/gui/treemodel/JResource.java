@@ -7,12 +7,12 @@ import java.util.Map;
 
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
+import javax.swing.JPopupMenu;
 
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 import org.jetbrains.annotations.Nullable;
 
 import jadx.api.ICodeInfo;
-import jadx.api.ICodeWriter;
 import jadx.api.ResourceFile;
 import jadx.api.ResourceType;
 import jadx.api.ResourcesLoader;
@@ -20,11 +20,13 @@ import jadx.api.impl.SimpleCodeInfo;
 import jadx.core.utils.ListUtils;
 import jadx.core.utils.Utils;
 import jadx.core.xmlgen.ResContainer;
-import jadx.gui.ui.TabbedPane;
+import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.codearea.BinaryContentPanel;
 import jadx.gui.ui.codearea.CodeContentPanel;
 import jadx.gui.ui.panel.ContentPanel;
 import jadx.gui.ui.panel.ImagePanel;
+import jadx.gui.ui.popupmenu.JResourcePopupMenu;
+import jadx.gui.ui.tab.TabbedPane;
 import jadx.gui.utils.Icons;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.UiUtils;
@@ -142,6 +144,11 @@ public class JResource extends JLoadableNode {
 	}
 
 	@Override
+	public JPopupMenu onTreePopupMenu(MainWindow mainWindow) {
+		return new JResourcePopupMenu(mainWindow, this);
+	}
+
+	@Override
 	public synchronized ICodeInfo getCodeInfo() {
 		if (loaded) {
 			return content;
@@ -189,7 +196,7 @@ public class JResource extends JLoadableNode {
 						return ResourcesLoader.loadToCodeWriter(is);
 					});
 				} catch (Exception e) {
-					return new SimpleCodeInfo("Failed to load resource file:" + ICodeWriter.NL + Utils.getStackTrace(e));
+					return new SimpleCodeInfo("Failed to load resource file:\n" + Utils.getStackTrace(e));
 				}
 
 			case DECODED_DATA:

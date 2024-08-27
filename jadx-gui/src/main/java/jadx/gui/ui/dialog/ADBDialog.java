@@ -45,7 +45,6 @@ import jadx.gui.device.debugger.DebugSettings;
 import jadx.gui.device.protocol.ADB;
 import jadx.gui.device.protocol.ADBDevice;
 import jadx.gui.device.protocol.ADBDeviceInfo;
-import jadx.gui.treemodel.JClass;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.panel.IDebugController;
 import jadx.gui.utils.NLS;
@@ -69,6 +68,7 @@ public class ADBDialog extends JDialog implements ADB.DeviceStateListener, ADB.J
 	private transient JTree procTree;
 	private Socket deviceSocket;
 	private transient List<DeviceNode> deviceNodes = new ArrayList<>();
+	private transient DeviceNode lastSelectedDeviceNode;
 
 	public ADBDialog(MainWindow mainWindow) {
 		super(mainWindow);
@@ -144,6 +144,15 @@ public class ADBDialog extends JDialog implements ADB.DeviceStateListener, ADB.J
 					setIcon(ICON_PROCESS);
 				}
 				return c;
+			}
+		});
+
+		procTree.addTreeSelectionListener(event -> {
+			Object selectedNode = procTree.getLastSelectedPathComponent();
+			if (selectedNode instanceof DeviceTreeNode) {
+				lastSelectedDeviceNode = deviceNodes.stream()
+						.filter(item -> item.tNode == selectedNode)
+						.findFirst().orElse(null);
 			}
 		});
 
@@ -381,7 +390,7 @@ public class ADBDialog extends JDialog implements ADB.DeviceStateListener, ADB.J
 
 	private String getPid(String nodeText) {
 		if (nodeText.startsWith("[pid:")) {
-			int pos = nodeText.indexOf("]", "[pid:".length());
+			int pos = nodeText.indexOf(']', "[pid:".length());
 			if (pos != -1) {
 				return nodeText.substring("[pid:".length(), pos).trim();
 			}
@@ -501,22 +510,21 @@ public class ADBDialog extends JDialog implements ADB.DeviceStateListener, ADB.J
 			UiUtils.showMessageBox(mainWindow, NLS.str("adb_dialog.no_devices"));
 			return;
 		}
-		JClass cls = DbgUtils.searchMainActivity(mainWindow);
-		String pkg = DbgUtils.searchPackageName(mainWindow);
-		if (pkg.isEmpty() || cls == null) {
-			UiUtils.showMessageBox(mainWindow, NLS.str("adb_dialog.msg_read_mani_fail"));
+		DbgUtils.AppData appData = DbgUtils.parseAppData(mainWindow);
+		if (appData == null) {
+			// error already reported
 			return;
 		}
-		if (scrollToProcNode(pkg)) {
+		if (scrollToProcNode(appData.getAppPackage())) {
 			return;
 		}
-		String fullName = pkg + "/" + cls.getCls().getClassNode().getClassInfo().getFullName();
-		ADBDevice device = deviceNodes.get(0).device; // TODO: if multiple devices presented should let user select the one they desire.
+		String processName = appData.getProcessName();
+		ADBDevice device = lastSelectedDeviceNode == null ? deviceNodes.get(0).device : lastSelectedDeviceNode.device;
 		if (device != null) {
 			try {
-				device.launchApp(fullName);
+				device.launchApp(processName);
 			} catch (Exception e) {
-				LOG.error("Failed to launch app: {}", fullName, e);
+				LOG.error("Failed to launch app: {}", processName, e);
 				UiUtils.showMessageBox(mainWindow, e.getMessage());
 			}
 		}
@@ -592,7 +600,7 @@ public class ADBDialog extends JDialog implements ADB.DeviceStateListener, ADB.J
 	}
 
 	private String getMajorVer(String ver) {
-		int pos = ver.indexOf(".");
+		int pos = ver.indexOf('.');
 		if (pos != -1) {
 			ver = ver.substring(0, pos);
 		}

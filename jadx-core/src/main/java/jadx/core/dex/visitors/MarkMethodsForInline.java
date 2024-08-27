@@ -19,7 +19,9 @@ import jadx.core.dex.instructions.args.InsnWrapArg;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
+import jadx.core.dex.visitors.fixaccessmodifiers.FixAccessModifiers;
 import jadx.core.utils.BlockUtils;
+import jadx.core.utils.ListUtils;
 import jadx.core.utils.exceptions.JadxException;
 
 @JadxVisitor(
@@ -42,18 +44,22 @@ public class MarkMethodsForInline extends AbstractVisitor {
 	 */
 	@Nullable
 	public static MethodInlineAttr process(MethodNode mth) {
-		MethodInlineAttr mia = mth.get(AType.METHOD_INLINE);
-		if (mia != null) {
-			return mia;
-		}
-		if (mth.contains(AFlag.METHOD_CANDIDATE_FOR_INLINE)) {
-			if (mth.getBasicBlocks() == null) {
-				return null;
+		try {
+			MethodInlineAttr mia = mth.get(AType.METHOD_INLINE);
+			if (mia != null) {
+				return mia;
 			}
-			MethodInlineAttr inlined = inlineMth(mth);
-			if (inlined != null) {
-				return inlined;
+			if (mth.contains(AFlag.METHOD_CANDIDATE_FOR_INLINE)) {
+				if (mth.getBasicBlocks() == null) {
+					return null;
+				}
+				MethodInlineAttr inlined = inlineMth(mth);
+				if (inlined != null) {
+					return inlined;
+				}
 			}
+		} catch (Exception e) {
+			mth.addWarnComment("Method inline analysis failed", e);
 		}
 		return MethodInlineAttr.inlineNotNeeded(mth);
 	}
@@ -99,7 +105,7 @@ public class MarkMethodsForInline extends AbstractVisitor {
 						&& retInsn.getArg(0).isSameVar(firstInsn.getResult())
 						&& firstInsn.getArg(0).isSameVar(mthRegs.get(0));
 			case SGET:
-				return mthRegs.size() == 0
+				return mthRegs.isEmpty()
 						&& retInsn.getArg(0).isSameVar(firstInsn.getResult());
 
 			case IPUT:
@@ -113,9 +119,12 @@ public class MarkMethodsForInline extends AbstractVisitor {
 						&& firstInsn.getArg(0).isSameVar(mthRegs.get(0));
 
 			case INVOKE:
-				return mthRegs.size() >= 1
-						&& firstInsn.getArg(0).isSameVar(mthRegs.get(0))
-						&& retInsn.getArg(0).isSameVar(firstInsn.getResult());
+				if (!retInsn.getArg(0).isSameVar(firstInsn.getResult())) {
+					return false;
+				}
+				return ListUtils.orderedEquals(
+						mth.getArgRegs(), firstInsn.getArgList(),
+						(mthArg, insnArg) -> insnArg.isSameVar(mthArg));
 			default:
 				return false;
 		}

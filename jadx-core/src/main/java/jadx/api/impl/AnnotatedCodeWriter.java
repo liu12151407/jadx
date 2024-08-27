@@ -21,9 +21,6 @@ public class AnnotatedCodeWriter extends SimpleCodeWriter implements ICodeWriter
 	private Map<Integer, ICodeAnnotation> annotations = Collections.emptyMap();
 	private Map<Integer, Integer> lineMap = Collections.emptyMap();
 
-	public AnnotatedCodeWriter() {
-	}
-
 	public AnnotatedCodeWriter(JadxArgs args) {
 		super(args);
 	}
@@ -35,9 +32,9 @@ public class AnnotatedCodeWriter extends SimpleCodeWriter implements ICodeWriter
 
 	@Override
 	public AnnotatedCodeWriter addMultiLine(String str) {
-		if (str.contains(NL)) {
-			buf.append(str.replace(NL, NL + indentStr));
-			line += StringUtils.countMatches(str, NL);
+		if (str.contains(newLineStr)) {
+			buf.append(str.replace(newLineStr, newLineStr + indentStr));
+			line += StringUtils.countMatches(str, newLineStr);
 			offset = 0;
 		} else {
 			buf.append(str);
@@ -65,7 +62,7 @@ public class AnnotatedCodeWriter extends SimpleCodeWriter implements ICodeWriter
 			buf.append(cw.getCodeStr());
 			return this;
 		}
-		AnnotatedCodeWriter code = ((AnnotatedCodeWriter) cw);
+		AnnotatedCodeWriter code = (AnnotatedCodeWriter) cw;
 		line--;
 		int startPos = getLength();
 		for (Map.Entry<Integer, ICodeAnnotation> entry : code.annotations.entrySet()) {
@@ -84,7 +81,7 @@ public class AnnotatedCodeWriter extends SimpleCodeWriter implements ICodeWriter
 
 	@Override
 	protected void addLine() {
-		buf.append(NL);
+		buf.append(newLineStr);
 		line++;
 		offset = 0;
 	}
@@ -154,7 +151,6 @@ public class AnnotatedCodeWriter extends SimpleCodeWriter implements ICodeWriter
 
 	@Override
 	public ICodeInfo finish() {
-		processDefinitionAnnotations();
 		validateAnnotations();
 		String code = buf.toString();
 		buf = null;
@@ -164,18 +160,6 @@ public class AnnotatedCodeWriter extends SimpleCodeWriter implements ICodeWriter
 	@Override
 	public Map<Integer, ICodeAnnotation> getRawAnnotations() {
 		return annotations;
-	}
-
-	private void processDefinitionAnnotations() {
-		if (!annotations.isEmpty()) {
-			annotations.forEach((k, v) -> {
-				if (v instanceof NodeDeclareRef) {
-					NodeDeclareRef declareRef = (NodeDeclareRef) v;
-					declareRef.setDefPos(k);
-					declareRef.getNode().setDefPosition(k);
-				}
-			});
-		}
 	}
 
 	private void validateAnnotations() {

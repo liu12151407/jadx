@@ -3,7 +3,7 @@ plugins {
 	id("application")
 
 	// use shadow only for application scripts, jar will be copied from jadx-gui
-	id("com.github.johnrengelman.shadow") version "8.1.1"
+	id("com.gradleup.shadow") version "8.3.0"
 }
 
 dependencies {
@@ -17,9 +17,11 @@ dependencies {
 	runtimeOnly(project(":jadx-plugins:jadx-rename-mappings"))
 	runtimeOnly(project(":jadx-plugins:jadx-kotlin-metadata"))
 	runtimeOnly(project(":jadx-plugins:jadx-script:jadx-script-plugin"))
+	runtimeOnly(project(":jadx-plugins:jadx-xapk-input"))
+	runtimeOnly(project(":jadx-plugins:jadx-aab-input"))
 
-	implementation("org.jcommander:jcommander:1.83")
-	implementation("ch.qos.logback:logback-classic:1.4.14")
+	implementation("org.jcommander:jcommander:1.84")
+	implementation("ch.qos.logback:logback-classic:1.5.7")
 }
 
 application {

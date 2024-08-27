@@ -42,6 +42,9 @@ public class JadxArgs implements Closeable {
 
 	public static final int DEFAULT_THREADS_COUNT = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
 
+	public static final String DEFAULT_NEW_LINE_STR = System.lineSeparator();
+	public static final String DEFAULT_INDENT_STR = "    ";
+
 	public static final String DEFAULT_OUT_DIR = "jadx-output";
 	public static final String DEFAULT_SRC_DIR = "sources";
 	public static final String DEFAULT_RES_DIR = "resources";
@@ -124,6 +127,8 @@ public class JadxArgs implements Closeable {
 	private boolean respectBytecodeAccModifiers = false;
 	private boolean exportAsGradleProject = false;
 
+	private boolean skipXmlPrettyPrint = false;
+
 	private boolean fsCaseSensitive;
 
 	public enum RenameEnum {
@@ -142,6 +147,10 @@ public class JadxArgs implements Closeable {
 
 	private ICodeData codeData;
 
+	private String codeNewLineStr = DEFAULT_NEW_LINE_STR;
+
+	private String codeIndentStr = DEFAULT_INDENT_STR;
+
 	private CommentsLevel commentsLevel = CommentsLevel.INFO;
 
 	private IntegerFormat integerFormat = IntegerFormat.AUTO;
@@ -158,6 +167,11 @@ public class JadxArgs implements Closeable {
 	 * Don't save files (can be using for performance testing)
 	 */
 	private boolean skipFilesSave = false;
+
+	/**
+	 * Run additional expensive checks to verify internal invariants and info integrity
+	 */
+	private boolean runDebugChecks = false;
 
 	private Map<String, String> pluginOptions = new HashMap<>();
 
@@ -512,6 +526,14 @@ public class JadxArgs implements Closeable {
 		this.exportAsGradleProject = exportAsGradleProject;
 	}
 
+	public boolean isSkipXmlPrettyPrint() {
+		return skipXmlPrettyPrint;
+	}
+
+	public void setSkipXmlPrettyPrint(boolean skipXmlPrettyPrint) {
+		this.skipXmlPrettyPrint = skipXmlPrettyPrint;
+	}
+
 	public boolean isFsCaseSensitive() {
 		return fsCaseSensitive;
 	}
@@ -612,6 +634,22 @@ public class JadxArgs implements Closeable {
 		this.codeData = codeData;
 	}
 
+	public String getCodeIndentStr() {
+		return codeIndentStr;
+	}
+
+	public void setCodeIndentStr(String codeIndentStr) {
+		this.codeIndentStr = codeIndentStr;
+	}
+
+	public String getCodeNewLineStr() {
+		return codeNewLineStr;
+	}
+
+	public void setCodeNewLineStr(String codeNewLineStr) {
+		this.codeNewLineStr = codeNewLineStr;
+	}
+
 	public CommentsLevel getCommentsLevel() {
 		return commentsLevel;
 	}
@@ -650,6 +688,14 @@ public class JadxArgs implements Closeable {
 
 	public void setSkipFilesSave(boolean skipFilesSave) {
 		this.skipFilesSave = skipFilesSave;
+	}
+
+	public boolean isRunDebugChecks() {
+		return runDebugChecks;
+	}
+
+	public void setRunDebugChecks(boolean runDebugChecks) {
+		this.runDebugChecks = runDebugChecks;
 	}
 
 	public Map<String, String> getPluginOptions() {
@@ -733,6 +779,7 @@ public class JadxArgs implements Closeable {
 				+ ", replaceConsts=" + replaceConsts
 				+ ", respectBytecodeAccModifiers=" + respectBytecodeAccModifiers
 				+ ", exportAsGradleProject=" + exportAsGradleProject
+				+ ", skipXmlPrettyPrint=" + skipXmlPrettyPrint
 				+ ", fsCaseSensitive=" + fsCaseSensitive
 				+ ", renameFlags=" + renameFlags
 				+ ", outputFormat=" + outputFormat

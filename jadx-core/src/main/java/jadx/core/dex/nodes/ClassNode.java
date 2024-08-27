@@ -9,7 +9,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -19,10 +18,12 @@ import org.slf4j.LoggerFactory;
 import jadx.api.DecompilationMode;
 import jadx.api.ICodeCache;
 import jadx.api.ICodeInfo;
-import jadx.api.ICodeWriter;
 import jadx.api.JadxArgs;
 import jadx.api.JavaClass;
 import jadx.api.impl.SimpleCodeInfo;
+import jadx.api.impl.SimpleCodeWriter;
+import jadx.api.metadata.ICodeAnnotation;
+import jadx.api.metadata.annotations.NodeDeclareRef;
 import jadx.api.plugins.input.data.IClassData;
 import jadx.api.plugins.input.data.IFieldData;
 import jadx.api.plugins.input.data.IMethodData;
@@ -36,6 +37,7 @@ import jadx.api.plugins.input.data.attributes.types.SourceFileAttr;
 import jadx.api.plugins.input.data.impl.ListConsumer;
 import jadx.api.usage.IUsageInfoData;
 import jadx.core.Consts;
+import jadx.core.Jadx;
 import jadx.core.ProcessClass;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
@@ -246,18 +248,14 @@ public class ClassNode extends NotificationAttrNode
 		if (fields.isEmpty()) {
 			return;
 		}
-		List<FieldNode> staticFields = fields.stream().filter(FieldNode::isStatic).collect(Collectors.toList());
-		for (FieldNode f : staticFields) {
-			if (f.getAccessFlags().isFinal() && f.get(JadxAttrType.CONSTANT_VALUE) == null) {
-				// incorrect initialization will be removed if assign found in constructor
-				f.addAttr(EncodedValue.NULL);
+		// bytecode can omit field initialization to 0 (of any type)
+		// add explicit init to all static final fields
+		// incorrect initializations will be removed if assign found in class init
+		for (FieldNode fld : fields) {
+			AccessInfo accFlags = fld.getAccessFlags();
+			if (accFlags.isStatic() && accFlags.isFinal() && fld.get(JadxAttrType.CONSTANT_VALUE) == null) {
+				fld.addAttr(EncodedValue.NULL);
 			}
-		}
-		try {
-			// process const fields
-			root().getConstValues().processConstFields(this, staticFields);
-		} catch (Exception e) {
-			this.addWarnComment("Failed to load initial values for static fields", e);
 		}
 	}
 
@@ -312,6 +310,8 @@ public class ClassNode extends NotificationAttrNode
 		return decompile(true);
 	}
 
+	private static final Object DECOMPILE_WITH_MODE_SYNC = new Object();
+
 	/**
 	 * WARNING: Slow operation! Use with caution!
 	 */
@@ -320,15 +320,18 @@ public class ClassNode extends NotificationAttrNode
 		if (mode == baseMode) {
 			return decompile(true);
 		}
-		JadxArgs args = root.getArgs();
-		try {
-			unload();
-			args.setDecompilationMode(mode);
-			ProcessClass process = new ProcessClass(args);
-			process.initPasses(root);
-			return process.generateCode(this);
-		} finally {
-			args.setDecompilationMode(baseMode);
+		synchronized (DECOMPILE_WITH_MODE_SYNC) {
+			JadxArgs args = root.getArgs();
+			try {
+				unload();
+				args.setDecompilationMode(mode);
+				ProcessClass process = new ProcessClass(Jadx.getPassesList(args));
+				process.initPasses(root);
+				return process.generateCode(this);
+			} finally {
+				args.setDecompilationMode(baseMode);
+				unload();
+			}
 		}
 	}
 
@@ -383,20 +386,44 @@ public class ClassNode extends NotificationAttrNode
 				return code;
 			}
 		}
-		ICodeInfo codeInfo;
-		try {
-			if (Consts.DEBUG) {
-				LOG.debug("Decompiling class: {}", this);
-			}
-			codeInfo = root.getProcessClasses().generateCode(this);
-		} catch (Throwable e) {
-			addError("Code generation failed", e);
-			codeInfo = new SimpleCodeInfo(Utils.getStackTrace(e));
-		}
+		ICodeInfo codeInfo = generateClassCode();
 		if (codeInfo != ICodeInfo.EMPTY) {
 			codeCache.add(clsRawName, codeInfo);
 		}
 		return codeInfo;
+	}
+
+	private ICodeInfo generateClassCode() {
+		try {
+			if (Consts.DEBUG) {
+				LOG.debug("Decompiling class: {}", this);
+			}
+			ICodeInfo codeInfo = root.getProcessClasses().generateCode(this);
+			processDefinitionAnnotations(codeInfo);
+			return codeInfo;
+		} catch (Throwable e) {
+			addError("Code generation failed", e);
+			return new SimpleCodeInfo(Utils.getStackTrace(e));
+		}
+	}
+
+	/**
+	 * Save node definition positions found in code
+	 */
+	private static void processDefinitionAnnotations(ICodeInfo codeInfo) {
+		Map<Integer, ICodeAnnotation> annotations = codeInfo.getCodeMetadata().getAsMap();
+		if (annotations.isEmpty()) {
+			return;
+		}
+		for (Map.Entry<Integer, ICodeAnnotation> entry : annotations.entrySet()) {
+			ICodeAnnotation ann = entry.getValue();
+			if (ann.getAnnType() == AnnType.DECLARATION) {
+				NodeDeclareRef declareRef = (NodeDeclareRef) ann;
+				int pos = entry.getKey();
+				declareRef.setDefPos(pos);
+				declareRef.getNode().setDefPosition(pos);
+			}
+		}
 	}
 
 	@Nullable
@@ -432,7 +459,7 @@ public class ClassNode extends NotificationAttrNode
 		}
 		methods.forEach(MethodNode::unload);
 		innerClasses.forEach(ClassNode::unload);
-		fields.forEach(FieldNode::unloadAttributes);
+		fields.forEach(FieldNode::unload);
 		unloadAttributes();
 		setState(NOT_LOADED);
 		this.loadStage = LoadStage.NONE;
@@ -482,17 +509,15 @@ public class ClassNode extends NotificationAttrNode
 		fields.add(fld);
 	}
 
-	public FieldNode getConstField(Object obj) {
+	public @Nullable IFieldInfoRef getConstField(Object obj) {
 		return getConstField(obj, true);
 	}
 
-	@Nullable
-	public FieldNode getConstField(Object obj, boolean searchGlobal) {
+	public @Nullable IFieldInfoRef getConstField(Object obj, boolean searchGlobal) {
 		return root().getConstValues().getConstField(this, obj, searchGlobal);
 	}
 
-	@Nullable
-	public FieldNode getConstFieldByLiteralArg(LiteralArg arg) {
+	public @Nullable IFieldInfoRef getConstFieldByLiteralArg(LiteralArg arg) {
 		return root().getConstValues().getConstFieldByLiteralArg(this, arg);
 	}
 
@@ -558,6 +583,11 @@ public class ClassNode extends NotificationAttrNode
 			}
 		}
 		return null;
+	}
+
+	@Override
+	public ClassNode getDeclaringClass() {
+		return isInner() ? parentClass : null;
 	}
 
 	public ClassNode getParentClass() {
@@ -807,33 +837,29 @@ public class ClassNode extends NotificationAttrNode
 
 	public String getDisassembledCode() {
 		if (smali == null) {
-			StringBuilder sb = new StringBuilder();
-			getDisassembledCode(sb);
-			sb.append(ICodeWriter.NL);
+			SimpleCodeWriter code = new SimpleCodeWriter(root.getArgs());
+			getDisassembledCode(code);
 			Set<ClassNode> allInlinedClasses = new LinkedHashSet<>();
 			getInnerAndInlinedClassesRecursive(allInlinedClasses);
 			for (ClassNode innerClass : allInlinedClasses) {
-				innerClass.getDisassembledCode(sb);
-				sb.append(ICodeWriter.NL);
+				innerClass.getDisassembledCode(code);
 			}
-			smali = sb.toString();
+			smali = code.finish().getCodeStr();
 		}
 		return smali;
 	}
 
-	protected void getDisassembledCode(StringBuilder sb) {
+	protected void getDisassembledCode(SimpleCodeWriter code) {
 		if (clsData == null) {
-			sb.append(String.format("###### Class %s is created by jadx", getFullName()));
+			code.startLine(String.format("###### Class %s is created by jadx", getFullName()));
 			return;
 		}
-		sb.append(String.format("###### Class %s (%s)", getFullName(), getRawName()));
-		sb.append(ICodeWriter.NL);
+		code.startLine(String.format("###### Class %s (%s)", getFullName(), getRawName()));
 		try {
-			sb.append(clsData.getDisassembledCode());
+			code.startLine(clsData.getDisassembledCode());
 		} catch (Throwable e) {
-			sb.append("Failed to disassemble class:");
-			sb.append(ICodeWriter.NL);
-			sb.append(Utils.getStackTrace(e));
+			code.startLine("Failed to disassemble class:");
+			code.startLine(Utils.getStackTrace(e));
 		}
 	}
 

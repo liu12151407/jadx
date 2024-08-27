@@ -41,6 +41,7 @@ import jadx.gui.settings.data.ShortcutsWrapper;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.action.ActionModel;
 import jadx.gui.ui.codearea.EditorTheme;
+import jadx.gui.ui.tab.dnd.TabDndGhostType;
 import jadx.gui.utils.FontUtils;
 import jadx.gui.utils.LafManager;
 import jadx.gui.utils.LangLocale;
@@ -52,7 +53,7 @@ public class JadxSettings extends JadxCLIArgs {
 
 	private static final Path USER_HOME = Paths.get(System.getProperty("user.home"));
 	private static final int RECENT_PROJECTS_COUNT = 30;
-	private static final int CURRENT_SETTINGS_VERSION = 18;
+	private static final int CURRENT_SETTINGS_VERSION = 21;
 
 	private static final Font DEFAULT_FONT = new RSyntaxTextArea().getFont();
 
@@ -75,7 +76,22 @@ public class JadxSettings extends JadxCLIArgs {
 	private LangLocale langLocale = NLS.defaultLocale();
 	private boolean autoStartJobs = false;
 	private String excludedPackages = "";
-	private boolean autoSaveProject = true;
+	private SAVEOPTION saveOption = SAVEOPTION.ASK;
+
+	public enum SAVEOPTION {
+		ASK,
+		NEVER,
+		ALWAYS
+	}
+
+	public SAVEOPTION getSaveOption() {
+		return saveOption;
+	}
+
+	public void setSaveOption(SAVEOPTION saveOption) {
+		this.saveOption = saveOption;
+	}
+
 	private Map<ActionModel, Shortcut> shortcuts = new HashMap<>();
 
 	@JadxSettingsAdapter.GsonExclude
@@ -110,12 +126,19 @@ public class JadxSettings extends JadxCLIArgs {
 
 	private boolean jumpOnDoubleClick = true;
 
+	private XposedCodegenLanguage xposedCodegenLanguage = XposedCodegenLanguage.JAVA;
+	private JadxUpdateChannel jadxUpdateChannel = JadxUpdateChannel.STABLE;
+
 	/**
 	 * UI setting: the width of the tree showing the classes, resources, ...
 	 */
 	private int treeWidth = 130;
 
 	private boolean dockLogViewer = true;
+
+	private boolean dockQuickTabs = false;
+
+	private TabDndGhostType tabDndGhostType = TabDndGhostType.OUTLINE;
 
 	private int settingsVersion = CURRENT_SETTINGS_VERSION;
 
@@ -445,14 +468,6 @@ public class JadxSettings extends JadxCLIArgs {
 		this.autoStartJobs = autoStartJobs;
 	}
 
-	public boolean isAutoSaveProject() {
-		return autoSaveProject;
-	}
-
-	public void setAutoSaveProject(boolean autoSaveProject) {
-		this.autoSaveProject = autoSaveProject;
-	}
-
 	public ShortcutsWrapper getShortcuts() {
 		if (shortcutsWrapper == null) {
 			shortcutsWrapper = new ShortcutsWrapper();
@@ -729,7 +744,40 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setDockLogViewer(boolean dockLogViewer) {
 		this.dockLogViewer = dockLogViewer;
-		partialSync(settings -> this.dockLogViewer = dockLogViewer);
+		partialSync(settings -> settings.dockLogViewer = dockLogViewer);
+	}
+
+	public boolean isDockQuickTabs() {
+		return dockQuickTabs;
+	}
+
+	public void setDockQuickTabs(boolean dockQuickTabs) {
+		this.dockQuickTabs = dockQuickTabs;
+		partialSync(settings -> settings.dockQuickTabs = dockQuickTabs);
+	}
+
+	public XposedCodegenLanguage getXposedCodegenLanguage() {
+		return xposedCodegenLanguage;
+	}
+
+	public void setXposedCodegenLanguage(XposedCodegenLanguage language) {
+		this.xposedCodegenLanguage = language;
+	}
+
+	public JadxUpdateChannel getJadxUpdateChannel() {
+		return jadxUpdateChannel;
+	}
+
+	public void setJadxUpdateChannel(JadxUpdateChannel channel) {
+		this.jadxUpdateChannel = channel;
+	}
+
+	public void setTabDndGhostType(TabDndGhostType tabDndGhostType) {
+		this.tabDndGhostType = tabDndGhostType;
+	}
+
+	public TabDndGhostType getTabDndGhostType() {
+		return this.tabDndGhostType;
 	}
 
 	private void upgradeSettings(int fromVersion) {
@@ -767,6 +815,18 @@ public class JadxSettings extends JadxCLIArgs {
 		}
 		if (fromVersion == 17) {
 			checkForUpdates = true;
+			fromVersion++;
+		}
+		if (fromVersion == 18) {
+			xposedCodegenLanguage = XposedCodegenLanguage.JAVA;
+			fromVersion++;
+		}
+		if (fromVersion == 19) {
+			tabDndGhostType = TabDndGhostType.OUTLINE;
+			fromVersion++;
+		}
+		if (fromVersion == 20) {
+			jadxUpdateChannel = JadxUpdateChannel.STABLE;
 			fromVersion++;
 		}
 		if (fromVersion != CURRENT_SETTINGS_VERSION) {

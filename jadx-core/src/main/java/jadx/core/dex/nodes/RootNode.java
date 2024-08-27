@@ -48,15 +48,15 @@ import jadx.core.dex.visitors.typeinference.TypeCompare;
 import jadx.core.dex.visitors.typeinference.TypeUpdate;
 import jadx.core.export.GradleInfoStorage;
 import jadx.core.utils.CacheStorage;
+import jadx.core.utils.DebugChecks;
 import jadx.core.utils.ErrorsCounter;
 import jadx.core.utils.PassMerge;
 import jadx.core.utils.StringUtils;
 import jadx.core.utils.Utils;
 import jadx.core.utils.android.AndroidResourcesUtils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
-import jadx.core.xmlgen.IResParser;
+import jadx.core.xmlgen.IResTableParser;
 import jadx.core.xmlgen.ManifestAttributes;
-import jadx.core.xmlgen.ResDecoder;
 import jadx.core.xmlgen.ResourceStorage;
 import jadx.core.xmlgen.entry.ResourceEntry;
 import jadx.core.xmlgen.entry.ValuesParser;
@@ -65,10 +65,6 @@ public class RootNode {
 	private static final Logger LOG = LoggerFactory.getLogger(RootNode.class);
 
 	private final JadxArgs args;
-	private final List<IDexTreeVisitor> preDecompilePasses;
-	private final List<ICodeDataUpdateListener> codeDataUpdateListeners = new ArrayList<>();
-
-	private final ProcessClass processClasses;
 	private final ErrorsCounter errorsCounter = new ErrorsCounter();
 	private final StringUtils stringUtils;
 	private final ConstStorage constValues;
@@ -79,6 +75,7 @@ public class RootNode {
 	private final TypeUtils typeUtils;
 	private final AttributeStorage attributes = new AttributeStorage();
 
+	private final List<ICodeDataUpdateListener> codeDataUpdateListeners = new ArrayList<>();
 	private final GradleInfoStorage gradleInfoStorage = new GradleInfoStorage();
 
 	private final Map<ClassInfo, ClassNode> clsMap = new HashMap<>();
@@ -88,12 +85,12 @@ public class RootNode {
 	private final Map<String, PackageNode> pkgMap = new HashMap<>();
 	private final List<PackageNode> packages = new ArrayList<>();
 
+	private List<IDexTreeVisitor> preDecompilePasses;
+	private ProcessClass processClasses;
+
 	private ClspGraph clsp;
-	@Nullable
-	private String appPackage;
-	@Nullable
-	private ClassNode appResClass;
-	private boolean isProto;
+	private @Nullable String appPackage;
+	private @Nullable ClassNode appResClass;
 
 	/**
 	 * Optional decompiler reference
@@ -103,13 +100,12 @@ public class RootNode {
 	public RootNode(JadxArgs args) {
 		this.args = args;
 		this.preDecompilePasses = Jadx.getPreDecompilePassesList();
-		this.processClasses = new ProcessClass(args);
+		this.processClasses = new ProcessClass(Jadx.getPassesList(args));
 		this.stringUtils = new StringUtils(args);
 		this.constValues = new ConstStorage(args);
 		this.typeUpdate = new TypeUpdate(this);
 		this.methodUtils = new MethodUtils(this);
 		this.typeUtils = new TypeUtils(this);
-		this.isProto = args.getInputFiles().size() > 0 && args.getInputFiles().get(0).getName().toLowerCase().endsWith(".aab");
 	}
 
 	public void init() {
@@ -203,25 +199,25 @@ public class RootNode {
 		rawClsMap.put(clsNode.getRawName(), clsNode);
 	}
 
-	public void loadResources(List<ResourceFile> resources) {
+	public void loadResources(ResourcesLoader resLoader, List<ResourceFile> resources) {
 		ResourceFile arsc = getResourceFile(resources);
 		if (arsc == null) {
-			LOG.debug("'.arsc' file not found");
+			LOG.debug("'resources.arsc' or 'resources.pb' file not found");
 			return;
 		}
 		try {
-			IResParser parser = ResourcesLoader.decodeStream(arsc, (size, is) -> ResDecoder.decode(this, arsc, is));
+			IResTableParser parser = ResourcesLoader.decodeStream(arsc, (size, is) -> resLoader.decodeTable(arsc, is));
 			if (parser != null) {
 				processResources(parser.getResStorage());
 				updateObfuscatedFiles(parser, resources);
 				updateManifestAttribMap(parser);
 			}
 		} catch (Exception e) {
-			LOG.error("Failed to parse '.arsc' file", e);
+			LOG.error("Failed to parse 'resources.pb'/'.arsc' file", e);
 		}
 	}
 
-	private void updateManifestAttribMap(IResParser parser) {
+	private void updateManifestAttribMap(IResTableParser parser) {
 		ManifestAttributes manifestAttributes = ManifestAttributes.getInstance();
 		manifestAttributes.updateAttributes(parser);
 	}
@@ -257,7 +253,7 @@ public class RootNode {
 		}
 	}
 
-	private void updateObfuscatedFiles(IResParser parser, List<ResourceFile> resources) {
+	private void updateObfuscatedFiles(IResTableParser parser, List<ResourceFile> resources) {
 		if (args.isSkipResources()) {
 			return;
 		}
@@ -275,8 +271,9 @@ public class RootNode {
 		for (ResourceFile resource : resources) {
 			ResourceEntry resEntry = entryNames.get(resource.getOriginalName());
 			if (resEntry != null) {
-				resource.setAlias(resEntry);
-				renamedCount++;
+				if (resource.setAlias(resEntry)) {
+					renamedCount++;
+				}
 			}
 		}
 		if (LOG.isDebugEnabled()) {
@@ -322,6 +319,11 @@ public class RootNode {
 				.merge(customPasses.get(JadxPreparePass.TYPE), p -> new PreparePassWrapper((JadxPreparePass) p));
 		new PassMerge(processClasses.getPasses())
 				.merge(customPasses.get(JadxDecompilePass.TYPE), p -> new DecompilePassWrapper((JadxDecompilePass) p));
+
+		if (args.isRunDebugChecks()) {
+			preDecompilePasses = DebugChecks.insertPasses(preDecompilePasses);
+			processClasses = new ProcessClass(DebugChecks.insertPasses(processClasses.getPasses()));
+		}
 	}
 
 	public void runPreDecompileStage() {
@@ -712,10 +714,6 @@ public class RootNode {
 
 	public AttributeStorage getAttributes() {
 		return attributes;
-	}
-
-	public boolean isProto() {
-		return isProto;
 	}
 
 	public GradleInfoStorage getGradleInfoStorage() {

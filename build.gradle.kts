@@ -6,9 +6,9 @@ import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform
 import java.util.Locale
 
 plugins {
-	id("com.github.ben-manes.versions") version "0.50.0"
+	id("com.github.ben-manes.versions") version "0.51.0"
 	id("se.patrikerdes.use-latest-versions") version "0.2.18"
-	id("com.diffplug.spotless") version "6.23.3"
+	id("com.diffplug.spotless") version "6.25.0"
 }
 
 val jadxVersion by extra { System.getenv("JADX_VERSION") ?: "dev" }
@@ -89,6 +89,10 @@ val copyArtifacts by tasks.registering(Copy::class) {
 		include("**/*.jar")
 		rename("jadx-gui-(.*)-all.jar", "jadx-$1-all.jar")
 	}
+	from(layout.projectDirectory) {
+		include("README.md")
+		include("LICENSE")
+	}
 	into(layout.buildDirectory.dir("jadx"))
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
@@ -99,40 +103,34 @@ val pack by tasks.registering(Zip::class) {
 	destinationDirectory.set(layout.buildDirectory)
 }
 
-val copyExe by tasks.registering(Copy::class) {
+val distWin by tasks.registering(Zip::class) {
 	group = "jadx"
-	description = "Copy exe to build dir"
+	description = "Build Windows bundle"
 
-	// next task dependencies not needed, but gradle throws warning because of same output dir
-	mustRunAfter("jar")
-	mustRunAfter(pack)
+	val guiTask = tasks.getByPath("jadx-gui:copyDistWin")
+	dependsOn(guiTask)
+	from(guiTask.outputs)
 
-	from(tasks.getByPath("jadx-gui:createExe"))
-	include("*.exe")
-	into(layout.buildDirectory)
+	destinationDirectory.set(layout.buildDirectory.dir("distWin"))
+	archiveFileName.set("jadx-gui-$jadxVersion-win.zip")
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
-val distWinBundle by tasks.registering(Copy::class) {
-	group = "jadx"
-	description = "Copy bundle to build dir"
+val distWinWithJre by tasks.registering(Zip::class) {
+	description = "Build Windows with JRE bundle"
 
-	dependsOn(tasks.getByPath(":jadx-gui:distWinWithJre"))
+	val guiTask = tasks.getByPath(":jadx-gui:copyDistWinWithJre")
+	dependsOn(guiTask)
+	from(guiTask.outputs)
 
-	// next task dependencies not needed, but gradle throws warning because of same output dir
-	mustRunAfter("jar")
-	mustRunAfter(pack)
-
-	from(tasks.getByPath("jadx-gui:distWinWithJre").outputs) {
-		include("*.zip")
-	}
-	into(layout.buildDirectory)
+	destinationDirectory.set(layout.buildDirectory.dir("distWinWithJre"))
+	archiveFileName.set("jadx-gui-$jadxVersion-with-jre-win.zip")
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 val dist by tasks.registering {
 	group = "jadx"
-	description = "Build jadx distribution zip"
+	description = "Build jadx distribution zip bundles"
 
 	dependsOn(pack)
 
@@ -140,15 +138,14 @@ val dist by tasks.registering {
 	if (os.isWindows) {
 		if (project.hasProperty("bundleJRE")) {
 			println("Build win bundle with JRE")
-			dependsOn(distWinBundle)
+			dependsOn(distWinWithJre)
 		} else {
-			dependsOn(copyExe)
+			dependsOn(distWin)
 		}
 	}
 }
 
 val cleanBuildDir by tasks.registering(Delete::class) {
-	group = "jadx"
 	delete(layout.buildDirectory)
 }
 tasks.getByName("clean").dependsOn(cleanBuildDir)

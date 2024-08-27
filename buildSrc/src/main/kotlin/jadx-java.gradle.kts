@@ -3,6 +3,8 @@ import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 plugins {
 	java
 	checkstyle
+
+	id("jadx-rewrite")
 }
 
 val jadxVersion: String by rootProject.extra
@@ -11,15 +13,14 @@ group = "io.github.skylot"
 version = jadxVersion
 
 dependencies {
-	implementation("org.slf4j:slf4j-api:2.0.9")
+	implementation("org.slf4j:slf4j-api:2.0.16")
 	compileOnly("org.jetbrains:annotations:24.1.0")
 
-	testImplementation("ch.qos.logback:logback-classic:1.4.14")
-	testImplementation("org.hamcrest:hamcrest-library:2.2")
-	testImplementation("org.mockito:mockito-core:5.8.0")
-	testImplementation("org.assertj:assertj-core:3.24.2")
+	testImplementation("ch.qos.logback:logback-classic:1.5.7")
+	testImplementation("org.assertj:assertj-core:3.26.3")
+	testImplementation("org.mockito:mockito-core:5.12.0")
 
-	testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")
+	testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
 	testCompileOnly("org.jetbrains:annotations:24.1.0")

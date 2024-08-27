@@ -2,6 +2,7 @@ package jadx.core.dex.attributes;
 
 import jadx.api.plugins.input.data.attributes.IJadxAttrType;
 import jadx.api.plugins.input.data.attributes.IJadxAttribute;
+import jadx.core.codegen.utils.CodeComment;
 import jadx.core.dex.attributes.nodes.AnonymousClassAttr;
 import jadx.core.dex.attributes.nodes.ClassTypeVarsAttr;
 import jadx.core.dex.attributes.nodes.DeclareVariablesAttr;
@@ -25,6 +26,7 @@ import jadx.core.dex.attributes.nodes.MethodReplaceAttr;
 import jadx.core.dex.attributes.nodes.MethodTypeVarsAttr;
 import jadx.core.dex.attributes.nodes.PhiListAttr;
 import jadx.core.dex.attributes.nodes.RegDebugInfoAttr;
+import jadx.core.dex.attributes.nodes.RegionRefAttr;
 import jadx.core.dex.attributes.nodes.RenameReasonAttr;
 import jadx.core.dex.attributes.nodes.SkipMethodArgsAttr;
 import jadx.core.dex.attributes.nodes.SpecialEdgeAttr;
@@ -43,7 +45,7 @@ import jadx.core.dex.trycatch.TryCatchBlockAttr;
 public final class AType<T extends IJadxAttribute> implements IJadxAttrType<T> {
 
 	// class, method, field, insn
-	public static final AType<AttrList<String>> CODE_COMMENTS = new AType<>();
+	public static final AType<AttrList<CodeComment>> CODE_COMMENTS = new AType<>();
 
 	// class, method, field
 	public static final AType<RenameReasonAttr> RENAME_REASON = new AType<>();
@@ -94,6 +96,7 @@ public final class AType<T extends IJadxAttribute> implements IJadxAttrType<T> {
 	public static final AType<AttrList<JumpInfo>> JUMP = new AType<>();
 	public static final AType<IMethodDetails> METHOD_DETAILS = new AType<>();
 	public static final AType<GenericInfoAttr> GENERIC_INFO = new AType<>();
+	public static final AType<RegionRefAttr> REGION_REF = new AType<>();
 
 	// register
 	public static final AType<RegDebugInfoAttr> REG_DEBUG_INFO = new AType<>();

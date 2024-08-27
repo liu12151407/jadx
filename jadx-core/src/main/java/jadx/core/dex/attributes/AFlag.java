@@ -90,7 +90,6 @@ public enum AFlag {
 
 	REQUEST_IF_REGION_OPTIMIZE, // run if region visitor again
 	REQUEST_CODE_SHRINK,
-	RERUN_SSA_TRANSFORM,
 
 	METHOD_CANDIDATE_FOR_INLINE,
 	USE_LINES_HINTS, // source lines info in methods can be trusted
@@ -104,4 +103,7 @@ public enum AFlag {
 	CLASS_UNLOADED, // class was completely unloaded
 
 	DONT_UNLOAD_CLASS, // don't unload class after code generation (only for tests and debug!)
+
+	RESOLVE_JAVA_JSR,
+	COMPUTE_POST_DOM,
 }

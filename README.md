@@ -2,22 +2,25 @@
 
 ## JADX
 
-[![Build status](https://github.com/skylot/jadx/workflows/Build/badge.svg)](https://github.com/skylot/jadx/actions?query=workflow%3ABuild)
+![Build status](https://img.shields.io/github/actions/workflow/status/skylot/jadx/build-artifacts.yml)
 ![GitHub contributors](https://img.shields.io/github/contributors/skylot/jadx)
 ![GitHub all releases](https://img.shields.io/github/downloads/skylot/jadx/total)
 ![GitHub release (latest by SemVer)](https://img.shields.io/github/downloads/skylot/jadx/latest/total)
 ![Latest release](https://img.shields.io/github/release/skylot/jadx.svg)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.skylot/jadx-core)](https://search.maven.org/search?q=g:io.github.skylot%20AND%20jadx)
+![Java 11+](https://img.shields.io/badge/Java-11%2B-blue)
 [![License](http://img.shields.io/:license-apache-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0.html)
 
 **jadx** - Dex to Java decompiler
 
 Command line and GUI tools for producing Java source code from Android Dex and Apk files
 
-:exclamation::exclamation::exclamation: Please note that in most cases **jadx** can't decompile all 100% of the code, so errors will occur. Check [Troubleshooting guide](https://github.com/skylot/jadx/wiki/Troubleshooting-Q&A#decompilation-issues) for workarounds
+> [!WARNING]
+> Please note that in most cases **jadx** can't decompile all 100% of the code, so errors will occur.<br />
+> Check [Troubleshooting guide](https://github.com/skylot/jadx/wiki/Troubleshooting-Q&A#decompilation-issues) for workarounds.
 
 **Main features:**
-- decompile Dalvik bytecode to java classes from APK, dex, aar, aab and zip files
+- decompile Dalvik bytecode to Java code from APK, dex, aar, aab and zip files
 - decode `AndroidManifest.xml` and other resources from `resources.arsc`
 - deobfuscator included
 
@@ -48,18 +51,22 @@ On Windows run `.bat` files with double-click\
 For Windows, you can download it from [oracle.com](https://www.oracle.com/java/technologies/downloads/#jdk17-windows) (select x64 Installer).
 
 ### Install
-1. Arch linux ![Arch Linux package](https://img.shields.io/archlinux/v/extra/any/jadx?label=)
-    ```bash
-    sudo pacman -S jadx
-    ```
-2. macOS ![homebrew version](https://img.shields.io/homebrew/v/jadx?label=)
-    ```bash
-    brew install jadx
-    ```
-3. [Flathub ![Flathub](https://img.shields.io/flathub/v/com.github.skylot.jadx?label=)](https://flathub.org/apps/details/com.github.skylot.jadx)
-   ```bash
-   flatpak install flathub com.github.skylot.jadx
-   ```
+- Arch Linux
+  [![Arch Linux package](https://img.shields.io/archlinux/v/extra/any/jadx)](https://archlinux.org/packages/extra/any/jadx/)
+  [![AUR Version](https://img.shields.io/aur/version/jadx-git)](https://aur.archlinux.org/packages/jadx-git)
+  ```bash
+  sudo pacman -S jadx
+  ```
+- macOS
+  [![homebrew version](https://img.shields.io/homebrew/v/jadx)](https://formulae.brew.sh/formula/jadx)
+  ```bash
+  brew install jadx
+  ```
+- Flathub
+  [![Flathub Version](https://img.shields.io/flathub/v/com.github.skylot.jadx)](https://flathub.org/apps/com.github.skylot.jadx)
+  ```bash
+  flatpak install flathub com.github.skylot.jadx
+  ```
 
 ### Use jadx as a library
 You can use jadx in your java projects, check details on [wiki page](https://github.com/skylot/jadx/wiki/Use-jadx-as-a-library)
@@ -79,7 +86,7 @@ and also packed to `build/jadx-<version>.zip`
 
 ### Usage
 ```
-jadx[-gui] [command] [options] <input files> (.apk, .dex, .jar, .class, .smali, .zip, .aar, .arsc, .aab)
+jadx[-gui] [command] [options] <input files> (.apk, .dex, .jar, .class, .smali, .zip, .aar, .arsc, .aab, .xapk, .jadx.kts)
 commands (use '<command> --help' for command options):
   plugins	  - manage jadx plugins
 
@@ -100,6 +107,7 @@ options:
                                          'simple' - simplified instructions (linear, with goto's)
                                          'fallback' - raw instructions without modifications
   --show-bad-code                     - show inconsistent code (incorrectly decompiled)
+  --no-xml-pretty-print               - do not prettify XML
   --no-imports                        - disable use of imports, always write entire package name
   --no-debug-info                     - disable debug info parsing and processing
   --add-debug-lines                   - add comments with debug line numbers if available
@@ -170,12 +178,15 @@ Plugin options (-P<name>=<value>):
     - kotlin-metadata.to-string       - rename fields using toString, values: [yes, no], default: yes
     - kotlin-metadata.getters         - rename simple getters to field names, values: [yes, no], default: yes
  4) rename-mappings: various mappings support
-    - rename-mappings.format          - mapping format, values: [auto, TINY, TINY_2, ENIGMA, ENIGMA_DIR, MCP, SRG, TSRG, TSRG2, PROGUARD], default: auto
-    - rename-mappings.invert          - invert mapping, values: [yes, no], default: no
+    - rename-mappings.format          - mapping format, values: [AUTO, TINY_FILE, TINY_2_FILE, ENIGMA_FILE, ENIGMA_DIR, SRG_FILE, XSRG_FILE, CSRG_FILE, TSRG_FILE, TSRG_2_FILE, PROGUARD_FILE], default: AUTO
+    - rename-mappings.invert          - invert mapping on load, values: [yes, no], default: no
 
 Environment variables:
+  JADX_DISABLE_XML_SECURITY - set to 'true' to disable all security checks for XML files
   JADX_DISABLE_ZIP_SECURITY - set to 'true' to disable all security checks for zip files
   JADX_ZIP_MAX_ENTRIES_COUNT - maximum allowed number of entries in zip files (default: 100 000)
+  JADX_CONFIG_DIR - custom config directory, using system by default
+  JADX_CACHE_DIR - custom cache directory, using system by default
   JADX_TMP_DIR - custom temp directory, using system by default
 
 Examples:
@@ -185,7 +196,7 @@ Examples:
   jadx --log-level ERROR app.apk
   jadx -Pdex-input.verify-checksum=no app.apk
 ```
-These options also worked on jadx-gui running from command line and override options from preferences dialog
+These options also work in jadx-gui running from command line and override options from preferences' dialog
 
 ### Troubleshooting
 Please check wiki page [Troubleshooting Q&A](https://github.com/skylot/jadx/wiki/Troubleshooting-Q&A)

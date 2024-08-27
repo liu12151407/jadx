@@ -17,7 +17,6 @@ import com.beust.jcommander.ParameterDescription;
 import com.beust.jcommander.ParameterException;
 import com.beust.jcommander.Parameterized;
 
-import jadx.api.JadxArgs;
 import jadx.api.JadxDecompiler;
 import jadx.api.plugins.JadxPluginInfo;
 import jadx.api.plugins.options.JadxPluginOptions;
@@ -109,8 +108,11 @@ public class JCommanderWrapper<T> {
 		out.println(appendPluginOptions(maxNamesLen));
 		out.println();
 		out.println("Environment variables:");
+		out.println("  JADX_DISABLE_XML_SECURITY - set to 'true' to disable all security checks for XML files");
 		out.println("  JADX_DISABLE_ZIP_SECURITY - set to 'true' to disable all security checks for zip files");
 		out.println("  JADX_ZIP_MAX_ENTRIES_COUNT - maximum allowed number of entries in zip files (default: 100 000)");
+		out.println("  JADX_CONFIG_DIR - custom config directory, using system by default");
+		out.println("  JADX_CACHE_DIR - custom cache directory, using system by default");
 		out.println("  JADX_TMP_DIR - custom temp directory, using system by default");
 		out.println();
 		out.println("Examples:");
@@ -165,7 +167,7 @@ public class JCommanderWrapper<T> {
 				opt.append("- ").append(description);
 			}
 			if (addDefaults) {
-				String defaultValue = getDefaultValue(args, f, opt);
+				String defaultValue = getDefaultValue(args, f);
 				if (defaultValue != null && !description.contains("(default)")) {
 					opt.append(", default: ").append(defaultValue);
 				}
@@ -188,7 +190,7 @@ public class JCommanderWrapper<T> {
 	}
 
 	@Nullable
-	private static String getDefaultValue(Object args, Field f, StringBuilder opt) {
+	private static String getDefaultValue(Object args, Field f) {
 		try {
 			Class<?> fieldType = f.getType();
 			if (fieldType == int.class) {
@@ -219,7 +221,7 @@ public class JCommanderWrapper<T> {
 		StringBuilder sb = new StringBuilder();
 		int k = 1;
 		// load and init all options plugins to print all options
-		try (JadxDecompiler decompiler = new JadxDecompiler(new JadxArgs())) {
+		try (JadxDecompiler decompiler = new JadxDecompiler(argsObj.toJadxArgs())) {
 			JadxPluginManager pluginManager = decompiler.getPluginManager();
 			pluginManager.load(new JadxExternalPluginsLoader());
 			pluginManager.initAll();

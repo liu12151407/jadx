@@ -4,11 +4,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -30,6 +32,25 @@ public class ListUtils {
 		return first.containsAll(second);
 	}
 
+	public static <T, U> boolean orderedEquals(List<T> list1, List<U> list2, BiPredicate<T, U> comparer) {
+		if (list1 == list2) {
+			return true;
+		}
+		if (list1.size() != list2.size()) {
+			return false;
+		}
+		final Iterator<T> iter1 = list1.iterator();
+		final Iterator<U> iter2 = list2.iterator();
+		while (iter1.hasNext() && iter2.hasNext()) {
+			final T item1 = iter1.next();
+			final U item2 = iter2.next();
+			if (!comparer.test(item1, item2)) {
+				return false;
+			}
+		}
+		return !iter1.hasNext() && !iter2.hasNext();
+	}
+
 	public static <T, R> List<R> map(Collection<T> list, Function<T, R> mapFunc) {
 		if (list == null || list.isEmpty()) {
 			return Collections.emptyList();
@@ -47,6 +68,14 @@ public class ListUtils {
 
 	public static <T> T last(List<T> list) {
 		return list.get(list.size() - 1);
+	}
+
+	public static <T> @Nullable T removeLast(List<T> list) {
+		int size = list.size();
+		if (size == 0) {
+			return null;
+		}
+		return list.remove(size - 1);
 	}
 
 	public static <T extends Comparable<T>> List<T> distinctMergeSortedLists(List<T> first, List<T> second) {

@@ -63,6 +63,10 @@ public class ResourceStorage {
 		renames.clear();
 	}
 
+	public int size() {
+		return list.size();
+	}
+
 	public Iterable<ResourceEntry> getResources() {
 		return list;
 	}
@@ -72,7 +76,7 @@ public class ResourceStorage {
 	}
 
 	public void setAppPackage(String appPackage) {
-		this.appPackage = appPackage;
+		this.appPackage = XmlSecurity.verifyAppPackage(appPackage);
 	}
 
 	public Map<Integer, String> getResourcesNames() {

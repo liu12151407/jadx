@@ -1,15 +1,16 @@
 plugins {
 	id("jadx-kotlin")
 	id("application")
-	id("edu.sc.seis.launch4j") version "3.0.5"
-	id("com.github.johnrengelman.shadow") version "8.1.1"
-	id("org.beryx.runtime") version "1.13.0"
+	id("edu.sc.seis.launch4j") version "3.0.6"
+	id("com.gradleup.shadow") version "8.3.0"
+	id("org.beryx.runtime") version "1.13.1"
 }
 
 dependencies {
 	implementation(project(":jadx-core"))
 	implementation(project(":jadx-cli"))
 	implementation(project(":jadx-plugins-tools"))
+	implementation(project(":jadx-commons:jadx-app-commons"))
 
 	// import mappings
 	implementation(project(":jadx-plugins:jadx-rename-mappings"))
@@ -21,29 +22,28 @@ dependencies {
 	implementation("com.fifesoft:autocomplete:3.3.1")
 
 	// use KtLint for format and check jadx scripts
-	implementation("com.pinterest.ktlint:ktlint-rule-engine:1.0.1")
-	implementation("com.pinterest.ktlint:ktlint-ruleset-standard:1.0.1")
+	implementation("com.pinterest.ktlint:ktlint-rule-engine:1.3.1")
+	implementation("com.pinterest.ktlint:ktlint-ruleset-standard:1.3.1")
 
-	implementation("org.jcommander:jcommander:1.83")
-	implementation("ch.qos.logback:logback-classic:1.4.14")
-	implementation("dev.dirs:directories:26")
+	implementation("org.jcommander:jcommander:1.84")
+	implementation("ch.qos.logback:logback-classic:1.5.7")
 
-	implementation("com.fifesoft:rsyntaxtextarea:3.3.4")
+	implementation("com.fifesoft:rsyntaxtextarea:3.4.1")
 	implementation(files("libs/jfontchooser-1.0.5.jar"))
 	implementation("hu.kazocsaba:image-viewer:1.2.3")
 
-	implementation("com.formdev:flatlaf:3.2.5")
-	implementation("com.formdev:flatlaf-intellij-themes:3.2.5")
-	implementation("com.formdev:flatlaf-extras:3.2.5")
+	implementation("com.formdev:flatlaf:3.5.1")
+	implementation("com.formdev:flatlaf-intellij-themes:3.5.1")
+	implementation("com.formdev:flatlaf-extras:3.5.1")
 
-	implementation("com.google.code.gson:gson:2.10.1")
-	implementation("org.apache.commons:commons-lang3:3.14.0")
-	implementation("org.apache.commons:commons-text:1.11.0")
-	implementation("commons-io:commons-io:2.15.1")
+	implementation("com.google.code.gson:gson:2.11.0")
+	implementation("org.apache.commons:commons-lang3:3.16.0")
+	implementation("org.apache.commons:commons-text:1.12.0")
+	implementation("commons-io:commons-io:2.16.1")
 
 	implementation("io.reactivex.rxjava2:rxjava:2.2.21")
 	implementation("com.github.akarnokd:rxjava2-swing:0.3.7")
-	implementation("com.android.tools.build:apksig:8.2.0")
+	implementation("com.android.tools.build:apksig:8.5.2")
 	implementation("io.github.skylot:jdwp:2.0.0")
 
 	testImplementation(project(":jadx-core").dependencyProject.sourceSets.getByName("test").output)
@@ -68,7 +68,14 @@ application {
 			// disable zip checks (#1962)
 			"-Djdk.util.zip.disableZip64ExtraFieldValidation=true",
 			// needed for ktlint formatter
-			"-XX:+IgnoreUnrecognizedVMOptions", "--add-opens=java.base/java.lang=ALL-UNNAMED",
+			"-XX:+IgnoreUnrecognizedVMOptions",
+			"--add-opens=java.base/java.lang=ALL-UNNAMED",
+			// flags to fix UI ghosting (#2225)
+			"-Dsun.java2d.noddraw=true",
+			"-Dsun.java2d.d3d=false",
+			"-Dsun.java2d.ddforcevram=true",
+			"-Dsun.java2d.ddblit=false",
+			"-Dswing.useflipBufferStrategy=True",
 		)
 	applicationDistribution.from("$rootDir") {
 		include("README.md")
@@ -84,13 +91,14 @@ tasks.jar {
 }
 
 tasks.shadowJar {
+	isZip64 = true
 	mergeServiceFiles()
 	manifest {
-		from(project.tasks.jar.get().manifest)
+		from(tasks.jar.get().manifest)
 	}
 }
 
-tasks.existing(CreateStartScripts::class) {
+tasks.startShadowScripts {
 	doLast {
 		val newContent =
 			windowsScript.readText()
@@ -103,20 +111,19 @@ tasks.existing(CreateStartScripts::class) {
 launch4j {
 	mainClassName.set(application.mainClass.get())
 	copyConfigurable.set(listOf<Any>())
-	setJarTask(tasks.shadowJar.get())
+	dontWrapJar.set(true)
 	icon.set("$projectDir/src/main/resources/logos/jadx-logo.ico")
 	outfile.set("jadx-gui-$jadxVersion.exe")
 	copyright.set("Skylot")
 	windowTitle.set("jadx")
 	companyName.set("jadx")
 	jreMinVersion.set("11")
+	chdir.set("")
 	jvmOptions.set(application.applicationDefaultJvmArgs.toSet())
 	requires64Bit.set(true)
-	initialHeapPercent.set(5)
-	maxHeapSize.set(4096)
-	maxHeapPercent.set(70)
-	downloadUrl.set("https://www.oracle.com/java/technologies/downloads/#jdk17-windows")
+	downloadUrl.set("https://www.oracle.com/java/technologies/downloads/#jdk21-windows")
 	bundledJrePath.set(if (project.hasProperty("bundleJRE")) "%EXEDIR%/jre" else "%JAVA_HOME%")
+	classpath.set(tasks.getByName("shadowJar").outputs.files.map { "%EXEDIR%/lib/${it.name}" }.toSortedSet())
 }
 
 runtime {
@@ -136,33 +143,52 @@ runtime {
 	}
 }
 
-val copyDistWinWithJre by tasks.registering(Copy::class) {
-	group = "jadx"
-	dependsOn(tasks.named("runtime"), tasks.named("createExe"))
-	from(runtime.jreDir) {
-		include("**/*")
-		into("jre")
+val copyDistWin by tasks.registering(Copy::class) {
+	description = "Copy files for Windows bundle"
+
+	val libTask = tasks.getByName("shadowJar")
+	dependsOn(libTask)
+	from(libTask.outputs) {
+		include("*.jar")
+		into("lib")
 	}
-	from(tasks.named("createExe").get().outputs) {
+	val exeTask = tasks.getByName("createExe")
+	dependsOn(exeTask)
+	from(exeTask.outputs) {
 		include("*.exe")
 	}
-	into(layout.buildDirectory.dir("jadx-gui-$jadxVersion-with-jre-win"))
+	into(layout.buildDirectory.dir("jadx-gui-win"))
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
-val distWinWithJre by tasks.registering(Zip::class) {
-	group = "jadx"
-	dependsOn(copyDistWinWithJre)
-	archiveFileName.set("jadx-gui-$jadxVersion-with-jre-win.zip")
-	from(copyDistWinWithJre.get().outputs) {
+val copyDistWinWithJre by tasks.registering(Copy::class) {
+	description = "Copy files for Windows with JRE bundle"
+
+	val jreTask = tasks.runtime.get()
+	dependsOn(jreTask)
+	from(jreTask.jreDir) {
 		include("**/*")
+		into("jre")
 	}
-	into(layout.buildDirectory.asFile)
+	val libTask = tasks.getByName("shadowJar")
+	dependsOn(libTask)
+	from(libTask.outputs) {
+		include("*.jar")
+		into("lib")
+	}
+	val exeTask = tasks.getByName("createExe")
+	dependsOn(exeTask)
+	from(exeTask.outputs) {
+		include("*.exe")
+	}
+	into(layout.buildDirectory.dir("jadx-gui-with-jre-win"))
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 val addNewNLSLines by tasks.registering(JavaExec::class) {
-	group = "jadx"
+	group = "jadx-dev"
+	description = "Utility task to add new/missing translation lines"
+
 	classpath = sourceSets.main.get().runtimeClasspath
 	mainClass.set("jadx.gui.utils.tools.NLSAddNewLines")
 }
