@@ -50,8 +50,8 @@ import jadx.core.utils.DecompilerScheduler;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.core.utils.files.FileUtils;
+import jadx.core.utils.files.ZipPatch;
 import jadx.core.utils.tasks.TaskExecutor;
-import jadx.core.xmlgen.BinaryXMLParser;
 import jadx.core.xmlgen.ResourcesSaver;
 
 /**
@@ -85,35 +85,37 @@ public final class JadxDecompiler implements Closeable {
 	private static final Logger LOG = LoggerFactory.getLogger(JadxDecompiler.class);
 
 	private final JadxArgs args;
-	private final JadxPluginManager pluginManager = new JadxPluginManager(this);
+	private final JadxPluginManager pluginManager;
 	private final List<ICodeLoader> loadedInputs = new ArrayList<>();
 
 	private RootNode root;
 	private List<JavaClass> classes;
 	private List<ResourceFile> resources;
 
-	private BinaryXMLParser binaryXmlParser;
-
 	private final IDecompileScheduler decompileScheduler = new DecompilerScheduler();
-	private final JadxEventsImpl events = new JadxEventsImpl();
-	private final ResourcesLoader resourcesLoader = new ResourcesLoader(this);
+	private final ResourcesLoader resourcesLoader;
 
 	private final List<ICodeLoader> customCodeLoaders = new ArrayList<>();
 	private final List<CustomResourcesLoader> customResourcesLoaders = new ArrayList<>();
 	private final Map<JadxPassType, List<JadxPass>> customPasses = new HashMap<>();
+
+	private IJadxEvents events = new JadxEventsImpl();
 
 	public JadxDecompiler() {
 		this(new JadxArgs());
 	}
 
 	public JadxDecompiler(JadxArgs args) {
-		this.args = args;
+		this.args = Objects.requireNonNull(args);
+		this.pluginManager = new JadxPluginManager(this);
+		this.resourcesLoader = new ResourcesLoader(this);
 	}
 
 	public void load() {
 		reset();
 		JadxArgsValidator.validate(this);
 		LOG.info("loading ...");
+		FileUtils.updateTempRootDir(args.getFilesGetter().getTempDir());
 		loadPlugins();
 		loadInputFiles();
 
@@ -143,7 +145,9 @@ public final class JadxDecompiler implements Closeable {
 
 	private void loadInputFiles() {
 		loadedInputs.clear();
-		List<Path> inputPaths = Utils.collectionMap(args.getInputFiles(), File::toPath);
+		List<File> inputs = ZipPatch.patchZipFiles(args.getInputFiles());
+		args.setInputFiles(inputs);
+		List<Path> inputPaths = Utils.collectionMap(inputs, File::toPath);
 		List<Path> inputFiles = FileUtils.expandDirs(inputPaths);
 		long start = System.currentTimeMillis();
 		for (PluginContext plugin : pluginManager.getResolvedPluginContexts()) {
@@ -168,7 +172,6 @@ public final class JadxDecompiler implements Closeable {
 		root = null;
 		classes = null;
 		resources = null;
-		binaryXmlParser = null;
 		events.reset();
 	}
 
@@ -178,6 +181,7 @@ public final class JadxDecompiler implements Closeable {
 		closeInputs();
 		closeLoaders();
 		args.close();
+		FileUtils.clearTempRootDir();
 	}
 
 	private void closeInputs() {
@@ -467,13 +471,6 @@ public final class JadxDecompiler implements Closeable {
 		return root;
 	}
 
-	synchronized BinaryXMLParser getBinaryXmlParser() {
-		if (binaryXmlParser == null) {
-			binaryXmlParser = new BinaryXMLParser(root);
-		}
-		return binaryXmlParser;
-	}
-
 	/**
 	 * Get JavaClass by ClassNode without loading and decompilation
 	 */
@@ -670,6 +667,10 @@ public final class JadxDecompiler implements Closeable {
 
 	public IJadxEvents events() {
 		return events;
+	}
+
+	public void setEventsImpl(IJadxEvents eventsImpl) {
+		this.events = eventsImpl;
 	}
 
 	public void addCustomCodeLoader(ICodeLoader customCodeLoader) {

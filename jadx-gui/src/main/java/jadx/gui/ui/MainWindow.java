@@ -20,6 +20,7 @@ import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.geom.AffineTransform;
+import java.io.File;
 import java.io.InputStream;
 import java.net.URL;
 import java.nio.file.Files;
@@ -77,17 +78,15 @@ import org.slf4j.LoggerFactory;
 import ch.qos.logback.classic.Level;
 
 import jadx.api.JadxArgs;
-import jadx.api.JadxDecompiler;
 import jadx.api.JavaClass;
 import jadx.api.JavaNode;
 import jadx.api.ResourceFile;
-import jadx.api.plugins.events.IJadxEvents;
 import jadx.api.plugins.events.JadxEvents;
 import jadx.api.plugins.events.types.ReloadProject;
+import jadx.api.plugins.events.types.ReloadSettingsWindow;
 import jadx.api.plugins.utils.CommonFileUtils;
 import jadx.core.Jadx;
 import jadx.core.export.TemplateFile;
-import jadx.core.plugins.events.JadxEventsImpl;
 import jadx.core.utils.ListUtils;
 import jadx.core.utils.StringUtils;
 import jadx.core.utils.android.AndroidManifestParser;
@@ -99,6 +98,7 @@ import jadx.gui.JadxWrapper;
 import jadx.gui.cache.manager.CacheManager;
 import jadx.gui.device.debugger.BreakpointManager;
 import jadx.gui.events.services.RenameService;
+import jadx.gui.events.types.JadxGuiEventsImpl;
 import jadx.gui.jobs.BackgroundExecutor;
 import jadx.gui.jobs.DecompileTask;
 import jadx.gui.jobs.ExportTask;
@@ -108,6 +108,7 @@ import jadx.gui.logs.LogOptions;
 import jadx.gui.logs.LogPanel;
 import jadx.gui.plugins.mappings.RenameMappingsGui;
 import jadx.gui.plugins.quark.QuarkDialog;
+import jadx.gui.settings.ExportProjectProperties;
 import jadx.gui.settings.JadxProject;
 import jadx.gui.settings.JadxSettings;
 import jadx.gui.settings.ui.JadxSettingsWindow;
@@ -127,6 +128,8 @@ import jadx.gui.ui.codearea.EditorTheme;
 import jadx.gui.ui.codearea.EditorViewState;
 import jadx.gui.ui.dialog.ADBDialog;
 import jadx.gui.ui.dialog.AboutDialog;
+import jadx.gui.ui.dialog.ExceptionDialog;
+import jadx.gui.ui.dialog.ExportProjectDialog;
 import jadx.gui.ui.dialog.LogViewerDialog;
 import jadx.gui.ui.dialog.SearchDialog;
 import jadx.gui.ui.filedialog.FileDialogWrapper;
@@ -155,14 +158,13 @@ import jadx.gui.utils.LafManager;
 import jadx.gui.utils.Link;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.UiUtils;
+import jadx.gui.utils.dbg.UIWatchDog;
 import jadx.gui.utils.fileswatcher.LiveReloadWorker;
 import jadx.gui.utils.shortcut.ShortcutsController;
 import jadx.gui.utils.ui.ActionHandler;
 import jadx.gui.utils.ui.NodeLabel;
 
-import static io.reactivex.internal.functions.Functions.EMPTY_RUNNABLE;
-
-public class MainWindow extends JFrame {
+public class MainWindow extends JFrame implements ExportProjectDialog.ExportProjectDialogListener {
 	private static final Logger LOG = LoggerFactory.getLogger(MainWindow.class);
 
 	private static final String DEFAULT_TITLE = "jadx-gui";
@@ -196,6 +198,7 @@ public class MainWindow extends JFrame {
 	private final transient CacheObject cacheObject;
 	private final transient CacheManager cacheManager;
 	private final transient BackgroundExecutor backgroundExecutor;
+	private final transient JadxGuiEventsImpl events = new JadxGuiEventsImpl();
 
 	private final TabsController tabsController;
 	private final NavigationController navController;
@@ -251,9 +254,9 @@ public class MainWindow extends JFrame {
 
 	public MainWindow(JadxSettings settings) {
 		this.settings = settings;
-		this.cacheObject = new CacheObject();
 		this.project = new JadxProject(this);
 		this.wrapper = new JadxWrapper(this);
+		this.cacheObject = new CacheObject(wrapper);
 		this.liveReloadWorker = new LiveReloadWorker(this);
 		this.renameMappings = new RenameMappingsGui(this);
 		this.cacheManager = new CacheManager(settings);
@@ -272,6 +275,7 @@ public class MainWindow extends JFrame {
 		UiUtils.setWindowIcons(this);
 		this.shortcutsController.registerMouseEventListener(this);
 		loadSettings();
+		initEvents();
 
 		update();
 		checkForUpdate();
@@ -322,7 +326,7 @@ public class MainWindow extends JFrame {
 		if (!settings.isCheckForUpdates()) {
 			return;
 		}
-		JadxUpdate.check(settings.getJadxUpdateChannel(), release -> SwingUtilities.invokeLater(() -> {
+		new JadxUpdate().check(settings.getJadxUpdateChannel(), release -> SwingUtilities.invokeLater(() -> {
 			switch (settings.getJadxUpdateChannel()) {
 				case STABLE:
 					updateLink.setUrl(JadxUpdate.JADX_RELEASES_URL);
@@ -441,25 +445,58 @@ public class MainWindow extends JFrame {
 		}
 		List<Path> inputs = project.getFilePaths();
 		inputs.add(scriptFile);
-		project.setFilePaths(inputs);
-		project.save();
-		reopen();
+		refreshTree(inputs);
 	}
 
 	public void removeInput(Path file) {
+		int dialogResult = JOptionPane.showConfirmDialog(
+				this,
+				NLS.str("message.confirm_remove_script"),
+				NLS.str("msg.warning_title"),
+				JOptionPane.YES_NO_OPTION);
+		if (dialogResult == JOptionPane.NO_OPTION) {
+			return;
+		}
+
 		List<Path> inputs = project.getFilePaths();
 		inputs.remove(file);
+		refreshTree(inputs);
+	}
+
+	public void renameInput(Path file) {
+		String newName = JOptionPane.showInputDialog(this, NLS.str("message.enter_new_name"), file.getFileName().toString());
+		if (newName == null || newName.trim().isEmpty()) {
+			return;
+		}
+		Path targetPath = file.resolveSibling(newName);
+
+		boolean success = FileUtils.renameFile(file, targetPath);
+		if (success) {
+			List<Path> inputs = project.getFilePaths();
+			inputs.remove(file);
+			inputs.add(targetPath);
+
+			refreshTree(inputs);
+		} else {
+			JOptionPane.showMessageDialog(this,
+					NLS.str("message.could_not_rename"),
+					NLS.str("message.errorTitle"),
+					JOptionPane.ERROR_MESSAGE);
+		}
+	}
+
+	private void refreshTree(List<Path> inputs) {
 		project.setFilePaths(inputs);
 		project.save();
 		reopen();
 	}
 
 	public void open(Path path) {
-		open(Collections.singletonList(path), EMPTY_RUNNABLE);
+		open(Collections.singletonList(path), UiUtils.EMPTY_RUNNABLE);
 	}
 
 	public void open(List<Path> paths) {
-		open(paths, EMPTY_RUNNABLE);
+		open(paths, UiUtils.EMPTY_RUNNABLE);
 	}
 
 	private void open(List<Path> paths, Runnable onFinish) {
@@ -501,9 +538,10 @@ public class MainWindow extends JFrame {
 		synchronized (ReloadProject.EVENT) {
 			saveAll();
 			closeAll();
-			loadFiles(EMPTY_RUNNABLE);
-
-			menuBar.reloadShortcuts();
+			loadFiles(() -> {
+				menuBar.reloadShortcuts();
+				events().send(ReloadSettingsWindow.INSTANCE);
+			});
 		}
 	}
 
@@ -526,6 +564,7 @@ public class MainWindow extends JFrame {
 	private void loadFiles(Runnable onFinish) {
 		if (project.getFilePaths().isEmpty()) {
 			tabsController.selectTab(new StartPageNode());
+			onFinish.run();
 			return;
 		}
 		AtomicReference<Exception> wrapperException = new AtomicReference<>();
@@ -577,6 +616,7 @@ public class MainWindow extends JFrame {
 		LogCollector.getInstance().reset();
 		wrapper.close();
 		tabsController.forceCloseAllTabs();
+		shortcutsController.reset();
 		UiUtils.resetClipboardOwner();
 		System.gc();
 		update();
@@ -605,7 +645,6 @@ public class MainWindow extends JFrame {
 		initTree();
 		updateLiveReload(project.isEnableLiveReload());
 		BreakpointManager.init(project.getFilePaths().get(0).toAbsolutePath().getParent());
-		initEvents();
 
 		List<EditorViewState> openTabs = project.getOpenTabs(this);
 		backgroundExecutor.execute(NLS.str("progress.load"),
@@ -619,13 +658,12 @@ public class MainWindow extends JFrame {
 	}
 
 	public void passesReloaded() {
-		initEvents(); // TODO: events reset on reload passes on script run
 		tabbedPane.reloadInactiveTabs();
 		reloadTree();
 	}
 
 	private void initEvents() {
-		events().addListener(JadxEvents.RELOAD_PROJECT, ev -> UiUtils.uiRun(this::reopen));
+		events().global().addListener(JadxEvents.RELOAD_PROJECT, ev -> UiUtils.uiRun(this::reopen));
 		RenameService.init(this);
 	}
 
@@ -764,23 +802,23 @@ public class MainWindow extends JFrame {
 		backgroundExecutor.cancelAll();
 	}
 
-	private void saveAll(boolean export) {
-		FileDialogWrapper fileDialog = new FileDialogWrapper(this, FileOpenMode.EXPORT);
-		List<Path> saveDirs = fileDialog.show();
-		if (saveDirs.isEmpty()) {
-			return;
-		}
+	private void exportProject() {
+		ExportProjectDialog dialog = new ExportProjectDialog(this, this);
+		dialog.setVisible(true);
+	}
+
+	private void saveAll(ExportProjectProperties exportProjectProperties) {
 		JadxArgs decompilerArgs = wrapper.getArgs();
-		decompilerArgs.setExportAsGradleProject(export);
-		if (export) {
+		decompilerArgs.setExportAsGradleProject(exportProjectProperties.isAsGradleMode());
+		if (exportProjectProperties.isAsGradleMode()) {
 			decompilerArgs.setSkipSources(false);
 			decompilerArgs.setSkipResources(false);
 		} else {
-			decompilerArgs.setSkipSources(settings.isSkipSources());
-			decompilerArgs.setSkipResources(settings.isSkipResources());
+			decompilerArgs.setSkipSources(exportProjectProperties.isSkipSources());
+			decompilerArgs.setSkipResources(exportProjectProperties.isSkipResources());
 		}
-		settings.setLastSaveFilePath(fileDialog.getCurrentDir());
-		backgroundExecutor.execute(new ExportTask(this, wrapper, saveDirs.get(0).toFile()));
+
+		backgroundExecutor.execute(new ExportTask(this, wrapper, new File(exportProjectProperties.getExportPath())));
 	}
 
 	public void initTree() {
@@ -877,12 +915,7 @@ public class MainWindow extends JFrame {
 					return true;
 				}
 			} else if (obj instanceof JNode) {
-				JNode node = (JNode) obj;
-				if (node.getRootClass() != null) {
-					tabsController.codeJump(node);
-					return true;
-				}
-				tabsController.selectTab(node);
+				tabsController.codeJump((JNode) obj);
 				return true;
 			}
 		} catch (Exception e) {
@@ -952,7 +985,8 @@ public class MainWindow extends JFrame {
 	public void goToMainActivity() {
 		AndroidManifestParser parser = new AndroidManifestParser(
 				AndroidManifestParser.getAndroidManifest(getWrapper().getResources()),
-				EnumSet.of(AppAttribute.MAIN_ACTIVITY));
+				EnumSet.of(AppAttribute.MAIN_ACTIVITY),
+				getWrapper().getArgs().getSecurity());
 		if (!parser.isManifestFound()) {
 			JOptionPane.showMessageDialog(MainWindow.this,
 					NLS.str("error_dialog.not_found", "AndroidManifest.xml"),
@@ -982,7 +1016,8 @@ public class MainWindow extends JFrame {
 	public void goToApplication() {
 		AndroidManifestParser parser = new AndroidManifestParser(
 				AndroidManifestParser.getAndroidManifest(getWrapper().getResources()),
-				EnumSet.of(AppAttribute.APPLICATION));
+				EnumSet.of(AppAttribute.APPLICATION),
+				getWrapper().getArgs().getSecurity());
 		if (!parser.isManifestFound()) {
 			JOptionPane.showMessageDialog(MainWindow.this,
 					NLS.str("error_dialog.not_found", "AndroidManifest.xml"),
@@ -1009,6 +1044,20 @@ public class MainWindow extends JFrame {
 		}
 	}
 
+	public void goToAndroidManifest() {
+		ResourceFile androidManifest = AndroidManifestParser.getAndroidManifest(getWrapper().getResources());
+		if (androidManifest == null) {
+			JOptionPane.showMessageDialog(MainWindow.this,
+					NLS.str("error_dialog.not_found", "AndroidManifest.xml"),
+					NLS.str("error_dialog.title"),
+					JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+
+		JResource res = new JResource(androidManifest, androidManifest.getDeobfName(), JResource.JResType.FILE);
+		tabsController.codeJump(res);
+	}
+
 	private void initMenuAndToolbar() {
 		JadxGuiAction openAction = new JadxGuiAction(ActionModel.OPEN, this::openFileDialog);
 		JadxGuiAction openProject = new JadxGuiAction(ActionModel.OPEN_PROJECT, this::openProjectDialog);
@@ -1024,8 +1073,7 @@ public class MainWindow extends JFrame {
 		liveReloadMenuItem = new JCheckBoxMenuItem(liveReloadAction);
 		liveReloadMenuItem.setState(project.isEnableLiveReload());
 
-		JadxGuiAction saveAllAction = new JadxGuiAction(ActionModel.SAVE_ALL, () -> saveAll(false));
-		JadxGuiAction exportAction = new JadxGuiAction(ActionModel.EXPORT, () -> saveAll(true));
+		JadxGuiAction exportAction = new JadxGuiAction(ActionModel.EXPORT, this::exportProject);
 
 		JMenu recentProjects = new JadxMenu(NLS.str("menu.recent_projects"), shortcutsController);
 		recentProjects.addMenuListener(new RecentProjectsMenuListener(this, recentProjects));
@@ -1078,6 +1126,7 @@ public class MainWindow extends JFrame {
 				this::goToMainActivity);
 		JadxGuiAction goToApplicationAction = new JadxGuiAction(ActionModel.GO_TO_APPLICATION,
 				this::goToApplication);
+		JadxGuiAction goToAndroidManifestAction = new JadxGuiAction(ActionModel.GO_TO_ANDROID_MANIFEST, this::goToAndroidManifest);
 		JadxGuiAction decompileAllAction = new JadxGuiAction(ActionModel.DECOMPILE_ALL, this::requestFullDecompilation);
 		JadxGuiAction resetCacheAction = new JadxGuiAction(ActionModel.RESET_CACHE, this::resetCodeCache);
 		JadxGuiAction deobfAction = new JadxGuiAction(ActionModel.DEOBF, this::toggleDeobfuscation);
@@ -1115,7 +1164,6 @@ public class MainWindow extends JFrame {
 		file.add(liveReloadMenuItem);
 		renameMappings.addMenuActions(file);
 		file.addSeparator();
-		file.add(saveAllAction);
 		file.add(exportAction);
 		file.addSeparator();
 		file.add(recentProjects);
@@ -1140,6 +1188,7 @@ public class MainWindow extends JFrame {
 		nav.add(commentSearchAction);
 		nav.add(goToMainActivityAction);
 		nav.add(goToApplicationAction);
+		nav.add(goToAndroidManifestAction);
 		nav.addSeparator();
 		nav.add(backAction);
 		nav.add(forwardAction);
@@ -1166,6 +1215,9 @@ public class MainWindow extends JFrame {
 					ExceptionDialog.throwTestException();
 				}
 			});
+			JCheckBoxMenuItem uiWatchDog = new JCheckBoxMenuItem(new ActionHandler("UI WatchDog", UIWatchDog::toggle));
+			uiWatchDog.setState(UIWatchDog.onStart());
+			help.add(uiWatchDog);
 		}
 		help.add(aboutAction);
 
@@ -1195,7 +1247,6 @@ public class MainWindow extends JFrame {
 		toolbar.addSeparator();
 		toolbar.add(reloadAction);
 		toolbar.addSeparator();
-		toolbar.add(saveAllAction);
 		toolbar.add(exportAction);
 		toolbar.addSeparator();
 		toolbar.add(syncAction);
@@ -1206,6 +1257,7 @@ public class MainWindow extends JFrame {
 		toolbar.add(commentSearchAction);
 		toolbar.add(goToMainActivityAction);
 		toolbar.add(goToApplicationAction);
+		toolbar.add(goToAndroidManifestAction);
 		toolbar.addSeparator();
 		toolbar.add(backAction);
 		toolbar.add(forwardAction);
@@ -1235,12 +1287,12 @@ public class MainWindow extends JFrame {
 			commentSearchAction.setEnabled(loaded);
 			goToMainActivityAction.setEnabled(loaded);
 			goToApplicationAction.setEnabled(loaded);
+			goToAndroidManifestAction.setEnabled(loaded);
 			backAction.setEnabled(loaded);
 			backVariantAction.setEnabled(loaded);
 			forwardAction.setEnabled(loaded);
 			forwardVariantAction.setEnabled(loaded);
 			syncAction.setEnabled(loaded);
-			saveAllAction.setEnabled(loaded);
 			exportAction.setEnabled(loaded);
 			saveProjectAsAction.setEnabled(loaded);
 			reloadAction.setEnabled(loaded);
@@ -1320,11 +1372,21 @@ public class MainWindow extends JFrame {
 				TreePath path = event.getPath();
 				Object node = path.getLastPathComponent();
 				if (node instanceof JLoadableNode) {
-					((JLoadableNode) node).loadNode();
-				}
-				if (!treeReloading) {
-					project.addTreeExpansion(getPathExpansion(event.getPath()));
-					update();
+					JLoadableNode treeNode = (JLoadableNode) node;
+					backgroundExecutor.execute(treeNode.getLoadTask());
+					// schedule update for expanded nodes in a tree
+					backgroundExecutor.execute(NLS.str("progress.load"),
+							UiUtils.EMPTY_RUNNABLE,
+							status -> {
+								if (!treeReloading) {
+									treeModel.nodeStructureChanged(treeNode);
+									project.addTreeExpansion(getPathExpansion(event.getPath()));
+								}
+							});
+				} else {
+					if (!treeReloading) {
+						project.addTreeExpansion(getPathExpansion(event.getPath()));
+					}
 				}
 			}
 
@@ -1516,7 +1578,6 @@ public class MainWindow extends JFrame {
 		heapUsageBar.reset();
 		closeAll();
 
-		FileUtils.deleteTempRootDir();
 		dispose();
 		System.exit(0);
 	}
@@ -1539,6 +1600,9 @@ public class MainWindow extends JFrame {
 	private void preLoadOpenTabs(List<EditorViewState> openTabs) {
 		UiUtils.notUiThreadGuard();
 		for (EditorViewState tabState : openTabs) {
+			if (tabState.isHidden()) {
+				continue;
+			}
 			JNode node = tabState.getNode();
 			try {
 				node.getCodeInfo();
@@ -1723,14 +1787,12 @@ public class MainWindow extends JFrame {
 		return cacheManager;
 	}
 
-	/**
-	 * Events instance if decompiler not yet available
-	 */
-	private final IJadxEvents fallbackEvents = new JadxEventsImpl();
+	public JadxGuiEventsImpl events() {
+		return events;
+	}
 
-	public IJadxEvents events() {
-		return wrapper.getCurrentDecompiler()
-				.map(JadxDecompiler::events)
-				.orElse(fallbackEvents);
+	@Override
+	public void onProjectExportCalled(ExportProjectProperties exportProjectProperties) {
+		saveAll(exportProjectProperties);
 	}
 }

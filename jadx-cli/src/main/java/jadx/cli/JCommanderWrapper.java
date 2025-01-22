@@ -4,7 +4,7 @@ import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -13,6 +13,7 @@ import java.util.function.Supplier;
 import org.jetbrains.annotations.Nullable;
 
 import com.beust.jcommander.JCommander;
+import com.beust.jcommander.Parameter;
 import com.beust.jcommander.ParameterDescription;
 import com.beust.jcommander.ParameterException;
 import com.beust.jcommander.Parameterized;
@@ -133,14 +134,16 @@ public class JCommanderWrapper<T> {
 		out.println("options:");
 
 		List<ParameterDescription> params = jc.getParameters();
-		Map<String, ParameterDescription> paramsMap = new LinkedHashMap<>(params.size());
+		Map<String, ParameterDescription> paramsMap = new HashMap<>(params.size());
 		int maxNamesLen = 0;
 		for (ParameterDescription p : params) {
 			paramsMap.put(p.getParameterized().getName(), p);
 			int len = p.getNames().length();
-			if (len > maxNamesLen) {
-				maxNamesLen = len;
+			String valueDesc = getValueDesc(p);
+			if (valueDesc != null) {
+				len += 1 + valueDesc.length();
 			}
+			maxNamesLen = Math.max(maxNamesLen, len);
 		}
 		maxNamesLen += 3;
 
@@ -153,8 +156,12 @@ public class JCommanderWrapper<T> {
 			}
 			StringBuilder opt = new StringBuilder();
 			opt.append("  ").append(p.getNames());
-			String description = p.getDescription();
+			String valueDesc = getValueDesc(p);
+			if (valueDesc != null) {
+				opt.append(' ').append(valueDesc);
+			}
 			addSpaces(opt, maxNamesLen - opt.length());
+			String description = p.getDescription();
 			if (description.contains("\n")) {
 				String[] lines = description.split("\n");
 				opt.append("- ").append(lines[0]);
@@ -175,6 +182,11 @@ public class JCommanderWrapper<T> {
 			out.println(opt);
 		}
 		return maxNamesLen;
+	}
+
+	private static @Nullable String getValueDesc(ParameterDescription p) {
+		Parameter parameterAnnotation = p.getParameterAnnotation();
+		return parameterAnnotation == null ? null : parameterAnnotation.defaultValueDescription();
 	}
 
 	/**
@@ -228,7 +240,7 @@ public class JCommanderWrapper<T> {
 			for (PluginContext context : pluginManager.getAllPluginContexts()) {
 				JadxPluginOptions options = context.getOptions();
 				if (options != null) {
-					if (appendPlugin(context.getPluginInfo(), context.getOptions(), sb, maxNamesLen, k)) {
+					if (appendPlugin(context.getPluginInfo(), context.getOptions(), sb, maxNamesLen)) {
 						k++;
 					}
 				}
@@ -240,12 +252,12 @@ public class JCommanderWrapper<T> {
 		return "\nPlugin options (-P<name>=<value>):" + sb;
 	}
 
-	private boolean appendPlugin(JadxPluginInfo pluginInfo, JadxPluginOptions options, StringBuilder out, int maxNamesLen, int k) {
+	private boolean appendPlugin(JadxPluginInfo pluginInfo, JadxPluginOptions options, StringBuilder out, int maxNamesLen) {
 		List<OptionDescription> descs = options.getOptionsDescriptions();
 		if (descs.isEmpty()) {
 			return false;
 		}
-		out.append("\n ").append(k).append(") ");
+		out.append("\n  ");
 		out.append(pluginInfo.getPluginId()).append(": ").append(pluginInfo.getDescription());
 		for (OptionDescription desc : descs) {
 			StringBuilder opt = new StringBuilder();

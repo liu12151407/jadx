@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -407,6 +408,10 @@ public class MethodNode extends NotificationAttrNode implements IMethodDetails, 
 		return exitBlock.getPredecessors().contains(block);
 	}
 
+	public void resetLoops() {
+		this.loops = new ArrayList<>();
+	}
+
 	public void registerLoop(LoopInfo loop) {
 		if (loops.isEmpty()) {
 			loops = new ArrayList<>(5);
@@ -668,6 +673,13 @@ public class MethodNode extends NotificationAttrNode implements IMethodDetails, 
 		return insnsCount;
 	}
 
+	/**
+	 * Returns method code with comments and annotations
+	 */
+	public String getCodeStr() {
+		return CodeUtils.extractMethodCode(this, getTopParentClass().getCode());
+	}
+
 	@Override
 	public boolean isVarArg() {
 		return accFlags.isVarArgs();
@@ -693,6 +705,7 @@ public class MethodNode extends NotificationAttrNode implements IMethodDetails, 
 		return javaNode;
 	}
 
+	@ApiStatus.Internal
 	public void setJavaNode(JavaMethod javaNode) {
 		this.javaNode = javaNode;
 	}

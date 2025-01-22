@@ -30,6 +30,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,6 +41,8 @@ import jadx.api.JadxArgs;
 import jadx.api.JadxDecompiler;
 import jadx.api.JadxInternalAccess;
 import jadx.api.JavaClass;
+import jadx.api.JavaMethod;
+import jadx.api.JavaVariable;
 import jadx.api.args.GeneratedRenamesMappingFileMode;
 import jadx.api.data.IJavaNodeRef;
 import jadx.api.data.impl.JadxCodeData;
@@ -47,18 +50,19 @@ import jadx.api.data.impl.JadxCodeRename;
 import jadx.api.data.impl.JadxNodeRef;
 import jadx.api.metadata.ICodeMetadata;
 import jadx.api.metadata.annotations.InsnCodeOffset;
+import jadx.api.metadata.annotations.VarNode;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.nodes.RootNode;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
-import jadx.core.utils.files.FileUtils;
 import jadx.core.xmlgen.ResourceStorage;
 import jadx.core.xmlgen.entry.ResourceEntry;
 import jadx.tests.api.compiler.CompilerOptions;
 import jadx.tests.api.compiler.JavaUtils;
 import jadx.tests.api.compiler.TestCompiler;
+import jadx.tests.api.utils.TestFilesGetter;
 import jadx.tests.api.utils.TestUtils;
 
 import static org.apache.commons.lang3.StringUtils.leftPad;
@@ -115,6 +119,9 @@ public abstract class IntegrationTest extends TestUtils {
 
 	protected JadxDecompiler jadxDecompiler;
 
+	@TempDir
+	Path testDir;
+
 	@BeforeEach
 	public void init() {
 		this.compile = true;
@@ -124,7 +131,7 @@ public abstract class IntegrationTest extends TestUtils {
 		this.useJavaInput = null;
 
 		args = new JadxArgs();
-		args.setOutDir(new File("test-out-tmp"));
+		args.setOutDir(testDir.toFile());
 		args.setShowInconsistentCode(true);
 		args.setThreadsCount(1);
 		args.setSkipResources(true);
@@ -132,6 +139,7 @@ public abstract class IntegrationTest extends TestUtils {
 		args.setDeobfuscationOn(false);
 		args.setGeneratedRenamesMappingFileMode(GeneratedRenamesMappingFileMode.IGNORE);
 		args.setRunDebugChecks(true);
+		args.setFilesGetter(new TestFilesGetter(testDir));
 
 		// use the same values on all systems
 		args.setFsCaseSensitive(false);
@@ -144,7 +152,6 @@ public abstract class IntegrationTest extends TestUtils {
 		close(jadxDecompiler);
 		close(sourceCompiler);
 		close(decompiledCompiler);
-		FileUtils.clearTempRootDir();
 	}
 
 	private void close(Closeable closeable) throws IOException {
@@ -154,7 +161,7 @@ public abstract class IntegrationTest extends TestUtils {
 	}
 
 	public void setOutDirSuffix(String suffix) {
-		args.setOutDir(new File("test-out-" + suffix + "-tmp"));
+		args.setOutDir(new File(testDir.toFile(), suffix));
 	}
 
 	public String getTestName() {
@@ -342,7 +349,7 @@ public abstract class IntegrationTest extends TestUtils {
 		if (resMap.isEmpty()) {
 			return;
 		}
-		ResourceStorage resStorage = new ResourceStorage();
+		ResourceStorage resStorage = new ResourceStorage(root.getArgs().getSecurity());
 		for (Map.Entry<Integer, String> entry : resMap.entrySet()) {
 			Integer id = entry.getKey();
 			String name = entry.getValue();
@@ -499,7 +506,7 @@ public abstract class IntegrationTest extends TestUtils {
 	}
 
 	private List<File> compileSourceFiles(List<File> compileFileList) throws IOException {
-		Path outTmp = FileUtils.createTempDir("jadx-tmp-classes");
+		Path outTmp = Files.createTempDirectory(testDir, "jadx-tmp-classes");
 		sourceCompiler = new TestCompiler(compilerOptions);
 		List<File> files = sourceCompiler.compileFiles(compileFileList, outTmp);
 		if (saveTestJar) {
@@ -641,5 +648,23 @@ public abstract class IntegrationTest extends TestUtils {
 			getArgs().setCodeData(codeData);
 		}
 		return codeData;
+	}
+
+	protected JavaClass toJavaClass(ClassNode cls) {
+		JavaClass javaClass = JadxInternalAccess.convertClassNode(jadxDecompiler, cls);
+		assertThat(javaClass).isNotNull();
+		return javaClass;
+	}
+
+	protected JavaMethod toJavaMethod(MethodNode mth) {
+		JavaMethod javaMethod = JadxInternalAccess.convertMethodNode(jadxDecompiler, mth);
+		assertThat(javaMethod).isNotNull();
+		return javaMethod;
+	}
+
+	protected JavaVariable toJavaVariable(VarNode varNode) {
+		JavaVariable javaVariable = (JavaVariable) jadxDecompiler.getJavaNodeByCodeAnnotation(null, varNode);
+		assertThat(javaVariable).isNotNull();
+		return javaVariable;
 	}
 }

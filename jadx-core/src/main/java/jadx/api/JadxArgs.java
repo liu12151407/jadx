@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -21,6 +22,7 @@ import org.slf4j.LoggerFactory;
 import jadx.api.args.GeneratedRenamesMappingFileMode;
 import jadx.api.args.IntegerFormat;
 import jadx.api.args.ResourceNameSource;
+import jadx.api.args.UseSourceNameAsClassNameAlias;
 import jadx.api.args.UserRenamesMappingsMode;
 import jadx.api.data.ICodeData;
 import jadx.api.deobf.IAliasProvider;
@@ -29,12 +31,17 @@ import jadx.api.impl.AnnotatedCodeWriter;
 import jadx.api.impl.InMemoryCodeCache;
 import jadx.api.plugins.loader.JadxBasePluginLoader;
 import jadx.api.plugins.loader.JadxPluginLoader;
+import jadx.api.security.IJadxSecurity;
+import jadx.api.security.JadxSecurityFlag;
+import jadx.api.security.impl.JadxSecurity;
 import jadx.api.usage.IUsageInfoCache;
 import jadx.api.usage.impl.InMemoryUsageInfoCache;
 import jadx.core.deobf.DeobfAliasProvider;
 import jadx.core.deobf.conditions.DeobfWhitelist;
 import jadx.core.deobf.conditions.JadxRenameConditions;
 import jadx.core.plugins.PluginContext;
+import jadx.core.plugins.files.IJadxFilesGetter;
+import jadx.core.plugins.files.TempFilesGetter;
 import jadx.core.utils.files.FileUtils;
 
 public class JadxArgs implements Closeable {
@@ -98,7 +105,8 @@ public class JadxArgs implements Closeable {
 	private UserRenamesMappingsMode userRenamesMappingsMode = UserRenamesMappingsMode.getDefault();
 
 	private boolean deobfuscationOn = false;
-	private boolean useSourceNameAsClassAlias = false;
+	private UseSourceNameAsClassNameAlias useSourceNameAsClassNameAlias = UseSourceNameAsClassNameAlias.getDefault();
+	private int sourceNameRepeatLimit = 10;
 
 	private File generatedRenamesMappingFile = null;
 	private GeneratedRenamesMappingFileMode generatedRenamesMappingFileMode = GeneratedRenamesMappingFileMode.getDefault();
@@ -126,6 +134,8 @@ public class JadxArgs implements Closeable {
 	private boolean replaceConsts = true;
 	private boolean respectBytecodeAccModifiers = false;
 	private boolean exportAsGradleProject = false;
+
+	private boolean restoreSwitchOverString = true;
 
 	private boolean skipXmlPrettyPrint = false;
 
@@ -164,6 +174,17 @@ public class JadxArgs implements Closeable {
 	private UseKotlinMethodsForVarNames useKotlinMethodsForVarNames = UseKotlinMethodsForVarNames.APPLY;
 
 	/**
+	 * Additional files structure info.
+	 * Defaults to tmp dirs.
+	 */
+	private IJadxFilesGetter filesGetter = TempFilesGetter.INSTANCE;
+
+	/**
+	 * Additional data validation and security checks
+	 */
+	private IJadxSecurity security = new JadxSecurity(JadxSecurityFlag.all());
+
+	/**
 	 * Don't save files (can be using for performance testing)
 	 */
 	private boolean skipFilesSave = false;
@@ -174,6 +195,8 @@ public class JadxArgs implements Closeable {
 	private boolean runDebugChecks = false;
 
 	private Map<String, String> pluginOptions = new HashMap<>();
+
+	private Set<String> disabledPlugins = new HashSet<>();
 
 	private JadxPluginLoader pluginLoader = new JadxBasePluginLoader();
 
@@ -430,12 +453,37 @@ public class JadxArgs implements Closeable {
 		this.generatedRenamesMappingFileMode = mode;
 	}
 
-	public boolean isUseSourceNameAsClassAlias() {
-		return useSourceNameAsClassAlias;
+	public UseSourceNameAsClassNameAlias getUseSourceNameAsClassNameAlias() {
+		return useSourceNameAsClassNameAlias;
 	}
 
+	public void setUseSourceNameAsClassNameAlias(UseSourceNameAsClassNameAlias useSourceNameAsClassNameAlias) {
+		this.useSourceNameAsClassNameAlias = useSourceNameAsClassNameAlias;
+	}
+
+	public int getSourceNameRepeatLimit() {
+		return sourceNameRepeatLimit;
+	}
+
+	public void setSourceNameRepeatLimit(int sourceNameRepeatLimit) {
+		this.sourceNameRepeatLimit = sourceNameRepeatLimit;
+	}
+
+	/**
+	 * @deprecated Use {@link #getUseSourceNameAsClassNameAlias()} instead.
+	 */
+	@Deprecated
+	public boolean isUseSourceNameAsClassAlias() {
+		return getUseSourceNameAsClassNameAlias().toBoolean();
+	}
+
+	/**
+	 * @deprecated Use {@link #setUseSourceNameAsClassNameAlias(UseSourceNameAsClassNameAlias)} instead.
+	 */
+	@Deprecated
 	public void setUseSourceNameAsClassAlias(boolean useSourceNameAsClassAlias) {
-		this.useSourceNameAsClassAlias = useSourceNameAsClassAlias;
+		final var useSourceNameAsClassNameAlias = UseSourceNameAsClassNameAlias.create(useSourceNameAsClassAlias);
+		setUseSourceNameAsClassNameAlias(useSourceNameAsClassNameAlias);
 	}
 
 	public int getDeobfuscationMinLength() {
@@ -524,6 +572,14 @@ public class JadxArgs implements Closeable {
 
 	public void setExportAsGradleProject(boolean exportAsGradleProject) {
 		this.exportAsGradleProject = exportAsGradleProject;
+	}
+
+	public boolean isRestoreSwitchOverString() {
+		return restoreSwitchOverString;
+	}
+
+	public void setRestoreSwitchOverString(boolean restoreSwitchOverString) {
+		this.restoreSwitchOverString = restoreSwitchOverString;
 	}
 
 	public boolean isSkipXmlPrettyPrint() {
@@ -682,6 +738,22 @@ public class JadxArgs implements Closeable {
 		this.useKotlinMethodsForVarNames = useKotlinMethodsForVarNames;
 	}
 
+	public IJadxFilesGetter getFilesGetter() {
+		return filesGetter;
+	}
+
+	public void setFilesGetter(IJadxFilesGetter filesGetter) {
+		this.filesGetter = filesGetter;
+	}
+
+	public IJadxSecurity getSecurity() {
+		return security;
+	}
+
+	public void setSecurity(IJadxSecurity security) {
+		this.security = security;
+	}
+
 	public boolean isSkipFilesSave() {
 		return skipFilesSave;
 	}
@@ -704,6 +776,14 @@ public class JadxArgs implements Closeable {
 
 	public void setPluginOptions(Map<String, String> pluginOptions) {
 		this.pluginOptions = pluginOptions;
+	}
+
+	public Set<String> getDisabledPlugins() {
+		return disabledPlugins;
+	}
+
+	public void setDisabledPlugins(Set<String> disabledPlugins) {
+		this.disabledPlugins = disabledPlugins;
 	}
 
 	public JadxPluginLoader getPluginLoader() {
@@ -729,10 +809,11 @@ public class JadxArgs implements Closeable {
 		String argStr = "args:" + decompilationMode + useImports + showInconsistentCode
 				+ inlineAnonymousClasses + inlineMethods + moveInnerClasses + allowInlineKotlinLambda
 				+ deobfuscationOn + deobfuscationMinLength + deobfuscationMaxLength + deobfuscationWhitelist
+				+ useSourceNameAsClassNameAlias + sourceNameRepeatLimit
 				+ resourceNameSource
 				+ useKotlinMethodsForVarNames
 				+ insertDebugLines + extractFinally
-				+ debugInfo + useSourceNameAsClassAlias + escapeUnicode + replaceConsts
+				+ debugInfo + escapeUnicode + replaceConsts + restoreSwitchOverString
 				+ respectBytecodeAccModifiers + fsCaseSensitive + renameFlags
 				+ commentsLevel + useDxInput + integerFormat
 				+ "|" + buildPluginsHash(decompiler);
@@ -768,7 +849,8 @@ public class JadxArgs implements Closeable {
 				+ ", generatedRenamesMappingFile=" + generatedRenamesMappingFile
 				+ ", generatedRenamesMappingFileMode=" + generatedRenamesMappingFileMode
 				+ ", resourceNameSource=" + resourceNameSource
-				+ ", useSourceNameAsClassAlias=" + useSourceNameAsClassAlias
+				+ ", useSourceNameAsClassNameAlias=" + useSourceNameAsClassNameAlias
+				+ ", sourceNameRepeatLimit=" + sourceNameRepeatLimit
 				+ ", useKotlinMethodsForVarNames=" + useKotlinMethodsForVarNames
 				+ ", insertDebugLines=" + insertDebugLines
 				+ ", extractFinally=" + extractFinally
@@ -777,6 +859,7 @@ public class JadxArgs implements Closeable {
 				+ ", deobfuscationWhitelist=" + deobfuscationWhitelist
 				+ ", escapeUnicode=" + escapeUnicode
 				+ ", replaceConsts=" + replaceConsts
+				+ ", restoreSwitchOverString=" + restoreSwitchOverString
 				+ ", respectBytecodeAccModifiers=" + respectBytecodeAccModifiers
 				+ ", exportAsGradleProject=" + exportAsGradleProject
 				+ ", skipXmlPrettyPrint=" + skipXmlPrettyPrint

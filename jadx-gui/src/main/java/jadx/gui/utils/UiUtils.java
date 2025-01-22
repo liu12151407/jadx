@@ -63,6 +63,17 @@ public class UiUtils {
 	 */
 	public static final long MIN_FREE_MEMORY = calculateMinFreeMemory();
 
+	public static final Runnable EMPTY_RUNNABLE = new Runnable() {
+		@Override
+		public void run() {
+		}
+
+		@Override
+		public String toString() {
+			return "EMPTY_RUNNABLE";
+		}
+	};
+
 	private UiUtils() {
 	}
 
@@ -324,14 +335,6 @@ public class UiUtils {
 			return (TreeNode) obj;
 		}
 		return null;
-	}
-
-	public static String getEnvVar(String varName, String defValue) {
-		String envVal = System.getenv(varName);
-		if (envVal == null) {
-			return defValue;
-		}
-		return envVal;
 	}
 
 	public static void showMessageBox(Component parent, String msg) {

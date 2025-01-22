@@ -32,6 +32,7 @@ import jadx.api.JadxArgs;
 import jadx.api.args.GeneratedRenamesMappingFileMode;
 import jadx.api.args.IntegerFormat;
 import jadx.api.args.ResourceNameSource;
+import jadx.api.args.UseSourceNameAsClassNameAlias;
 import jadx.api.args.UserRenamesMappingsMode;
 import jadx.cli.JadxCLIArgs;
 import jadx.cli.LogHelper;
@@ -53,13 +54,14 @@ public class JadxSettings extends JadxCLIArgs {
 
 	private static final Path USER_HOME = Paths.get(System.getProperty("user.home"));
 	private static final int RECENT_PROJECTS_COUNT = 30;
-	private static final int CURRENT_SETTINGS_VERSION = 21;
+	private static final int CURRENT_SETTINGS_VERSION = 22;
 
 	private static final Font DEFAULT_FONT = new RSyntaxTextArea().getFont();
 
 	static final Set<String> SKIP_FIELDS = new HashSet<>(Arrays.asList(
 			"files", "input", "outDir", "outDirSrc", "outDirRes", "outputFormat",
 			"deobfuscationMapFile",
+			"disablePlugins",
 			"verbose", "quiet", "logLevel",
 			"printVersion", "printHelp"));
 
@@ -400,8 +402,21 @@ public class JadxSettings extends JadxCLIArgs {
 		this.generatedRenamesMappingFileMode = mode;
 	}
 
+	public void setUseSourceNameAsClassNameAlias(UseSourceNameAsClassNameAlias useSourceNameAsClassNameAlias) {
+		this.useSourceNameAsClassNameAlias = useSourceNameAsClassNameAlias;
+	}
+
+	public void setSourceNameRepeatLimit(int sourceNameRepeatLimit) {
+		this.sourceNameRepeatLimit = sourceNameRepeatLimit;
+	}
+
+	/**
+	 * @deprecated Use {@link #setUseSourceNameAsClassNameAlias(UseSourceNameAsClassNameAlias)} instead.
+	 */
+	@Deprecated
 	public void setDeobfuscationUseSourceNameAsAlias(boolean deobfuscationUseSourceNameAsAlias) {
-		this.deobfuscationUseSourceNameAsAlias = deobfuscationUseSourceNameAsAlias;
+		final var useSourceName = UseSourceNameAsClassNameAlias.create(deobfuscationUseSourceNameAsAlias);
+		setUseSourceNameAsClassNameAlias(useSourceName);
 	}
 
 	public void setUseKotlinMethodsForVarNames(JadxArgs.UseKotlinMethodsForVarNames useKotlinMethodsForVarNames) {
@@ -454,6 +469,10 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setExtractFinally(boolean extractFinally) {
 		this.extractFinally = extractFinally;
+	}
+
+	public void setRestoreSwitchOverString(boolean restoreSwitchOverString) {
+		this.restoreSwitchOverString = restoreSwitchOverString;
 	}
 
 	public void setFsCaseSensitive(boolean fsCaseSensitive) {
@@ -829,11 +848,23 @@ public class JadxSettings extends JadxCLIArgs {
 			jadxUpdateChannel = JadxUpdateChannel.STABLE;
 			fromVersion++;
 		}
+		if (fromVersion == 21) {
+			migrateUseSourceNameAsClassNameAlias();
+			fromVersion++;
+		}
 		if (fromVersion != CURRENT_SETTINGS_VERSION) {
 			LOG.warn("Incorrect settings upgrade. Expected version: {}, got: {}", CURRENT_SETTINGS_VERSION, fromVersion);
 		}
 		settingsVersion = CURRENT_SETTINGS_VERSION;
 		sync();
+	}
+
+	@SuppressWarnings("deprecation")
+	private void migrateUseSourceNameAsClassNameAlias() {
+		final var deobfuscationUseSourceNameAsAlias = this.deobfuscationUseSourceNameAsAlias;
+		if (deobfuscationUseSourceNameAsAlias != null) {
+			useSourceNameAsClassNameAlias = UseSourceNameAsClassNameAlias.create(deobfuscationUseSourceNameAsAlias);
+		}
 	}
 
 	@Override

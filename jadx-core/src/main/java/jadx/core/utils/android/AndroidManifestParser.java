@@ -1,38 +1,37 @@
 package jadx.core.utils.android;
 
-import java.io.StringReader;
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.EnumSet;
 import java.util.List;
-
-import javax.xml.parsers.DocumentBuilder;
+import java.util.Objects;
 
 import org.jetbrains.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
-import org.xml.sax.InputSource;
 
 import jadx.api.ResourceFile;
 import jadx.api.ResourceType;
+import jadx.api.security.IJadxSecurity;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.core.xmlgen.ResContainer;
-import jadx.core.xmlgen.XmlSecurity;
 
 public class AndroidManifestParser {
-	private static final Logger LOG = LoggerFactory.getLogger(AndroidManifestParser.class);
-
 	private final Document androidManifest;
 	private final Document appStrings;
 	private final EnumSet<AppAttribute> parseAttrs;
+	private final IJadxSecurity security;
 
-	public AndroidManifestParser(ResourceFile androidManifestRes, EnumSet<AppAttribute> parseAttrs) {
-		this(androidManifestRes, null, parseAttrs);
+	public AndroidManifestParser(ResourceFile androidManifestRes, EnumSet<AppAttribute> parseAttrs, IJadxSecurity security) {
+		this(androidManifestRes, null, parseAttrs, security);
 	}
 
-	public AndroidManifestParser(ResourceFile androidManifestRes, ResContainer appStrings, EnumSet<AppAttribute> parseAttrs) {
+	public AndroidManifestParser(ResourceFile androidManifestRes, ResContainer appStrings,
+			EnumSet<AppAttribute> parseAttrs, IJadxSecurity security) {
 		this.parseAttrs = parseAttrs;
+		this.security = Objects.requireNonNull(security);
 
 		this.androidManifest = parseAndroidManifest(androidManifestRes);
 		this.appStrings = parseAppStrings(appStrings);
@@ -67,31 +66,37 @@ public class AndroidManifestParser {
 		String mainActivity = null;
 		String application = null;
 
+		@Nullable
 		Element manifest = (Element) androidManifest.getElementsByTagName("manifest").item(0);
+		@Nullable
 		Element usesSdk = (Element) androidManifest.getElementsByTagName("uses-sdk").item(0);
 
 		if (parseAttrs.contains(AppAttribute.APPLICATION_LABEL)) {
 			applicationLabel = getApplicationLabel();
 		}
-		if (parseAttrs.contains(AppAttribute.MIN_SDK_VERSION)) {
-			minSdkVersion = Integer.valueOf(usesSdk.getAttribute("android:minSdkVersion"));
-		}
-		if (parseAttrs.contains(AppAttribute.TARGET_SDK_VERSION)) {
-			String stringTargetSdk = usesSdk.getAttribute("android:targetSdkVersion");
-			if (!stringTargetSdk.isEmpty()) {
-				targetSdkVersion = Integer.valueOf(stringTargetSdk);
-			} else {
-				if (minSdkVersion == null) {
-					minSdkVersion = Integer.valueOf(usesSdk.getAttribute("android:minSdkVersion"));
+		if (usesSdk != null) {
+			if (parseAttrs.contains(AppAttribute.MIN_SDK_VERSION)) {
+				minSdkVersion = Integer.valueOf(usesSdk.getAttribute("android:minSdkVersion"));
+			}
+			if (parseAttrs.contains(AppAttribute.TARGET_SDK_VERSION)) {
+				String stringTargetSdk = usesSdk.getAttribute("android:targetSdkVersion");
+				if (!stringTargetSdk.isEmpty()) {
+					targetSdkVersion = Integer.valueOf(stringTargetSdk);
+				} else {
+					if (minSdkVersion == null) {
+						minSdkVersion = Integer.valueOf(usesSdk.getAttribute("android:minSdkVersion"));
+					}
+					targetSdkVersion = minSdkVersion;
 				}
-				targetSdkVersion = minSdkVersion;
 			}
 		}
-		if (parseAttrs.contains(AppAttribute.VERSION_CODE)) {
-			versionCode = Integer.valueOf(manifest.getAttribute("android:versionCode"));
-		}
-		if (parseAttrs.contains(AppAttribute.VERSION_NAME)) {
-			versionName = manifest.getAttribute("android:versionName");
+		if (manifest != null) {
+			if (parseAttrs.contains(AppAttribute.VERSION_CODE)) {
+				versionCode = Integer.valueOf(manifest.getAttribute("android:versionCode"));
+			}
+			if (parseAttrs.contains(AppAttribute.VERSION_NAME)) {
+				versionName = manifest.getAttribute("android:versionName");
+			}
 		}
 		if (parseAttrs.contains(AppAttribute.MAIN_ACTIVITY)) {
 			mainActivity = getMainActivityName();
@@ -206,10 +211,9 @@ public class AndroidManifestParser {
 		return false;
 	}
 
-	private static Document parseXml(String xmlContent) {
-		try {
-			DocumentBuilder builder = XmlSecurity.getDBF().newDocumentBuilder();
-			Document document = builder.parse(new InputSource(new StringReader(xmlContent)));
+	private Document parseXml(String xmlContent) {
+		try (InputStream xmlStream = new ByteArrayInputStream(xmlContent.getBytes(StandardCharsets.UTF_8))) {
+			Document document = security.parseXml(xmlStream);
 			document.getDocumentElement().normalize();
 			return document;
 		} catch (Exception e) {
@@ -217,7 +221,7 @@ public class AndroidManifestParser {
 		}
 	}
 
-	private static Document parseAppStrings(ResContainer appStrings) {
+	private Document parseAppStrings(ResContainer appStrings) {
 		if (appStrings == null) {
 			return null;
 		}
@@ -225,7 +229,7 @@ public class AndroidManifestParser {
 		return parseXml(content);
 	}
 
-	private static Document parseAndroidManifest(ResourceFile androidManifest) {
+	private Document parseAndroidManifest(ResourceFile androidManifest) {
 		if (androidManifest == null) {
 			return null;
 		}

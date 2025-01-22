@@ -27,6 +27,7 @@ import jadx.api.JadxDecompiler;
 import jadx.api.args.GeneratedRenamesMappingFileMode;
 import jadx.api.args.IntegerFormat;
 import jadx.api.args.ResourceNameSource;
+import jadx.api.args.UseSourceNameAsClassNameAlias;
 import jadx.api.args.UserRenamesMappingsMode;
 import jadx.core.deobf.conditions.DeobfWhitelist;
 import jadx.core.utils.exceptions.JadxArgsValidateException;
@@ -34,7 +35,7 @@ import jadx.core.utils.files.FileUtils;
 
 public class JadxCLIArgs {
 
-	@Parameter(description = "<input files> (.apk, .dex, .jar, .class, .smali, .zip, .aar, .arsc, .aab, .xapk, .jadx.kts)")
+	@Parameter(description = "<input files> (.apk, .dex, .jar, .class, .smali, .zip, .aar, .arsc, .aab, .xapk, .apkm, .jadx.kts)")
 	protected List<String> files = new ArrayList<>(1);
 
 	@Parameter(names = { "-d", "--output-dir" }, description = "output directory")
@@ -108,6 +109,9 @@ public class JadxCLIArgs {
 	@Parameter(names = "--no-finally", description = "don't extract finally block")
 	protected boolean extractFinally = true;
 
+	@Parameter(names = "--no-restore-switch-over-string", description = "don't restore switch over string")
+	protected boolean restoreSwitchOverString = true;
+
 	@Parameter(names = "--no-replace-consts", description = "don't replace constant value with matching constant field")
 	protected boolean replaceConsts = true;
 
@@ -166,8 +170,15 @@ public class JadxCLIArgs {
 	)
 	protected GeneratedRenamesMappingFileMode generatedRenamesMappingFileMode = GeneratedRenamesMappingFileMode.getDefault();
 
-	@Parameter(names = { "--deobf-use-sourcename" }, description = "use source file name as class name alias")
-	protected boolean deobfuscationUseSourceNameAsAlias = false;
+	@SuppressWarnings("DeprecatedIsStillUsed")
+	@Parameter(
+			names = { "--deobf-use-sourcename" },
+			description = "use source file name as class name alias."
+					+ "\nDEPRECATED, use \"--use-source-name-as-class-name-alias\" instead",
+			hidden = true
+	)
+	@Deprecated
+	protected Boolean deobfuscationUseSourceNameAsAlias = null;
 
 	@Parameter(
 			names = { "--deobf-res-name-source" },
@@ -178,6 +189,22 @@ public class JadxCLIArgs {
 			converter = ResourceNameSourceConverter.class
 	)
 	protected ResourceNameSource resourceNameSource = ResourceNameSource.AUTO;
+
+	@Parameter(
+			names = { "--use-source-name-as-class-name-alias" },
+			description = "use source name as class name alias:"
+					+ "\n 'always' - always use source name if it's available"
+					+ "\n 'if-better' - use source name if it seems better than the current one"
+					+ "\n 'never' - never use source name, even if it's available",
+			converter = UseSourceNameAsClassNameConverter.class
+	)
+	protected UseSourceNameAsClassNameAlias useSourceNameAsClassNameAlias = null;
+
+	@Parameter(
+			names = { "--source-name-repeat-limit" },
+			description = "allow using source name if it appears less than a limit number"
+	)
+	protected int sourceNameRepeatLimit = 10;
 
 	@Parameter(
 			names = { "--use-kotlin-methods-for-var-names" },
@@ -242,6 +269,9 @@ public class JadxCLIArgs {
 
 	@Parameter(names = { "-q", "--quiet" }, description = "turn off output (set --log-level to QUIET)")
 	protected boolean quiet = false;
+
+	@Parameter(names = { "--disable-plugins" }, description = "comma separated list of plugin ids to disable")
+	protected String disablePlugins = "";
 
 	@Parameter(names = { "--version" }, description = "print jadx version")
 	protected boolean printVersion = false;
@@ -327,7 +357,8 @@ public class JadxCLIArgs {
 		args.setDeobfuscationMinLength(deobfuscationMinLength);
 		args.setDeobfuscationMaxLength(deobfuscationMaxLength);
 		args.setDeobfuscationWhitelist(Arrays.asList(deobfuscationWhitelistStr.split(" ")));
-		args.setUseSourceNameAsClassAlias(deobfuscationUseSourceNameAsAlias);
+		args.setUseSourceNameAsClassNameAlias(getUseSourceNameAsClassNameAlias());
+		args.setSourceNameRepeatLimit(sourceNameRepeatLimit);
 		args.setUseKotlinMethodsForVarNames(useKotlinMethodsForVarNames);
 		args.setResourceNameSource(resourceNameSource);
 		args.setEscapeUnicode(escapeUnicode);
@@ -342,12 +373,14 @@ public class JadxCLIArgs {
 		args.setMoveInnerClasses(moveInnerClasses);
 		args.setAllowInlineKotlinLambda(allowInlineKotlinLambda);
 		args.setExtractFinally(extractFinally);
+		args.setRestoreSwitchOverString(restoreSwitchOverString);
 		args.setRenameFlags(renameFlags);
 		args.setFsCaseSensitive(fsCaseSensitive);
 		args.setCommentsLevel(commentsLevel);
 		args.setIntegerFormat(integerFormat);
 		args.setUseDxInput(useDx);
 		args.setPluginOptions(pluginOptions);
+		args.setDisabledPlugins(Arrays.stream(disablePlugins.split(",")).map(String::trim).collect(Collectors.toSet()));
 		return args;
 	}
 
@@ -435,6 +468,10 @@ public class JadxCLIArgs {
 		return extractFinally;
 	}
 
+	public boolean isRestoreSwitchOverString() {
+		return restoreSwitchOverString;
+	}
+
 	public Path getUserRenamesMappingsPath() {
 		return userRenamesMappingsPath;
 	}
@@ -467,8 +504,27 @@ public class JadxCLIArgs {
 		return generatedRenamesMappingFileMode;
 	}
 
+	public UseSourceNameAsClassNameAlias getUseSourceNameAsClassNameAlias() {
+		if (useSourceNameAsClassNameAlias != null) {
+			return useSourceNameAsClassNameAlias;
+		} else if (deobfuscationUseSourceNameAsAlias != null) {
+			// noinspection deprecation
+			return UseSourceNameAsClassNameAlias.create(deobfuscationUseSourceNameAsAlias);
+		} else {
+			return UseSourceNameAsClassNameAlias.getDefault();
+		}
+	}
+
+	public int getSourceNameRepeatLimit() {
+		return sourceNameRepeatLimit;
+	}
+
+	/**
+	 * @deprecated Use {@link #getUseSourceNameAsClassNameAlias()} instead.
+	 */
+	@Deprecated
 	public boolean isDeobfuscationUseSourceNameAsAlias() {
-		return deobfuscationUseSourceNameAsAlias;
+		return getUseSourceNameAsClassNameAlias().toBoolean();
 	}
 
 	public ResourceNameSource getResourceNameSource() {
@@ -539,6 +595,10 @@ public class JadxCLIArgs {
 		return pluginOptions;
 	}
 
+	public String getDisablePlugins() {
+		return disablePlugins;
+	}
+
 	static class RenameConverter implements IStringConverter<Set<RenameEnum>> {
 		private final String paramName;
 
@@ -589,6 +649,12 @@ public class JadxCLIArgs {
 	public static class ResourceNameSourceConverter extends BaseEnumConverter<ResourceNameSource> {
 		public ResourceNameSourceConverter() {
 			super(ResourceNameSource::valueOf, ResourceNameSource::values);
+		}
+	}
+
+	public static class UseSourceNameAsClassNameConverter extends BaseEnumConverter<UseSourceNameAsClassNameAlias> {
+		public UseSourceNameAsClassNameConverter() {
+			super(UseSourceNameAsClassNameAlias::valueOf, UseSourceNameAsClassNameAlias::values);
 		}
 	}
 

@@ -26,7 +26,7 @@ import jadx.core.xmlgen.entry.ValuesParser;
 
 public class ResTableProtoParser extends CommonProtoParser implements IResTableParser {
 	private final RootNode root;
-	private final ResourceStorage resStorage = new ResourceStorage();
+	private ResourceStorage resStorage;
 
 	public ResTableProtoParser(RootNode root) {
 		this.root = root;
@@ -34,6 +34,7 @@ public class ResTableProtoParser extends CommonProtoParser implements IResTableP
 
 	@Override
 	public void decode(InputStream inputStream) throws IOException {
+		resStorage = new ResourceStorage(root.getArgs().getSecurity());
 		ResourceTable table = ResourceTable.parseFrom(FileUtils.streamToByteArray(inputStream));
 		for (Package p : table.getPackageList()) {
 			parse(p);
@@ -44,7 +45,7 @@ public class ResTableProtoParser extends CommonProtoParser implements IResTableP
 	@Override
 	public synchronized ResContainer decodeFiles() {
 		ValuesParser vp = new ValuesParser(new BinaryXMLStrings(), resStorage.getResourcesNames());
-		ResXmlGen resGen = new ResXmlGen(resStorage, vp);
+		ResXmlGen resGen = new ResXmlGen(resStorage, vp, root.initManifestAttributes());
 		ICodeInfo content = XmlGenUtils.makeXmlDump(root.makeCodeWriter(), resStorage);
 		List<ResContainer> xmlFiles = resGen.makeResourcesXml(root.getArgs());
 		return ResContainer.resourceTable("res", xmlFiles, content);

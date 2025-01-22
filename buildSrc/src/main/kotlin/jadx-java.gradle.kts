@@ -8,22 +8,22 @@ plugins {
 }
 
 val jadxVersion: String by rootProject.extra
+val jadxBuildJavaVersion: Int? by rootProject.extra
 
 group = "io.github.skylot"
 version = jadxVersion
 
 dependencies {
 	implementation("org.slf4j:slf4j-api:2.0.16")
-	compileOnly("org.jetbrains:annotations:24.1.0")
+	compileOnly("org.jetbrains:annotations:26.0.1")
 
-	testImplementation("ch.qos.logback:logback-classic:1.5.7")
-	testImplementation("org.assertj:assertj-core:3.26.3")
-	testImplementation("org.mockito:mockito-core:5.12.0")
+	testImplementation("ch.qos.logback:logback-classic:1.5.16")
+	testImplementation("org.assertj:assertj-core:3.27.2")
 
-	testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
+	testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
-	testCompileOnly("org.jetbrains:annotations:24.1.0")
+	testCompileOnly("org.jetbrains:annotations:26.0.1")
 }
 
 repositories {
@@ -33,6 +33,11 @@ repositories {
 }
 
 java {
+	jadxBuildJavaVersion?.let { buildJavaVer ->
+		toolchain {
+			languageVersion = JavaLanguageVersion.of(buildJavaVer)
+		}
+	}
 	sourceCompatibility = JavaVersion.VERSION_11
 	targetCompatibility = JavaVersion.VERSION_11
 }
@@ -40,6 +45,7 @@ java {
 tasks {
 	compileJava {
 		options.encoding = "UTF-8"
+		// options.compilerArgs = listOf("-Xlint:deprecation")
 	}
 	jar {
 		manifest {

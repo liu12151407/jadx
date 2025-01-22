@@ -8,11 +8,14 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.api.plugins.input.data.attributes.IJadxAttrType;
+import jadx.api.plugins.input.data.attributes.IJadxAttribute;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.LoopInfo;
@@ -36,6 +39,8 @@ import static jadx.core.dex.visitors.blocks.BlockSplitter.connect;
 public class BlockProcessor extends AbstractVisitor {
 	private static final Logger LOG = LoggerFactory.getLogger(BlockProcessor.class);
 
+	private static final boolean DEBUG_MODS = false;
+
 	@Override
 	public void visit(MethodNode mth) {
 		if (mth.isNoCode() || mth.getBasicBlocks().isEmpty()) {
@@ -57,12 +62,26 @@ public class BlockProcessor extends AbstractVisitor {
 		}
 		updateCleanSuccessors(mth);
 
+		int blocksCount = mth.getBasicBlocks().size();
+		int modLimit = Math.max(100, blocksCount);
+		if (DEBUG_MODS) {
+			mth.addAttr(new DebugModAttr());
+		}
 		int i = 0;
 		while (modifyBlocksTree(mth)) {
 			computeDominators(mth);
-			if (i++ > 100) {
-				throw new JadxRuntimeException("CFG modification limit reached, blocks count: " + mth.getBasicBlocks().size());
+			if (i++ > modLimit) {
+				mth.addWarn("CFG modification limit reached, blocks count: " + blocksCount);
+				break;
 			}
+		}
+		if (DEBUG_MODS && i != 0) {
+			String stats = "CFG modifications count: " + i
+					+ ", blocks count: " + blocksCount + '\n'
+					+ mth.get(DebugModAttr.TYPE).formatStats() + '\n';
+			mth.addDebugComment(stats);
+			LOG.debug("Method: {}\n{}", mth, stats);
+			mth.remove(DebugModAttr.TYPE);
 		}
 		checkForUnreachableBlocks(mth);
 
@@ -73,9 +92,33 @@ public class BlockProcessor extends AbstractVisitor {
 		PostDominatorTree.compute(mth);
 
 		updateCleanSuccessors(mth);
-		if (!mth.contains(AFlag.DISABLE_BLOCKS_LOCK)) {
-			mth.finishBasicBlocks();
-		}
+	}
+
+	/**
+	 * Recalculate all additional info attached to blocks:
+	 *
+	 * <pre>
+	 * - dominators
+	 * - dominance frontier
+	 * - post dominators (only if {@link AFlag#COMPUTE_POST_DOM} added to method)
+	 * - loops and nested loop info
+	 * </pre>
+	 *
+	 * This method should be called after changing a block tree in custom passes added before
+	 * {@link BlockFinisher}.
+	 */
+	public static void updateBlocksData(MethodNode mth) {
+		clearBlocksState(mth);
+		DominatorTree.compute(mth);
+		markLoops(mth);
+
+		DominatorTree.computeDominanceFrontier(mth);
+		registerLoops(mth);
+		processNestedLoops(mth);
+
+		PostDominatorTree.compute(mth);
+
+		updateCleanSuccessors(mth);
 	}
 
 	static void updateCleanSuccessors(MethodNode mth) {
@@ -90,7 +133,7 @@ public class BlockProcessor extends AbstractVisitor {
 		}
 	}
 
-	private static boolean deduplicateBlockInsns(BlockNode block) {
+	private static boolean deduplicateBlockInsns(MethodNode mth, BlockNode block) {
 		if (block.contains(AFlag.LOOP_START) || block.contains(AFlag.LOOP_END)) {
 			// search for same instruction at end of all predecessors blocks
 			List<BlockNode> predecessors = block.getPredecessors();
@@ -109,7 +152,7 @@ public class BlockProcessor extends AbstractVisitor {
 					List<InsnNode> insns = getLastInsns(predecessors.get(0), sameInsnCount);
 					insertAtStart(block, insns);
 					predecessors.forEach(pred -> getLastInsns(pred, sameInsnCount).clear());
-					LOG.debug("Move duplicate insns, count: {} to block {}", sameInsnCount, block);
+					mth.addDebugComment("Move duplicate insns, count: " + sameInsnCount + " to block " + block);
 					return true;
 				}
 			}
@@ -229,6 +272,7 @@ public class BlockProcessor extends AbstractVisitor {
 	}
 
 	private static void registerLoops(MethodNode mth) {
+		mth.resetLoops();
 		mth.getBasicBlocks().forEach(block -> {
 			if (block.contains(AFlag.LOOP_START)) {
 				block.getAll(AType.LOOP).forEach(mth::registerLoop);
@@ -298,6 +342,9 @@ public class BlockProcessor extends AbstractVisitor {
 		}
 		if (changed) {
 			removeMarkedBlocks(mth);
+			if (DEBUG_MODS) {
+				mth.get(DebugModAttr.TYPE).addEvent("Merge const return");
+			}
 		}
 		return changed;
 	}
@@ -318,7 +365,7 @@ public class BlockProcessor extends AbstractVisitor {
 		boolean changed = false;
 		List<BlockNode> basicBlocks = mth.getBasicBlocks();
 		for (BlockNode basicBlock : basicBlocks) {
-			if (deduplicateBlockInsns(basicBlock)) {
+			if (deduplicateBlockInsns(mth, basicBlock)) {
 				changed = true;
 			}
 		}
@@ -338,17 +385,20 @@ public class BlockProcessor extends AbstractVisitor {
 
 	private static boolean simplifyLoopEnd(MethodNode mth, LoopInfo loop) {
 		BlockNode loopEnd = loop.getEnd();
-		if (loopEnd.getSuccessors().size() > 1) {
-			// make loop end a simple path block
-			BlockNode newLoopEnd = BlockSplitter.startNewBlock(mth, -1);
-			newLoopEnd.add(AFlag.SYNTHETIC);
-			newLoopEnd.add(AFlag.LOOP_END);
-			BlockNode loopStart = loop.getStart();
-			BlockSplitter.replaceConnection(loopEnd, loopStart, newLoopEnd);
-			BlockSplitter.connect(newLoopEnd, loopStart);
-			return true;
+		if (loopEnd.getSuccessors().size() <= 1) {
+			return false;
 		}
-		return false;
+		// make loop end a simple path block
+		BlockNode newLoopEnd = BlockSplitter.startNewBlock(mth, -1);
+		newLoopEnd.add(AFlag.SYNTHETIC);
+		newLoopEnd.add(AFlag.LOOP_END);
+		BlockNode loopStart = loop.getStart();
+		BlockSplitter.replaceConnection(loopEnd, loopStart, newLoopEnd);
+		BlockSplitter.connect(newLoopEnd, loopStart);
+		if (DEBUG_MODS) {
+			mth.get(DebugModAttr.TYPE).addEvent("Simplify loop end");
+		}
+		return true;
 	}
 
 	private static boolean checkLoops(MethodNode mth, BlockNode block) {
@@ -371,7 +421,6 @@ public class BlockProcessor extends AbstractVisitor {
 		if (loopsCount == 1) {
 			LoopInfo loop = loops.get(0);
 			return insertBlocksForContinue(mth, loop)
-					|| insertBlockForPredecessors(mth, loop)
 					|| insertPreHeader(mth, loop)
 					|| simplifyLoopEnd(mth, loop);
 		}
@@ -398,15 +447,21 @@ public class BlockProcessor extends AbstractVisitor {
 			mth.setEnterBlock(newEnterBlock);
 			start.remove(AFlag.MTH_ENTER_BLOCK);
 			BlockSplitter.connect(newEnterBlock, start);
-			return true;
+		} else {
+			// multiple predecessors
+			BlockNode preHeader = BlockSplitter.startNewBlock(mth, -1);
+			preHeader.add(AFlag.SYNTHETIC);
+			BlockNode loopEnd = loop.getEnd();
+			for (BlockNode pred : new ArrayList<>(preds)) {
+				if (pred != loopEnd) {
+					BlockSplitter.replaceConnection(pred, start, preHeader);
+				}
+			}
+			BlockSplitter.connect(preHeader, start);
 		}
-		// multiple predecessors
-		BlockNode preHeader = BlockSplitter.startNewBlock(mth, -1);
-		preHeader.add(AFlag.SYNTHETIC);
-		for (BlockNode pred : new ArrayList<>(preds)) {
-			BlockSplitter.replaceConnection(pred, start, preHeader);
+		if (DEBUG_MODS) {
+			mth.get(DebugModAttr.TYPE).addEvent("Insert loop pre header");
 		}
-		BlockSplitter.connect(preHeader, start);
 		return true;
 	}
 
@@ -426,6 +481,9 @@ public class BlockProcessor extends AbstractVisitor {
 				}
 			}
 		}
+		if (DEBUG_MODS && change) {
+			mth.get(DebugModAttr.TYPE).addEvent("Insert loop break blocks");
+		}
 		return change;
 	}
 
@@ -444,24 +502,10 @@ public class BlockProcessor extends AbstractVisitor {
 				}
 			}
 		}
-		return change;
-	}
-
-	/**
-	 * Insert additional block if loop header has several predecessors (exclude back edges)
-	 */
-	private static boolean insertBlockForPredecessors(MethodNode mth, LoopInfo loop) {
-		BlockNode loopHeader = loop.getStart();
-		List<BlockNode> preds = loopHeader.getPredecessors();
-		if (preds.size() > 2) {
-			List<BlockNode> blocks = new ArrayList<>(preds);
-			blocks.removeIf(block -> block.contains(AFlag.LOOP_END));
-			BlockNode first = blocks.remove(0);
-			BlockNode preHeader = BlockSplitter.insertBlockBetween(mth, first, loopHeader);
-			blocks.forEach(block -> BlockSplitter.replaceConnection(block, loopHeader, preHeader));
-			return true;
+		if (DEBUG_MODS && change) {
+			mth.get(DebugModAttr.TYPE).addEvent("Insert loop continue block");
 		}
-		return false;
+		return change;
 	}
 
 	private static boolean splitLoops(MethodNode mth, BlockNode block, List<LoopInfo> loops) {
@@ -472,17 +516,20 @@ public class BlockProcessor extends AbstractVisitor {
 				break;
 			}
 		}
-		if (oneHeader) {
-			// several back edges connected to one loop header => make additional block
-			BlockNode newLoopEnd = BlockSplitter.startNewBlock(mth, block.getStartOffset());
-			newLoopEnd.add(AFlag.SYNTHETIC);
-			connect(newLoopEnd, block);
-			for (LoopInfo la : loops) {
-				BlockSplitter.replaceConnection(la.getEnd(), block, newLoopEnd);
-			}
-			return true;
+		if (!oneHeader) {
+			return false;
 		}
-		return false;
+		// several back edges connected to one loop header => make additional block
+		BlockNode newLoopEnd = BlockSplitter.startNewBlock(mth, block.getStartOffset());
+		newLoopEnd.add(AFlag.SYNTHETIC);
+		connect(newLoopEnd, block);
+		for (LoopInfo la : loops) {
+			BlockSplitter.replaceConnection(la.getEnd(), block, newLoopEnd);
+		}
+		if (DEBUG_MODS) {
+			mth.get(DebugModAttr.TYPE).addEvent("Split loops");
+		}
+		return true;
 	}
 
 	private static boolean splitExitBlocks(MethodNode mth) {
@@ -496,6 +543,9 @@ public class BlockProcessor extends AbstractVisitor {
 		}
 		if (changed) {
 			updateExitBlockConnections(mth);
+			if (DEBUG_MODS) {
+				mth.get(DebugModAttr.TYPE).addEvent("Split exit block");
+			}
 		}
 		return changed;
 	}
@@ -690,5 +740,26 @@ public class BlockProcessor extends AbstractVisitor {
 			block.setDomFrontier(null);
 			block.getDominatesOn().clear();
 		});
+	}
+
+	private static final class DebugModAttr implements IJadxAttribute {
+		static final IJadxAttrType<DebugModAttr> TYPE = IJadxAttrType.create("DebugModAttr");
+
+		private final Map<String, Integer> statMap = new HashMap<>();
+
+		public void addEvent(String name) {
+			statMap.merge(name, 1, Integer::sum);
+		}
+
+		public String formatStats() {
+			return statMap.entrySet().stream()
+					.map(entry -> " " + entry.getKey() + ": " + entry.getValue())
+					.collect(Collectors.joining("\n"));
+		}
+
+		@Override
+		public IJadxAttrType<DebugModAttr> getAttrType() {
+			return TYPE;
+		}
 	}
 }

@@ -7,7 +7,7 @@ dependencies {
 
 	implementation("com.google.code.gson:gson:2.11.0")
 
-	testImplementation("org.apache.commons:commons-lang3:3.16.0")
+	testImplementation("org.apache.commons:commons-lang3:3.17.0")
 
 	testImplementation(project(":jadx-plugins:jadx-dex-input"))
 	testRuntimeOnly(project(":jadx-plugins:jadx-smali-input"))
@@ -24,6 +24,31 @@ dependencies {
 	testImplementation("tools.profiler:async-profiler:3.0")
 }
 
-tasks.test {
+val jadxTestJavaVersion = getTestJavaVersion()
+
+fun getTestJavaVersion(): Int? {
+	val envVarName = "JADX_TEST_JAVA_VERSION"
+	val testJavaVer = System.getenv(envVarName)?.toInt() ?: return null
+	val currentJavaVer = java.toolchain.languageVersion.get().asInt()
+	if (testJavaVer < currentJavaVer) {
+		throw GradleException("'$envVarName' can't be set to lower version than $currentJavaVer")
+	}
+	println("Set Java toolchain for core tests to version '$testJavaVer'")
+	return testJavaVer
+}
+
+tasks.named<Test>("test") {
+	jadxTestJavaVersion?.let { testJavaVer ->
+		javaLauncher =
+			javaToolchains.launcherFor {
+				languageVersion = JavaLanguageVersion.of(testJavaVer)
+			}
+	}
+
+	// disable cache to allow test's rerun,
+	// because most tests are integration and depends on plugins and environment
+	outputs.cacheIf { false }
+
+	// exclude temp tests
 	exclude("**/tmp/*")
 }

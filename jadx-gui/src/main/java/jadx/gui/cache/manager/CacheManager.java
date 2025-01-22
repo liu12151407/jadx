@@ -19,10 +19,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 
 import jadx.api.plugins.utils.CommonFileUtils;
+import jadx.core.utils.GsonUtils;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.core.utils.files.FileUtils;
@@ -34,7 +34,7 @@ import jadx.gui.utils.files.JadxFiles;
 public class CacheManager {
 	private static final Logger LOG = LoggerFactory.getLogger(CacheManager.class);
 
-	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+	private static final Gson GSON = GsonUtils.buildGson();
 	private static final Type CACHES_TYPE = new TypeToken<List<CacheEntry>>() {
 	}.getType();
 
@@ -47,8 +47,8 @@ public class CacheManager {
 	}
 
 	/**
-	 * If project cache is set -> check if cache entry exists for this project.
-	 * If not -> calculate new and add entry.
+	 * If project cache is set -&gt; check if cache entry exists for this project.
+	 * If not -&gt; calculate new and add entry.
 	 */
 	public Path getCacheDir(JadxProject project, @Nullable String cacheDirStr) {
 		if (cacheDirStr == null) {

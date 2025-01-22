@@ -1,8 +1,9 @@
 plugins {
 	id("jadx-kotlin")
 	id("application")
+	id("jadx-library")
 	id("edu.sc.seis.launch4j") version "3.0.6"
-	id("com.gradleup.shadow") version "8.3.0"
+	id("com.gradleup.shadow") version "8.3.5"
 	id("org.beryx.runtime") version "1.13.1"
 }
 
@@ -22,31 +23,33 @@ dependencies {
 	implementation("com.fifesoft:autocomplete:3.3.1")
 
 	// use KtLint for format and check jadx scripts
-	implementation("com.pinterest.ktlint:ktlint-rule-engine:1.3.1")
-	implementation("com.pinterest.ktlint:ktlint-ruleset-standard:1.3.1")
+	implementation("com.pinterest.ktlint:ktlint-rule-engine:1.5.0")
+	implementation("com.pinterest.ktlint:ktlint-ruleset-standard:1.5.0")
 
-	implementation("org.jcommander:jcommander:1.84")
-	implementation("ch.qos.logback:logback-classic:1.5.7")
+	implementation("org.jcommander:jcommander:2.0")
+	implementation("ch.qos.logback:logback-classic:1.5.16")
+	implementation("io.github.oshai:kotlin-logging-jvm:7.0.3")
 
-	implementation("com.fifesoft:rsyntaxtextarea:3.4.1")
-	implementation(files("libs/jfontchooser-1.0.5.jar"))
+	implementation("com.fifesoft:rsyntaxtextarea:3.5.3")
+	implementation("org.drjekyll:fontchooser:3.1.0")
 	implementation("hu.kazocsaba:image-viewer:1.2.3")
+	implementation("com.twelvemonkeys.imageio:imageio-webp:3.12.0") // WebP support for image viewer
 
-	implementation("com.formdev:flatlaf:3.5.1")
-	implementation("com.formdev:flatlaf-intellij-themes:3.5.1")
-	implementation("com.formdev:flatlaf-extras:3.5.1")
+	implementation("com.formdev:flatlaf:3.5.4")
+	implementation("com.formdev:flatlaf-intellij-themes:3.5.4")
+	implementation("com.formdev:flatlaf-extras:3.5.4")
 
 	implementation("com.google.code.gson:gson:2.11.0")
-	implementation("org.apache.commons:commons-lang3:3.16.0")
-	implementation("org.apache.commons:commons-text:1.12.0")
-	implementation("commons-io:commons-io:2.16.1")
+	implementation("org.apache.commons:commons-lang3:3.17.0")
+	implementation("org.apache.commons:commons-text:1.13.0")
+	implementation("commons-io:commons-io:2.18.0")
 
 	implementation("io.reactivex.rxjava2:rxjava:2.2.21")
 	implementation("com.github.akarnokd:rxjava2-swing:0.3.7")
-	implementation("com.android.tools.build:apksig:8.5.2")
+	implementation("com.android.tools.build:apksig:8.8.0")
 	implementation("io.github.skylot:jdwp:2.0.0")
 
-	testImplementation(project(":jadx-core").dependencyProject.sourceSets.getByName("test").output)
+	testImplementation(project.project(":jadx-core").sourceSets.getByName("test").output)
 }
 
 val jadxVersion: String by rootProject.extra
@@ -98,6 +101,13 @@ tasks.shadowJar {
 	}
 }
 
+// workaround to exclude shadowJar 'all' artifact from publishing to maven
+project.components.withType(AdhocComponentWithVariants::class.java).forEach { c ->
+	c.withVariantsFromConfiguration(project.configurations.shadowRuntimeElements.get()) {
+		skip()
+	}
+}
+
 tasks.startShadowScripts {
 	doLast {
 		val newContent =
@@ -127,11 +137,13 @@ launch4j {
 }
 
 runtime {
-	addOptions("--strip-debug", "--compress", "2", "--no-header-files", "--no-man-pages")
+	addOptions("--strip-debug", "--compress", "zip-9", "--no-header-files", "--no-man-pages")
 	addModules(
 		"java.desktop",
 		"java.naming",
 		"java.xml",
+		// needed for "https" protocol to download plugins and updates
+		"jdk.crypto.cryptoki",
 	)
 	jpackage {
 		imageOptions = listOf("--icon", "$projectDir/src/main/resources/logos/jadx-logo.ico")

@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.jetbrains.annotations.Nullable;
@@ -15,12 +16,13 @@ import jadx.api.JavaClass;
 import jadx.api.metadata.ICodeAnnotation;
 import jadx.api.metadata.ICodeNodeRef;
 import jadx.api.metadata.annotations.NodeDeclareRef;
+import jadx.gui.jobs.SimpleTask;
+import jadx.gui.jobs.TaskStatus;
 import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JNode;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.codearea.EditorViewState;
 import jadx.gui.utils.JumpPosition;
-import jadx.gui.utils.NLS;
 
 public class TabsController {
 	private static final Logger LOG = LoggerFactory.getLogger(TabsController.class);
@@ -90,51 +92,68 @@ public class TabsController {
 			JavaClass codeParent = cls.getTopParentClass();
 			if (!Objects.equals(codeParent, origTopCls)) {
 				JClass jumpCls = mainWindow.getCacheObject().getNodeCache().makeFrom(codeParent);
-				mainWindow.getBackgroundExecutor().execute(
-						NLS.str("progress.load"),
-						jumpCls::loadNode, // load code in background
-						status -> {
-							// search original node in jump class
-							codeParent.getCodeInfo().getCodeMetadata().searchDown(0, (pos, ann) -> {
-								if (ann.getAnnType() == ICodeAnnotation.AnnType.DECLARATION) {
-									ICodeNodeRef declNode = ((NodeDeclareRef) ann).getNode();
-									if (declNode.equals(node.getJavaNode().getCodeNodeRef())) {
-										codeJump(new JumpPosition(jumpCls, pos));
-										return true;
-									}
-								}
-								return null;
-							});
-						});
+				loadCodeWithUIAction(jumpCls, () -> jumpToInnerClass(node, codeParent, jumpCls));
 				return;
 			}
 		}
 
 		// Not an inline node, jump normally
-		if (node.getPos() != 0 || node.getRootClass() == null) {
+		if (node.getPos() > 0) {
 			codeJump(new JumpPosition(node));
 			return;
 		}
+		if (node.getRootClass() == null) {
+			// not a class, select tab without position scroll
+			selectTab(node);
+			return;
+		}
 		// node need loading
+		loadCodeWithUIAction(node.getRootClass(), () -> codeJump(new JumpPosition(node)));
+	}
+
+	private void loadCodeWithUIAction(JClass cls, Runnable action) {
+		SimpleTask loadTask = cls.getLoadTask();
 		mainWindow.getBackgroundExecutor().execute(
-				NLS.str("progress.load"),
-				() -> node.getRootClass().getCodeInfo(), // run heavy loading in background
-				status -> codeJump(new JumpPosition(node)));
+				new SimpleTask(loadTask.getTitle(),
+						loadTask.getJobs(),
+						status -> {
+							Consumer<TaskStatus> onFinish = loadTask.getOnFinish();
+							if (onFinish != null) {
+								onFinish.accept(status);
+							}
+							action.run();
+						}));
+	}
+
+	/**
+	 * Search and jump to original node in jumpCls
+	 */
+	private void jumpToInnerClass(JNode node, JavaClass codeParent, JClass jumpCls) {
+		codeParent.getCodeInfo().getCodeMetadata().searchDown(0, (pos, ann) -> {
+			if (ann.getAnnType() == ICodeAnnotation.AnnType.DECLARATION) {
+				ICodeNodeRef declNode = ((NodeDeclareRef) ann).getNode();
+				if (declNode.equals(node.getJavaNode().getCodeNodeRef())) {
+					codeJump(new JumpPosition(jumpCls, pos));
+					return true;
+				}
+			}
+			return null;
+		});
 	}
 
 	/**
 	 * Prefer {@link TabsController#codeJump(JNode)} method
 	 */
 	public void codeJump(JumpPosition pos) {
-		if (selectedTab == null) {
-			LOG.warn("Cannot codeJump because selectedTab is null");
-			return;
+		if (selectedTab == null || selectedTab.getNode() != pos.getNode()) {
+			selectTab(pos.getNode());
 		}
 		listeners.forEach(l -> l.onTabCodeJump(selectedTab, pos));
 	}
 
 	public void smaliJump(JClass cls, int pos, boolean debugMode) {
-		TabBlueprint blueprint = openTab(cls);
+		selectTab(cls);
+		TabBlueprint blueprint = getTabByNode(cls);
 		listeners.forEach(l -> l.onTabSmaliJump(blueprint, pos, debugMode));
 	}
 
@@ -144,16 +163,16 @@ public class TabsController {
 
 	public void closeTab(JNode node, boolean considerPins) {
 		TabBlueprint blueprint = getTabByNode(node);
-
-		if (blueprint == null) {
-			return;
+		if (blueprint != null) {
+			closeTab(blueprint, considerPins);
 		}
+	}
 
+	public void closeTab(TabBlueprint blueprint, boolean considerPins) {
 		if (forceClose) {
 			closeTabForce(blueprint);
 			return;
 		}
-
 		if (!considerPins || !blueprint.isPinned()) {
 			if (!blueprint.isReferenced()) {
 				closeTabForce(blueprint);
@@ -163,7 +182,7 @@ public class TabsController {
 		}
 	}
 
-	/*
+	/**
 	 * Removes Tab from everywhere
 	 */
 	private void closeTabForce(TabBlueprint blueprint) {
@@ -171,7 +190,7 @@ public class TabsController {
 		tabsMap.remove(blueprint.getNode());
 	}
 
-	/*
+	/**
 	 * Hides Tab from TabbedPane
 	 */
 	private void closeTabSoft(TabBlueprint blueprint) {
@@ -234,6 +253,7 @@ public class TabsController {
 		forceClose = true;
 		closeAllTabs();
 		forceClose = false;
+		selectedTab = null;
 	}
 
 	public boolean isForceClose() {

@@ -8,6 +8,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import jadx.api.JadxArgs;
+import jadx.api.security.IJadxSecurity;
+import jadx.api.security.JadxSecurityFlag;
+import jadx.api.security.impl.JadxSecurity;
 import jadx.core.xmlgen.entry.RawNamedValue;
 import jadx.core.xmlgen.entry.RawValue;
 import jadx.core.xmlgen.entry.ResourceEntry;
@@ -17,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ResXmlGenTest {
 	private final JadxArgs args = new JadxArgs();
+	private final IJadxSecurity security = new JadxSecurity(JadxSecurityFlag.all());
+	private final ManifestAttributes manifestAttributes = new ManifestAttributes(security);
 
 	@BeforeEach
 	void init() {
@@ -25,13 +30,13 @@ class ResXmlGenTest {
 
 	@Test
 	void testSimpleAttr() {
-		ResourceStorage resStorage = new ResourceStorage();
+		ResourceStorage resStorage = new ResourceStorage(security);
 		ResourceEntry re = new ResourceEntry(2130903103, "jadx.gui.app", "attr", "size", "");
 		re.setNamedValues(Lists.list(new RawNamedValue(16777216, new RawValue(16, 64))));
 		resStorage.add(re);
 
 		ValuesParser vp = new ValuesParser(null, resStorage.getResourcesNames());
-		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
+		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp, manifestAttributes);
 		List<ResContainer> files = resXmlGen.makeResourcesXml(args);
 
 		assertThat(files).hasSize(1);
@@ -46,14 +51,16 @@ class ResXmlGenTest {
 
 	@Test
 	void testAttrEnum() {
-		ResourceStorage resStorage = new ResourceStorage();
+		ResourceStorage resStorage = new ResourceStorage(security);
 		ResourceEntry re = new ResourceEntry(2130903103, "jadx.gui.app", "attr", "size", "");
 		re.setNamedValues(
-				Lists.list(new RawNamedValue(16777216, new RawValue(16, 65536)), new RawNamedValue(17039620, new RawValue(16, 1))));
+				Lists.list(
+						new RawNamedValue(0x01000000, new RawValue(16, 65536)),
+						new RawNamedValue(0x01040000, new RawValue(16, 1))));
 		resStorage.add(re);
 
 		ValuesParser vp = new ValuesParser(null, resStorage.getResourcesNames());
-		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
+		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp, manifestAttributes);
 		List<ResContainer> files = resXmlGen.makeResourcesXml(args);
 
 		assertThat(files).hasSize(1);
@@ -62,21 +69,23 @@ class ResXmlGenTest {
 		assertThat(input).isEqualTo("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 				+ "<resources>\n"
 				+ "    <attr name=\"size\">\n"
-				+ "        <enum name=\"android:string.aerr_wait\" value=\"1\" />\n"
+				+ "        <enum name=\"android:string.cancel\" value=\"1\" />\n"
 				+ "    </attr>\n"
 				+ "</resources>");
 	}
 
 	@Test
 	void testAttrFlag() {
-		ResourceStorage resStorage = new ResourceStorage();
+		ResourceStorage resStorage = new ResourceStorage(security);
 		ResourceEntry re = new ResourceEntry(2130903103, "jadx.gui.app", "attr", "size", "");
 		re.setNamedValues(
-				Lists.list(new RawNamedValue(16777216, new RawValue(16, 131072)), new RawNamedValue(17039620, new RawValue(16, 1))));
+				Lists.list(
+						new RawNamedValue(0x01000000, new RawValue(16, 131072)),
+						new RawNamedValue(0x01040000, new RawValue(16, 1))));
 		resStorage.add(re);
 
 		ValuesParser vp = new ValuesParser(null, resStorage.getResourcesNames());
-		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
+		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp, manifestAttributes);
 		List<ResContainer> files = resXmlGen.makeResourcesXml(args);
 
 		assertThat(files).hasSize(1);
@@ -85,21 +94,21 @@ class ResXmlGenTest {
 		assertThat(input).isEqualTo("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 				+ "<resources>\n"
 				+ "    <attr name=\"size\">\n"
-				+ "        <flag name=\"android:string.aerr_wait\" value=\"1\" />\n"
+				+ "        <flag name=\"android:string.cancel\" value=\"1\" />\n"
 				+ "    </attr>\n"
 				+ "</resources>");
 	}
 
 	@Test
 	void testAttrMin() {
-		ResourceStorage resStorage = new ResourceStorage();
+		ResourceStorage resStorage = new ResourceStorage(security);
 		ResourceEntry re = new ResourceEntry(2130903103, "jadx.gui.app", "attr", "size", "");
 		re.setNamedValues(
 				Lists.list(new RawNamedValue(16777216, new RawValue(16, 4)), new RawNamedValue(16777217, new RawValue(16, 1))));
 		resStorage.add(re);
 
 		ValuesParser vp = new ValuesParser(null, resStorage.getResourcesNames());
-		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
+		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp, manifestAttributes);
 		List<ResContainer> files = resXmlGen.makeResourcesXml(args);
 
 		assertThat(files).hasSize(1);
@@ -114,7 +123,7 @@ class ResXmlGenTest {
 
 	@Test
 	void testStyle() {
-		ResourceStorage resStorage = new ResourceStorage();
+		ResourceStorage resStorage = new ResourceStorage(security);
 		ResourceEntry re = new ResourceEntry(2130903103, "jadx.gui.app", "style", "JadxGui", "");
 		re.setNamedValues(Lists.list(new RawNamedValue(16842836, new RawValue(1, 17170445))));
 		resStorage.add(re);
@@ -124,7 +133,7 @@ class ResXmlGenTest {
 		re.setNamedValues(new ArrayList<>());
 		resStorage.add(re);
 		ValuesParser vp = new ValuesParser(null, resStorage.getResourcesNames());
-		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
+		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp, manifestAttributes);
 		List<ResContainer> files = resXmlGen.makeResourcesXml(args);
 
 		assertThat(files).hasSize(1);
@@ -142,7 +151,7 @@ class ResXmlGenTest {
 
 	@Test
 	void testString() {
-		ResourceStorage resStorage = new ResourceStorage();
+		ResourceStorage resStorage = new ResourceStorage(security);
 		ResourceEntry re = new ResourceEntry(2130903103, "jadx.gui.app", "string", "app_name", "");
 		re.setSimpleValue(new RawValue(3, 0));
 		re.setNamedValues(Lists.list());
@@ -151,7 +160,7 @@ class ResXmlGenTest {
 		BinaryXMLStrings strings = new BinaryXMLStrings();
 		strings.put(0, "Jadx Decompiler App");
 		ValuesParser vp = new ValuesParser(strings, resStorage.getResourcesNames());
-		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
+		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp, manifestAttributes);
 		List<ResContainer> files = resXmlGen.makeResourcesXml(args);
 
 		assertThat(files).hasSize(1);
@@ -165,7 +174,7 @@ class ResXmlGenTest {
 
 	@Test
 	void testStringFormattedFalse() {
-		ResourceStorage resStorage = new ResourceStorage();
+		ResourceStorage resStorage = new ResourceStorage(security);
 		ResourceEntry re = new ResourceEntry(2130903103, "jadx.gui.app", "string", "app_name", "");
 		re.setSimpleValue(new RawValue(3, 0));
 		re.setNamedValues(Lists.list());
@@ -174,7 +183,7 @@ class ResXmlGenTest {
 		BinaryXMLStrings strings = new BinaryXMLStrings();
 		strings.put(0, "%s at %s");
 		ValuesParser vp = new ValuesParser(strings, resStorage.getResourcesNames());
-		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
+		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp, manifestAttributes);
 		List<ResContainer> files = resXmlGen.makeResourcesXml(args);
 
 		assertThat(files).hasSize(1);
@@ -188,7 +197,7 @@ class ResXmlGenTest {
 
 	@Test
 	void testArrayEscape() {
-		ResourceStorage resStorage = new ResourceStorage();
+		ResourceStorage resStorage = new ResourceStorage(security);
 		ResourceEntry re = new ResourceEntry(2130903103, "jadx.gui.app", "array", "single_quote_escape_sample", "");
 		re.setNamedValues(
 				Lists.list(new RawNamedValue(16777216, new RawValue(3, 0))));
@@ -197,7 +206,7 @@ class ResXmlGenTest {
 		BinaryXMLStrings strings = new BinaryXMLStrings();
 		strings.put(0, "Let's go");
 		ValuesParser vp = new ValuesParser(strings, resStorage.getResourcesNames());
-		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp);
+		ResXmlGen resXmlGen = new ResXmlGen(resStorage, vp, manifestAttributes);
 		List<ResContainer> files = resXmlGen.makeResourcesXml(args);
 
 		assertThat(files).hasSize(1);

@@ -1,12 +1,17 @@
 package jadx.core.dex.visitors;
 
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
 import jadx.core.dex.attributes.AFlag;
+import jadx.core.dex.attributes.nodes.CodeFeaturesAttr;
+import jadx.core.dex.attributes.nodes.CodeFeaturesAttr.CodeFeature;
 import jadx.core.dex.instructions.FilledNewArrayNode;
 import jadx.core.dex.instructions.IndexInsnNode;
 import jadx.core.dex.instructions.InsnType;
@@ -20,7 +25,6 @@ import jadx.core.dex.nodes.IFieldInfoRef;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.visitors.shrink.CodeShrinkVisitor;
-import jadx.core.utils.BlockUtils;
 import jadx.core.utils.InsnList;
 import jadx.core.utils.InsnRemover;
 import jadx.core.utils.InsnUtils;
@@ -35,21 +39,20 @@ public class ReplaceNewArray extends AbstractVisitor {
 
 	@Override
 	public void visit(MethodNode mth) throws JadxException {
-		if (mth.isNoCode()) {
+		if (!CodeFeaturesAttr.contains(mth, CodeFeature.NEW_ARRAY)) {
 			return;
 		}
+		InsnRemover remover = new InsnRemover(mth);
 		int k = 0;
 		while (true) {
 			boolean changed = false;
-			InsnRemover remover = new InsnRemover(mth);
 			for (BlockNode block : mth.getBasicBlocks()) {
-				remover.setBlock(block);
-				List<InsnNode> instructions = block.getInstructions();
-				int size = instructions.size();
+				List<InsnNode> insnList = block.getInstructions();
+				int size = insnList.size();
 				for (int i = 0; i < size; i++) {
-					changed |= processInsn(mth, instructions, i, remover);
+					changed |= processInsn(mth, insnList, i, remover);
 				}
-				remover.perform();
+				remover.performForBlock(block);
 			}
 			if (changed) {
 				CodeShrinkVisitor.shrinkMethod(mth);
@@ -105,13 +108,16 @@ public class ReplaceNewArray extends AbstractVisitor {
 		}
 		// collect put instructions sorted by array index
 		SortedMap<Long, InsnNode> arrPuts = new TreeMap<>();
+		InsnNode firstNotAPutUsage = null;
 		for (RegisterArg registerArg : useList) {
 			InsnNode parentInsn = registerArg.getParentInsn();
-			if (parentInsn == null || parentInsn.getType() != InsnType.APUT) {
+			if (parentInsn == null
+					|| parentInsn.getType() != InsnType.APUT
+					|| !arrArg.sameRegAndSVar(parentInsn.getArg(0))) {
+				if (firstNotAPutUsage == null) {
+					firstNotAPutUsage = parentInsn;
+				}
 				continue;
-			}
-			if (!arrArg.sameRegAndSVar(parentInsn.getArg(0))) {
-				return false;
 			}
 			Object constVal = InsnUtils.getConstValueByArg(mth.root(), parentInsn.getArg(1));
 			if (!(constVal instanceof LiteralArg)) {
@@ -130,8 +136,7 @@ public class ReplaceNewArray extends AbstractVisitor {
 		if (arrPuts.size() < minLen) {
 			return false;
 		}
-		// expect all puts to be in same block
-		if (!new HashSet<>(instructions).containsAll(arrPuts.values())) {
+		if (!verifyPutInsns(arrArg, instructions, arrPuts)) {
 			return false;
 		}
 
@@ -156,12 +161,45 @@ public class ReplaceNewArray extends AbstractVisitor {
 			remover.addAndUnbind(put);
 			prevIndex = index;
 		}
+		// add missing trailing zeros
+		for (long i = prevIndex + 1; i < len; i++) {
+			filledArr.addArg(InsnArg.lit(0, elemType));
+		}
 		remover.addAndUnbind(newArrayInsn);
 
+		// place new insn at last array put or before first usage
 		InsnNode lastPut = arrPuts.get(arrPuts.lastKey());
-		int replaceIndex = InsnList.getIndex(instructions, lastPut);
-		instructions.set(replaceIndex, filledArr);
-		BlockUtils.replaceInsn(mth, lastPut, filledArr);
+		int newInsnPos = InsnList.getIndex(instructions, lastPut);
+		if (firstNotAPutUsage != null) {
+			int idx = InsnList.getIndex(instructions, firstNotAPutUsage);
+			if (idx != -1) {
+				// TODO: check that all args already assigned
+				newInsnPos = Math.min(idx, newInsnPos);
+			}
+		}
+		instructions.add(newInsnPos, filledArr);
+		return true;
+	}
+
+	private static boolean verifyPutInsns(RegisterArg arrReg, List<InsnNode> insnList, SortedMap<Long, InsnNode> arrPuts) {
+		List<InsnNode> puts = new ArrayList<>(arrPuts.values());
+		int putsCount = puts.size();
+		// expect all puts to be in the same block
+		if (insnList.size() < putsCount) {
+			return false;
+		}
+		Set<InsnNode> insnSet = Collections.newSetFromMap(new IdentityHashMap<>());
+		insnSet.addAll(insnList);
+		if (!insnSet.containsAll(puts)) {
+			return false;
+		}
+		// array arg shouldn't be used in puts insns
+		for (InsnNode put : puts) {
+			InsnArg putArg = put.getArg(2);
+			if (putArg.isUseVar(arrReg)) {
+				return false;
+			}
+		}
 		return true;
 	}
 

@@ -347,6 +347,10 @@ public class ClassGen {
 	 * Additional checks for inlined methods
 	 */
 	private boolean skipMethod(MethodNode mth) {
+		if (cls.root().getArgs().getDecompilationMode().isSpecial()) {
+			// show all methods for special decompilation modes
+			return false;
+		}
 		MethodInlineAttr inlineAttr = mth.get(AType.METHOD_INLINE);
 		if (inlineAttr == null || inlineAttr.notNeeded()) {
 			return false;
@@ -650,6 +654,13 @@ public class ClassGen {
 	public void addClsName(ICodeWriter code, ClassInfo classInfo) {
 		String clsName = useClassInternal(cls.getClassInfo(), classInfo);
 		code.add(clsName);
+	}
+
+	public void addClsShortNameForced(ICodeWriter code, ClassInfo classInfo) {
+		code.add(classInfo.getAliasShortName());
+		if (!isBothClassesInOneTopClass(cls.getClassInfo(), classInfo)) {
+			addImport(classInfo);
+		}
 	}
 
 	private String useClassInternal(ClassInfo useCls, ClassInfo extClsInfo) {

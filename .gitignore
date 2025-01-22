@@ -21,6 +21,7 @@ build/
 classes/
 idea/
 .gradle/
+.kotlin/
 node_modules/
 .vscode/
 
@@ -28,6 +29,7 @@ jadx-output/
 *-tmp/
 **/tmp/
 *.jobf
+*.jadx
 
 *.class
 *.dump

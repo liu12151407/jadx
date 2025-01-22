@@ -1,6 +1,5 @@
 package jadx.cli.tools;
 
-import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -12,7 +11,6 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,7 +18,10 @@ import org.slf4j.LoggerFactory;
 import jadx.api.JadxArgs;
 import jadx.core.dex.nodes.RootNode;
 import jadx.core.utils.android.TextResMapFile;
+import jadx.core.utils.files.ZipFile;
 import jadx.core.xmlgen.ResTableBinaryParser;
+
+import static jadx.core.utils.files.FileUtils.expandDirs;
 
 /**
  * Utility class for convert '.arsc' to simple text file with mapping id to resource name
@@ -30,7 +31,7 @@ public class ConvertArscFile {
 	private static int rewritesCount;
 
 	public static void usage() {
-		LOG.info("<res-map file> <input .arsc files>");
+		LOG.info("<res-map file> <input .arsc/android.jar files or dir>");
 		LOG.info("");
 		LOG.info("Note: If res-map already exists - it will be merged and updated");
 	}
@@ -42,6 +43,7 @@ public class ConvertArscFile {
 		}
 		List<Path> inputPaths = Stream.of(args).map(Paths::get).collect(Collectors.toList());
 		Path resMapFile = inputPaths.remove(0);
+		List<Path> inputResFiles = filterAndSort(expandDirs(inputPaths));
 		Map<Integer, String> resMap;
 		if (Files.isReadable(resMapFile)) {
 			resMap = TextResMapFile.read(resMapFile);
@@ -52,8 +54,7 @@ public class ConvertArscFile {
 
 		RootNode root = new RootNode(new JadxArgs()); // not really needed
 		rewritesCount = 0;
-		for (Path resFile : inputPaths) {
-			LOG.info("Processing {}", resFile);
+		for (Path resFile : inputResFiles) {
 			ResTableBinaryParser resTableParser = new ResTableBinaryParser(root, true);
 			if (resFile.getFileName().toString().endsWith(".jar")) {
 				// Load resources.arsc from android.jar
@@ -69,7 +70,7 @@ public class ConvertArscFile {
 				}
 			} else {
 				// Load resources.arsc from extracted file
-				try (InputStream inputStream = new BufferedInputStream(Files.newInputStream(resFile))) {
+				try (InputStream inputStream = Files.newInputStream(resFile)) {
 					resTableParser.decode(inputStream);
 				}
 			}
@@ -82,6 +83,16 @@ public class ConvertArscFile {
 		TextResMapFile.write(resMapFile, resMap);
 		LOG.info("Result file size: {} B", resMapFile.toFile().length());
 		LOG.info("done");
+	}
+
+	private static List<Path> filterAndSort(List<Path> inputPaths) {
+		return inputPaths.stream()
+				.filter(p -> {
+					String fileName = p.getFileName().toString();
+					return fileName.endsWith(".arsc") || fileName.endsWith(".jar");
+				})
+				.sorted()
+				.collect(Collectors.toList());
 	}
 
 	private static void mergeResMaps(Map<Integer, String> mainResMap, Map<Integer, String> newResMap) {

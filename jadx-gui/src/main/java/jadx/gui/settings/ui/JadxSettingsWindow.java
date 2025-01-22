@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.function.Consumer;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -41,10 +42,7 @@ import javax.swing.WindowConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
-
-import say.swing.JFontChooser;
 
 import jadx.api.CommentsLevel;
 import jadx.api.DecompilationMode;
@@ -54,14 +52,18 @@ import jadx.api.JadxDecompiler;
 import jadx.api.args.GeneratedRenamesMappingFileMode;
 import jadx.api.args.IntegerFormat;
 import jadx.api.args.ResourceNameSource;
+import jadx.api.args.UseSourceNameAsClassNameAlias;
 import jadx.api.plugins.events.JadxEvents;
+import jadx.api.plugins.events.types.ReloadSettingsWindow;
 import jadx.api.plugins.gui.ISettingsGroup;
+import jadx.core.utils.GsonUtils;
 import jadx.gui.settings.JadxSettings;
 import jadx.gui.settings.JadxSettingsAdapter;
 import jadx.gui.settings.JadxUpdateChannel;
 import jadx.gui.settings.LineNumbersMode;
 import jadx.gui.settings.XposedCodegenLanguage;
 import jadx.gui.settings.ui.cache.CacheSettingsGroup;
+import jadx.gui.settings.ui.font.JadxFontDialog;
 import jadx.gui.settings.ui.plugins.PluginSettings;
 import jadx.gui.settings.ui.shortcut.ShortcutsSettingsGroup;
 import jadx.gui.ui.MainWindow;
@@ -85,6 +87,7 @@ public class JadxSettingsWindow extends JDialog {
 	private final transient String startSettings;
 	private final transient String startSettingsHash;
 	private final transient LangLocale prevLang;
+	private final transient Consumer<ReloadSettingsWindow> reloadListener;
 
 	private transient boolean needReload = false;
 	private transient SettingsTree tree;
@@ -107,8 +110,8 @@ public class JadxSettingsWindow extends JDialog {
 		if (!mainWindow.getSettings().loadWindowPos(this)) {
 			setSize(700, 800);
 		}
-		mainWindow.events().addListener(JadxEvents.RELOAD_SETTINGS_WINDOW, r -> UiUtils.uiRun(this::reloadUI));
-		mainWindow.events().addListener(JadxEvents.RELOAD_PROJECT, r -> UiUtils.uiRun(this::reloadUI));
+		reloadListener = ev -> UiUtils.uiRun(this::reloadUI);
+		mainWindow.events().global().addListener(JadxEvents.RELOAD_SETTINGS_WINDOW, reloadListener);
 	}
 
 	private void reloadUI() {
@@ -292,10 +295,16 @@ public class JadxSettingsWindow extends JDialog {
 			needReload();
 		});
 
-		JCheckBox deobfSourceAlias = new JCheckBox();
-		deobfSourceAlias.setSelected(settings.isDeobfuscationUseSourceNameAsAlias());
-		deobfSourceAlias.addItemListener(e -> {
-			settings.setDeobfuscationUseSourceNameAsAlias(e.getStateChange() == ItemEvent.SELECTED);
+		JComboBox<UseSourceNameAsClassNameAlias> useSourceNameAsClassNameAlias = new JComboBox<>(UseSourceNameAsClassNameAlias.values());
+		useSourceNameAsClassNameAlias.setSelectedItem(settings.getUseSourceNameAsClassNameAlias());
+		useSourceNameAsClassNameAlias.addActionListener(e -> {
+			settings.setUseSourceNameAsClassNameAlias((UseSourceNameAsClassNameAlias) useSourceNameAsClassNameAlias.getSelectedItem());
+			needReload();
+		});
+
+		JSpinner repeatLimit = new JSpinner(new SpinnerNumberModel(settings.getSourceNameRepeatLimit(), 1, Integer.MAX_VALUE, 1));
+		repeatLimit.addChangeListener(e -> {
+			settings.setSourceNameRepeatLimit((Integer) repeatLimit.getValue());
 			needReload();
 		});
 
@@ -303,7 +312,8 @@ public class JadxSettingsWindow extends JDialog {
 		group.addRow(NLS.str("preferences.rename_case"), renameCaseSensitive);
 		group.addRow(NLS.str("preferences.rename_valid"), renameValid);
 		group.addRow(NLS.str("preferences.rename_printable"), renamePrintable);
-		group.addRow(NLS.str("preferences.deobfuscation_source_alias"), deobfSourceAlias);
+		group.addRow(NLS.str("preferences.rename_use_source_name_as_class_name_alias"), useSourceNameAsClassNameAlias);
+		group.addRow(NLS.str("preferences.rename_source_name_repeat_limit"), repeatLimit);
 		return group;
 	}
 
@@ -370,11 +380,9 @@ public class JadxSettingsWindow extends JDialog {
 		fontBtn.addMouseListener(new MouseAdapter() {
 			@Override
 			public void mouseClicked(MouseEvent e) {
-				JFontChooser fontChooser = new JFontChooser();
-				fontChooser.setSelectedFont(settings.getFont());
-				int result = fontChooser.showDialog(JadxSettingsWindow.this);
-				if (result == JFontChooser.OK_OPTION) {
-					Font font = fontChooser.getSelectedFont();
+				Font font = new JadxFontDialog(JadxSettingsWindow.this, NLS.str("preferences.font"))
+						.select(settings.getFont(), false);
+				if (font != null) {
 					LOG.debug("Selected Font: {}", font);
 					settings.setFont(font);
 					mainWindow.loadSettings();
@@ -386,11 +394,9 @@ public class JadxSettingsWindow extends JDialog {
 		smaliFontBtn.addMouseListener(new MouseAdapter() {
 			@Override
 			public void mouseClicked(MouseEvent e) {
-				JFontChooser fontChooser = new JPreferredFontChooser();
-				fontChooser.setSelectedFont(settings.getSmaliFont());
-				int result = fontChooser.showDialog(JadxSettingsWindow.this);
-				if (result == JFontChooser.OK_OPTION) {
-					Font font = fontChooser.getSelectedFont();
+				Font font = new JadxFontDialog(JadxSettingsWindow.this, NLS.str("preferences.smali_font"))
+						.select(settings.getSmaliFont(), true);
+				if (font != null) {
 					LOG.debug("Selected Font: {} for smali", font);
 					settings.setSmaliFont(font);
 					mainWindow.loadSettings();
@@ -549,6 +555,13 @@ public class JadxSettingsWindow extends JDialog {
 			needReload();
 		});
 
+		JCheckBox restoreSwitchOverString = new JCheckBox();
+		restoreSwitchOverString.setSelected(settings.isRestoreSwitchOverString());
+		restoreSwitchOverString.addItemListener(e -> {
+			settings.setRestoreSwitchOverString(e.getStateChange() == ItemEvent.SELECTED);
+			needReload();
+		});
+
 		JCheckBox fsCaseSensitive = new JCheckBox();
 		fsCaseSensitive.setSelected(settings.isFsCaseSensitive());
 		fsCaseSensitive.addItemListener(e -> {
@@ -594,6 +607,7 @@ public class JadxSettingsWindow extends JDialog {
 		other.addRow(NLS.str("preferences.inlineKotlinLambdas"), inlineKotlinLambdas);
 		other.addRow(NLS.str("preferences.moveInnerClasses"), moveInnerClasses);
 		other.addRow(NLS.str("preferences.extractFinally"), extractFinally);
+		other.addRow(NLS.str("preferences.restoreSwitchOverString"), restoreSwitchOverString);
 		other.addRow(NLS.str("preferences.fsCaseSensitive"), fsCaseSensitive);
 		other.addRow(NLS.str("preferences.useDx"), useDx);
 		other.addRow(NLS.str("preferences.skipResourcesDecode"), resourceDecode);
@@ -657,10 +671,10 @@ public class JadxSettingsWindow extends JDialog {
 		group.addRow(NLS.str("preferences.lineNumbersMode"), lineNumbersMode);
 		group.addRow(NLS.str("preferences.jumpOnDoubleClick"), jumpOnDoubleClick);
 		group.addRow(NLS.str("preferences.useAlternativeFileDialog"), useAltFileDialog);
-		group.addRow(NLS.str("preferences.check_for_updates"), update);
 		group.addRow(NLS.str("preferences.cfg"), cfg);
 		group.addRow(NLS.str("preferences.raw_cfg"), rawCfg);
 		group.addRow(NLS.str("preferences.xposed_codegen_language"), xposedCodegenLanguage);
+		group.addRow(NLS.str("preferences.check_for_updates"), update);
 		group.addRow(NLS.str("preferences.update_channel"), updateChannel);
 		return group;
 	}
@@ -740,7 +754,7 @@ public class JadxSettingsWindow extends JDialog {
 		settingsJson.remove("lastOpenFilePath");
 		settingsJson.remove("lastSaveFilePath");
 		settingsJson.remove("recentProjects");
-		String settingsText = new GsonBuilder().setPrettyPrinting().create().toJson(settingsJson);
+		String settingsText = GsonUtils.buildGson().toJson(settingsJson);
 		Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
 		StringSelection selection = new StringSelection(settingsText);
 		clipboard.setContents(selection, selection);
@@ -769,6 +783,7 @@ public class JadxSettingsWindow extends JDialog {
 
 	@Override
 	public void dispose() {
+		mainWindow.events().global().removeListener(JadxEvents.RELOAD_SETTINGS_WINDOW, reloadListener);
 		settings.saveWindowPos(this);
 		super.dispose();
 	}

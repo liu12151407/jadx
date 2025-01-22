@@ -9,7 +9,7 @@ import javax.swing.text.Segment;
 import org.fife.ui.rsyntaxtextarea.*;
 
 /**
- * 用于Smali代码高亮
+ * SmaliTokenMaker
  * MartinKay@qq.com
  */
 
@@ -1280,7 +1280,7 @@ public class SmaliTokenMaker extends AbstractJFlexCTokenMaker {
 	 *
 	 * All internal variables are reset, the old input stream
 	 * <b>cannot</b> be reused (internal buffer is discarded and lost).
-	 * Lexical state is set to <tt>YY_INITIAL</tt>.
+	 * Lexical state is set to <code>YY_INITIAL</code>
 	 *
 	 * @param reader the new input stream
 	 */
@@ -1363,6 +1363,10 @@ public class SmaliTokenMaker extends AbstractJFlexCTokenMaker {
 		zzLexicalState = newState;
 	}
 
+	public final int yystate() {
+		return zzLexicalState;
+	}
+
 	/**
 	 * Returns the text matched by the current regular expression.
 	 */
@@ -1371,7 +1375,7 @@ public class SmaliTokenMaker extends AbstractJFlexCTokenMaker {
 	}
 
 	/**
-	 * Returns the character at position <tt>pos</tt> from the
+	 * Returns the character at position<code>pos</code> from the
 	 * matched text.
 	 *
 	 * It is equivalent to yytext().charAt(pos), but faster
