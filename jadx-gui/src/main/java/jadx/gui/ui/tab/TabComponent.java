@@ -25,6 +25,9 @@ import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JEditableNode;
 import jadx.gui.treemodel.JNode;
+import jadx.gui.ui.MainWindow;
+import jadx.gui.ui.action.ActionModel;
+import jadx.gui.ui.action.JadxGuiAction;
 import jadx.gui.ui.panel.ContentPanel;
 import jadx.gui.ui.tab.dnd.TabDndGestureListener;
 import jadx.gui.utils.Icons;
@@ -72,7 +75,7 @@ public class TabComponent extends JPanel {
 		icon = new OverlayIcon(node.getIcon());
 
 		label = new NodeLabel(buildTabTitle(node), node.disableHtml());
-		label.setFont(getLabelFont());
+		makeLabelFont();
 		String toolTip = contentPanel.getTabTooltip();
 		if (toolTip != null) {
 			setToolTipText(toolTip);
@@ -171,6 +174,16 @@ public class TabComponent extends JPanel {
 		tabsController.setTabBookmarked(getNode(), bookmarked);
 	}
 
+	private void makeLabelFont() {
+		boolean previewTab = getBlueprint().isPreviewTab();
+		if (previewTab) {
+			Font newLabelFont = new Font(label.getFont().getName(), Font.ITALIC, label.getFont().getSize());
+			label.setFont(newLabelFont);
+		} else {
+			label.setFont(getLabelFont());
+		}
+	}
+
 	private void addListenerForDnd() {
 		if (tabbedPane.getDnd() == null) {
 			return;
@@ -230,6 +243,16 @@ public class TabComponent extends JPanel {
 			JMenuItem unbookmarkAll = new JMenuItem(NLS.str("tabs.unbookmark_all"));
 			unbookmarkAll.addActionListener(e -> tabsController.unbookmarkAllTabs());
 			menu.add(unbookmarkAll);
+			menu.addSeparator();
+		}
+
+		if (nodeFullName != null) {
+			MainWindow mainWindow = tabsController.getMainWindow();
+			JadxGuiAction selectInTree = new JadxGuiAction(ActionModel.SYNC, () -> mainWindow.selectNodeInTree(getNode()));
+			// attach shortcut without bind only to show current keybinding
+			selectInTree.setShortcut(mainWindow.getShortcutsController().get(ActionModel.SYNC));
+			menu.add(selectInTree);
+			menu.addSeparator();
 		}
 
 		JMenuItem closeTab = new JMenuItem(NLS.str("tabs.close"));
@@ -259,6 +282,18 @@ public class TabComponent extends JPanel {
 			// We don't use TabsController here because tabs position is
 			// specific to TabbedPane
 			List<ContentPanel> contentPanels = tabbedPane.getTabs();
+			int currentIndex = contentPanels.indexOf(contentPanel);
+			if (currentIndex > 0) { // Add item only if there are tabs on the left (index > 0)
+				JMenuItem closeAllLeft = new JMenuItem(NLS.str("tabs.closeAllLeft"));
+				closeAllLeft.addActionListener(e -> {
+					// Iterate in reverse order from the index before the current tab to the beginning
+					for (int i = currentIndex - 1; i >= 0; i--) {
+						ContentPanel panelToClose = contentPanels.get(i);
+						tabsController.closeTab(panelToClose.getNode(), true);
+					}
+				});
+				menu.add(closeAllLeft);
+			}
 			if (contentPanel != ListUtils.last(contentPanels)) {
 				JMenuItem closeAllRight = new JMenuItem(NLS.str("tabs.closeAllRight"));
 				closeAllRight.addActionListener(e -> {

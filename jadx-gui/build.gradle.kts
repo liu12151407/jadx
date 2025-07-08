@@ -3,7 +3,7 @@ plugins {
 	id("application")
 	id("jadx-library")
 	id("edu.sc.seis.launch4j") version "3.0.6"
-	id("com.gradleup.shadow") version "8.3.5"
+	id("com.gradleup.shadow") version "8.3.7"
 	id("org.beryx.runtime") version "1.13.1"
 }
 
@@ -20,34 +20,42 @@ dependencies {
 	implementation(project(":jadx-plugins:jadx-script:jadx-script-ide"))
 	implementation(project(":jadx-plugins:jadx-script:jadx-script-runtime"))
 	implementation(kotlin("scripting-common"))
-	implementation("com.fifesoft:autocomplete:3.3.1")
+	implementation("com.fifesoft:autocomplete:3.3.2")
 
 	// use KtLint for format and check jadx scripts
-	implementation("com.pinterest.ktlint:ktlint-rule-engine:1.5.0")
-	implementation("com.pinterest.ktlint:ktlint-ruleset-standard:1.5.0")
+	implementation("com.pinterest.ktlint:ktlint-rule-engine:1.6.0")
+	implementation("com.pinterest.ktlint:ktlint-ruleset-standard:1.6.0")
 
 	implementation("org.jcommander:jcommander:2.0")
-	implementation("ch.qos.logback:logback-classic:1.5.16")
-	implementation("io.github.oshai:kotlin-logging-jvm:7.0.3")
+	implementation("ch.qos.logback:logback-classic:1.5.18")
+	implementation("io.github.oshai:kotlin-logging-jvm:7.0.7")
 
-	implementation("com.fifesoft:rsyntaxtextarea:3.5.3")
+	implementation("com.fifesoft:rsyntaxtextarea:3.6.0")
 	implementation("org.drjekyll:fontchooser:3.1.0")
 	implementation("hu.kazocsaba:image-viewer:1.2.3")
 	implementation("com.twelvemonkeys.imageio:imageio-webp:3.12.0") // WebP support for image viewer
 
-	implementation("com.formdev:flatlaf:3.5.4")
-	implementation("com.formdev:flatlaf-intellij-themes:3.5.4")
-	implementation("com.formdev:flatlaf-extras:3.5.4")
+	implementation("com.formdev:flatlaf:3.6")
+	implementation("com.formdev:flatlaf-intellij-themes:3.6")
+	implementation("com.formdev:flatlaf-extras:3.6")
 
-	implementation("com.google.code.gson:gson:2.11.0")
+	implementation("com.google.code.gson:gson:2.13.1")
 	implementation("org.apache.commons:commons-lang3:3.17.0")
-	implementation("org.apache.commons:commons-text:1.13.0")
-	implementation("commons-io:commons-io:2.18.0")
+	implementation("org.apache.commons:commons-text:1.13.1")
+	implementation("commons-io:commons-io:2.19.0")
 
-	implementation("io.reactivex.rxjava2:rxjava:2.2.21")
-	implementation("com.github.akarnokd:rxjava2-swing:0.3.7")
-	implementation("com.android.tools.build:apksig:8.8.0")
+	implementation("io.reactivex.rxjava3:rxjava:3.1.10")
+	implementation("com.github.akarnokd:rxjava3-swing:3.1.1")
+	implementation("com.android.tools.build:apksig:8.11.0")
 	implementation("io.github.skylot:jdwp:2.0.0")
+
+	// Library for hex viewing data
+	val bined = "0.2.2"
+	implementation("org.exbin.bined:bined-swing:$bined")
+	implementation("org.exbin.bined:bined-highlight-swing:$bined")
+	implementation("org.exbin.bined:bined-swing-section:$bined")
+	implementation("org.exbin.auxiliary:binary_data:$bined")
+	implementation("org.exbin.auxiliary:binary_data-array:$bined")
 
 	testImplementation(project.project(":jadx-core").sourceSets.getByName("test").output)
 }
@@ -73,12 +81,14 @@ application {
 			// needed for ktlint formatter
 			"-XX:+IgnoreUnrecognizedVMOptions",
 			"--add-opens=java.base/java.lang=ALL-UNNAMED",
+			// Foreign API access for 'directories' library (Windows only)
+			"--enable-native-access=ALL-UNNAMED",
 			// flags to fix UI ghosting (#2225)
 			"-Dsun.java2d.noddraw=true",
 			"-Dsun.java2d.d3d=false",
 			"-Dsun.java2d.ddforcevram=true",
 			"-Dsun.java2d.ddblit=false",
-			"-Dswing.useflipBufferStrategy=True",
+			"-Dswing.useflipBufferStrategy=true",
 		)
 	applicationDistribution.from("$rootDir") {
 		include("README.md")
@@ -110,11 +120,19 @@ project.components.withType(AdhocComponentWithVariants::class.java).forEach { c 
 
 tasks.startShadowScripts {
 	doLast {
-		val newContent =
+		val newWindowsScriptContent =
 			windowsScript.readText()
 				.replace("java.exe", "javaw.exe")
 				.replace("\"%JAVA_EXE%\" %DEFAULT_JVM_OPTS%", "start \"jadx-gui\" /B \"%JAVA_EXE%\" %DEFAULT_JVM_OPTS%")
-		windowsScript.writeText(newContent)
+		// Add launch script path as a property
+		val newUnixScriptContent =
+			unixScript.readText()
+				.replace(
+					Regex("DEFAULT_JVM_OPTS=.+", RegexOption.MULTILINE),
+					{ result -> result.value + "\" \\\"-Djadx.launchScript.path=\$(realpath $0)\\\"\"" },
+				)
+		windowsScript.writeText(newWindowsScriptContent)
+		unixScript.writeText(newUnixScriptContent)
 	}
 }
 
@@ -124,16 +142,28 @@ launch4j {
 	dontWrapJar.set(true)
 	icon.set("$projectDir/src/main/resources/logos/jadx-logo.ico")
 	outfile.set("jadx-gui-$jadxVersion.exe")
+	version.set(jadxVersion)
 	copyright.set("Skylot")
 	windowTitle.set("jadx")
 	companyName.set("jadx")
 	jreMinVersion.set("11")
-	chdir.set("")
-	jvmOptions.set(application.applicationDefaultJvmArgs.toSet())
+	jvmOptions.set(escapeJVMOptions())
 	requires64Bit.set(true)
 	downloadUrl.set("https://www.oracle.com/java/technologies/downloads/#jdk21-windows")
+	supportUrl.set("https://github.com/skylot/jadx")
+
 	bundledJrePath.set(if (project.hasProperty("bundleJRE")) "%EXEDIR%/jre" else "%JAVA_HOME%")
-	classpath.set(tasks.getByName("shadowJar").outputs.files.map { "%EXEDIR%/lib/${it.name}" }.toSortedSet())
+	classpath.set(tasks.getByName("shadowJar").outputs.files.map { "%EXEDIR%/lib/${it.name}" }.sorted().toList())
+	println("Launch4J classpath: ${classpath.get()}")
+
+	chdir.set("") // don't change current dir
+	libraryDir.set("") // don't add any libs
+}
+
+fun escapeJVMOptions(): List<String> {
+	return application.applicationDefaultJvmArgs
+		.toList()
+		.map { if (it.startsWith("-D")) "\"$it\"" else it }
 }
 
 runtime {
@@ -144,6 +174,7 @@ runtime {
 		"java.xml",
 		// needed for "https" protocol to download plugins and updates
 		"jdk.crypto.cryptoki",
+		"jdk.accessibility",
 	)
 	jpackage {
 		imageOptions = listOf("--icon", "$projectDir/src/main/resources/logos/jadx-logo.ico")
@@ -197,10 +228,10 @@ val copyDistWinWithJre by tasks.registering(Copy::class) {
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
-val addNewNLSLines by tasks.registering(JavaExec::class) {
+val syncNLSLines by tasks.registering(JavaExec::class) {
 	group = "jadx-dev"
-	description = "Utility task to add new/missing translation lines"
+	description = "Utility task to sync new/missing translation using EN as a reference"
 
 	classpath = sourceSets.main.get().runtimeClasspath
-	mainClass.set("jadx.gui.utils.tools.NLSAddNewLines")
+	mainClass.set("jadx.gui.utils.tools.SyncNLSLines")
 }

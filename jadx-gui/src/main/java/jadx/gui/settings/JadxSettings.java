@@ -41,7 +41,6 @@ import jadx.gui.cache.usage.UsageCacheMode;
 import jadx.gui.settings.data.ShortcutsWrapper;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.action.ActionModel;
-import jadx.gui.ui.codearea.EditorTheme;
 import jadx.gui.ui.tab.dnd.TabDndGhostType;
 import jadx.gui.utils.FontUtils;
 import jadx.gui.utils.LafManager;
@@ -70,10 +69,15 @@ public class JadxSettings extends JadxCLIArgs {
 	private Path lastSaveFilePath = USER_HOME;
 	private boolean flattenPackage = false;
 	private boolean checkForUpdates = true;
+	private boolean disableTooltipOnHover = false;
 	private List<Path> recentProjects = new ArrayList<>();
 	private String fontStr = "";
 	private String smaliFontStr = "";
-	private String editorThemePath = EditorTheme.getDefaultTheme().getPath();
+	private String editorTheme = "";
+
+	// Deprecated. Keep for backward compatibility
+	private String editorThemePath = "/org/fife/ui/rsyntaxtextarea/themes/default.xml";
+
 	private String lafTheme = LafManager.INITIAL_THEME_NAME;
 	private LangLocale langLocale = NLS.defaultLocale();
 	private boolean autoStartJobs = false;
@@ -101,13 +105,13 @@ public class JadxSettings extends JadxCLIArgs {
 
 	private boolean showHeapUsageBar = false;
 	private boolean alwaysSelectOpened = false;
+	private boolean enablePreviewTab = false;
 	private boolean useAlternativeFileDialog = false;
 
 	private Map<String, WindowLocation> windowPos = new HashMap<>();
 	private int mainWindowExtendedState = JFrame.NORMAL;
 	private boolean codeAreaLineWrap = false;
 	private int srhResourceSkipSize = 1000;
-	private String srhResourceFileExt = ".xml|.html|.js|.json|.txt";
 	private int searchResultsPerPage = 50;
 	private boolean useAutoSearch = true;
 	private boolean keepCommonDialogOpen = false;
@@ -152,6 +156,10 @@ public class JadxSettings extends JadxCLIArgs {
 		JadxSettings jadxSettings = new JadxSettings();
 		jadxSettings.fixOnLoad();
 		return jadxSettings;
+	}
+
+	public JadxSettings() {
+		this.logLevel = LogHelper.LogLevelEnum.INFO;
 	}
 
 	public void sync() {
@@ -236,6 +244,14 @@ public class JadxSettings extends JadxCLIArgs {
 		sync();
 	}
 
+	public boolean isDisableTooltipOnHover() {
+		return disableTooltipOnHover;
+	}
+
+	public void setDisableTooltipOnHover(boolean disableTooltipOnHover) {
+		this.disableTooltipOnHover = disableTooltipOnHover;
+	}
+
 	public List<Path> getRecentProjects() {
 		return Collections.unmodifiableList(recentProjects);
 	}
@@ -261,8 +277,10 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void saveWindowPos(Window window) {
 		WindowLocation pos = new WindowLocation(window.getClass().getSimpleName(), window.getBounds());
-		windowPos.put(pos.getWindowId(), pos);
-		partialSync(settings -> settings.windowPos = windowPos);
+		WindowLocation prevPos = windowPos.put(pos.getWindowId(), pos);
+		if (prevPos == null || !prevPos.equals(pos)) {
+			partialSync(settings -> settings.windowPos = windowPos);
+		}
 	}
 
 	public boolean loadWindowPos(Window window) {
@@ -308,6 +326,15 @@ public class JadxSettings extends JadxCLIArgs {
 	public void setAlwaysSelectOpened(boolean alwaysSelectOpened) {
 		this.alwaysSelectOpened = alwaysSelectOpened;
 		partialSync(settings -> settings.alwaysSelectOpened = alwaysSelectOpened);
+	}
+
+	public boolean isEnablePreviewTab() {
+		return enablePreviewTab;
+	}
+
+	public void setEnablePreviewTab(boolean enablePreviewTab) {
+		this.enablePreviewTab = enablePreviewTab;
+		partialSync(settings -> settings.enablePreviewTab = enablePreviewTab);
 	}
 
 	public boolean isUseAlternativeFileDialog() {
@@ -425,6 +452,10 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setResourceNameSource(ResourceNameSource source) {
 		this.resourceNameSource = source;
+	}
+
+	public void setUseHeadersForDetectResourceExtension(boolean enable) {
+		this.useHeadersForDetectResourceExtensions = enable;
 	}
 
 	public void updateRenameFlag(JadxArgs.RenameEnum flag, boolean enabled) {
@@ -572,12 +603,12 @@ public class JadxSettings extends JadxCLIArgs {
 		this.logLevel = level;
 	}
 
-	public String getEditorThemePath() {
-		return editorThemePath;
+	public String getEditorTheme() {
+		return editorTheme;
 	}
 
-	public void setEditorThemePath(String editorThemePath) {
-		this.editorThemePath = editorThemePath;
+	public void setEditorTheme(String editorTheme) {
+		this.editorTheme = editorTheme;
 	}
 
 	public String getLafTheme() {
@@ -611,14 +642,6 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setSrhResourceSkipSize(int size) {
 		srhResourceSkipSize = size;
-	}
-
-	public String getSrhResourceFileExt() {
-		return srhResourceFileExt;
-	}
-
-	public void setSrhResourceFileExt(String all) {
-		srhResourceFileExt = all.trim();
 	}
 
 	public int getSearchResultsPerPage() {
@@ -865,10 +888,5 @@ public class JadxSettings extends JadxCLIArgs {
 		if (deobfuscationUseSourceNameAsAlias != null) {
 			useSourceNameAsClassNameAlias = UseSourceNameAsClassNameAlias.create(deobfuscationUseSourceNameAsAlias);
 		}
-	}
-
-	@Override
-	protected JadxCLIArgs newInstance() {
-		return new JadxSettings();
 	}
 }

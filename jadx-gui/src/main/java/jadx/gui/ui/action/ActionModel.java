@@ -8,8 +8,6 @@ import java.util.stream.Collectors;
 
 import javax.swing.ImageIcon;
 
-import io.reactivex.annotations.NonNull;
-
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.UiUtils;
 import jadx.gui.utils.shortcut.Shortcut;
@@ -43,7 +41,7 @@ public enum ActionModel {
 			Shortcut.keyboard(KeyEvent.VK_P, UiUtils.ctrlButton() | KeyEvent.SHIFT_DOWN_MASK)),
 	EXIT(MENU_TOOLBAR, "file.exit", "file.exit", "ui/exit",
 			Shortcut.none()),
-	SYNC(MENU_TOOLBAR, "menu.sync", "menu.sync", "ui/pagination",
+	SYNC(MENU_TOOLBAR, "menu.sync", "menu.sync", "ui/locate",
 			Shortcut.keyboard(KeyEvent.VK_T, UiUtils.ctrlButton())),
 	TEXT_SEARCH(MENU_TOOLBAR, "menu.text_search", "menu.text_search", "ui/find",
 			Shortcut.keyboard(KeyEvent.VK_F, UiUtils.ctrlButton() | KeyEvent.SHIFT_DOWN_MASK)),
@@ -57,6 +55,8 @@ public enum ActionModel {
 			Shortcut.keyboard(KeyEvent.VK_A, UiUtils.ctrlButton() | KeyEvent.SHIFT_DOWN_MASK)),
 	GO_TO_ANDROID_MANIFEST(MENU_TOOLBAR, "menu.go_to_android_manifest", "menu.go_to_android_manifest", "ui/androidManifest",
 			Shortcut.none()),
+	PREVIEW_TAB(MENU_TOOLBAR, "menu.enable_preview_tab", "menu.enable_preview_tab", "ui/editorPreview",
+			Shortcut.none()),
 	DECOMPILE_ALL(MENU_TOOLBAR, "menu.decompile_all", "menu.decompile_all", "ui/runAll",
 			Shortcut.none()),
 	RESET_CACHE(MENU_TOOLBAR, "menu.reset_cache", "menu.reset_cache", "ui/reset",
@@ -65,6 +65,7 @@ public enum ActionModel {
 			Shortcut.keyboard(KeyEvent.VK_D, UiUtils.ctrlButton() | KeyEvent.ALT_DOWN_MASK)),
 	SHOW_LOG(MENU_TOOLBAR, "menu.log", "menu.log", "ui/logVerbose",
 			Shortcut.keyboard(KeyEvent.VK_L, UiUtils.ctrlButton() | KeyEvent.SHIFT_DOWN_MASK)),
+	CREATE_DESKTOP_ENTRY(MENU_TOOLBAR, "menu.create_desktop_entry", "menu.create_desktop_entry", null, Shortcut.none()),
 	BACK(MENU_TOOLBAR, "nav.back", "nav.back", "ui/left",
 			Shortcut.keyboard(KeyEvent.VK_ESCAPE)),
 	BACK_V(MENU_TOOLBAR, "nav.back", "nav.back", "ui/left",
@@ -80,6 +81,8 @@ public enum ActionModel {
 
 	FIND_USAGE(CODE_AREA, "popup.find_usage", "popup.find_usage", null,
 			Shortcut.keyboard(KeyEvent.VK_X)),
+	FIND_USAGE_PLUS(CODE_AREA, "popup.usage_dialog_plus", "popup.usage_dialog_plus", null,
+			Shortcut.keyboard(KeyEvent.VK_C)),
 	GOTO_DECLARATION(CODE_AREA, "popup.go_to_declaration", "popup.go_to_declaration", null,
 			Shortcut.keyboard(KeyEvent.VK_D)),
 	CODE_COMMENT(CODE_AREA, "popup.add_comment", "popup.add_comment", null,
@@ -100,7 +103,16 @@ public enum ActionModel {
 	SCRIPT_SAVE(PLUGIN_SCRIPT, "script.save", "script.save", "ui/menu-saveall",
 			Shortcut.keyboard(KeyEvent.VK_S, UiUtils.ctrlButton())),
 	SCRIPT_AUTO_COMPLETE(PLUGIN_SCRIPT, "script.auto_complete", "script.auto_complete", null,
-			Shortcut.keyboard(KeyEvent.VK_SPACE, UiUtils.ctrlButton()));
+			Shortcut.keyboard(KeyEvent.VK_SPACE, UiUtils.ctrlButton())),
+
+	HEX_VIEWER_SHOW_INSPECTOR(HEX_VIEWER_MENU, "hex_viewer.show_inspector", "hex_viewer.show_inspector",
+			null, Shortcut.none()),
+	HEX_VIEWER_CHANGE_ENCODING(HEX_VIEWER_MENU, "hex_viewer.change_encoding", "hex_viewer.change_encoding",
+			null, Shortcut.none()),
+	HEX_VIEWER_GO_TO_ADDRESS(HEX_VIEWER_MENU, "hex_viewer.goto_address", "hex_viewer.goto_address",
+			null, Shortcut.keyboard(KeyEvent.VK_J, UiUtils.ctrlButton())),
+	HEX_VIEWER_FIND(HEX_VIEWER_MENU, "hex_viewer.find", "hex_viewer.find",
+			null, Shortcut.keyboard(KeyEvent.VK_F, UiUtils.ctrlButton()));
 
 	private final ActionCategory category;
 	private final String nameRes;
@@ -151,7 +163,6 @@ public enum ActionModel {
 		return null;
 	}
 
-	@NonNull
 	public Shortcut getDefaultShortcut() {
 		return defaultShortcut;
 	}

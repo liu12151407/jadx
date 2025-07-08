@@ -28,18 +28,18 @@ public class PackageHelper {
 	private static final Comparator<JPackage> PKG_COMPARATOR = Comparator.comparing(JPackage::getName, String.CASE_INSENSITIVE_ORDER);
 
 	private final JadxWrapper wrapper;
+	private final JNodeCache nodeCache;
 	private List<String> excludedPackages;
-	private JNodeCache nodeCache;
 
 	private final Map<PackageInfo, JPackage> pkgInfoMap = new HashMap<>();
 
-	public PackageHelper(JadxWrapper wrapper) {
+	public PackageHelper(JadxWrapper wrapper, JNodeCache jNodeCache) {
 		this.wrapper = wrapper;
+		this.nodeCache = jNodeCache;
 	}
 
 	public List<JPackage> getRoots(boolean flatPackages) {
 		excludedPackages = wrapper.getExcludedPackages();
-		nodeCache = wrapper.getCache().getNodeCache();
 		pkgInfoMap.clear();
 		if (flatPackages) {
 			return prepareFlatPackages();
@@ -58,13 +58,14 @@ public class PackageHelper {
 		Set<String> added = new HashSet<>();
 		do {
 			JPackage jPkg = pkgInfoMap.get(pkgInfo);
-			if (jPkg != null) {
+			if (jPkg != null && !jPkg.isSynthetic()) {
 				JavaPackage javaPkg = jPkg.getPkg();
-				String fullName = javaPkg.isDefault() ? JPackage.PACKAGE_DEFAULT_HTML_STR : javaPkg.getFullName();
-				String name = jPkg.isSynthetic() || javaPkg.isParentRenamed() ? fullName : javaPkg.getName();
-				JRenamePackage renamePkg = new JRenamePackage(javaPkg, javaPkg.getRawFullName(), fullName, name);
-				if (added.add(fullName)) {
-					list.add(renamePkg);
+				if (!javaPkg.isDefault()) {
+					JRenamePackage renamePkg = new JRenamePackage(javaPkg,
+							javaPkg.getRawFullName(), javaPkg.getFullName(), javaPkg.getName());
+					if (added.add(javaPkg.getFullName())) {
+						list.add(renamePkg);
+					}
 				}
 			}
 			pkgInfo = pkgInfo.getParentPkg();
@@ -75,7 +76,7 @@ public class PackageHelper {
 	private List<JPackage> prepareFlatPackages() {
 		List<JPackage> list = new ArrayList<>();
 		for (JavaPackage javaPkg : wrapper.getPackages()) {
-			if (javaPkg.isLeaf()) {
+			if (javaPkg.isLeaf() || !javaPkg.getClasses().isEmpty()) {
 				JPackage pkg = buildJPackage(javaPkg, false);
 				pkg.setName(javaPkg.getFullName());
 				list.add(pkg);
@@ -87,7 +88,7 @@ public class PackageHelper {
 	}
 
 	private List<JPackage> prepareHierarchyPackages() {
-		JPackage root = new JPackage(null, true, Collections.emptyList(), new ArrayList<>(), true);
+		JPackage root = JPackage.makeTmpRoot();
 		List<JavaPackage> packages = wrapper.getPackages();
 		List<JPackage> jPackages = new ArrayList<>(packages.size());
 		// create nodes for exists packages
@@ -176,12 +177,21 @@ public class PackageHelper {
 			classes = Utils.collectionMap(javaPkg.getClasses(), nodeCache::makeFrom);
 			classes.sort(CLASS_COMPARATOR);
 		}
-		return new JPackage(javaPkg, pkgEnabled, classes, new ArrayList<>(), synthetic);
+		return nodeCache.newJPackage(javaPkg, synthetic, pkgEnabled, classes);
 	}
 
 	private static boolean isPkgEnabled(String fullPkgName, List<String> excludedPackages) {
-		return excludedPackages.isEmpty()
-				|| excludedPackages.stream()
-						.noneMatch(p -> fullPkgName.equals(p) || fullPkgName.startsWith(p + '.'));
+		return excludedPackages.isEmpty() || excludedPackages.stream().noneMatch(p -> isPkgMatch(fullPkgName, p));
+	}
+
+	private static boolean isPkgMatch(String fullPkgName, String filterPkg) {
+		if (fullPkgName.equals(filterPkg)) {
+			return true;
+		}
+		// optimized check, same as `fullPkgName.startsWith(filterPkg + '.')`
+		int filterPkgLen = filterPkg.length();
+		return fullPkgName.length() > filterPkgLen
+				&& fullPkgName.charAt(filterPkgLen) == '.'
+				&& fullPkgName.startsWith(filterPkg);
 	}
 }

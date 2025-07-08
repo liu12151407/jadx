@@ -6,6 +6,8 @@ import java.awt.KeyboardFocusManager;
 import java.awt.event.FocusEvent;
 import java.awt.event.FocusListener;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -30,6 +32,7 @@ import jadx.gui.ui.codearea.ClassCodeContentPanel;
 import jadx.gui.ui.codearea.EditorViewState;
 import jadx.gui.ui.codearea.SmaliArea;
 import jadx.gui.ui.panel.ContentPanel;
+import jadx.gui.ui.panel.FontPanel;
 import jadx.gui.ui.panel.HtmlPanel;
 import jadx.gui.ui.panel.IViewStateSupport;
 import jadx.gui.ui.panel.ImagePanel;
@@ -58,6 +61,19 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 		controller.addListener(this);
 		setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
 
+		MouseAdapter clickAdapter = new MouseAdapter() {
+			@Override
+			public void mousePressed(MouseEvent e) {
+				int tabIndex = indexAtLocation(e.getX(), e.getY());
+				if (tabIndex == -1 || tabIndex > getTabCount()) {
+					return;
+				}
+				TabComponent tab = (TabComponent) getTabComponentAt(tabIndex);
+				tab.dispatchEvent(e);
+			}
+		};
+		addMouseListener(clickAdapter);
+
 		addMouseWheelListener(event -> {
 			if (dnd != null && dnd.isDragging()) {
 				return;
@@ -70,12 +86,7 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 			int index = getSelectedIndex();
 			int maxIndex = getTabCount() - 1;
 			index += direction;
-			// switch between first tab <-> last tab
-			if (index < 0) {
-				index = maxIndex;
-			} else if (index > maxIndex) {
-				index = 0;
-			}
+			index = Math.max(0, Math.min(maxIndex, index));
 			try {
 				setSelectedIndex(index);
 			} catch (IndexOutOfBoundsException e) {
@@ -209,24 +220,19 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 	}
 
 	private @Nullable ContentPanel showCode(JumpPosition jumpPos) {
-		ContentPanel contentPanel = getContentPanel(jumpPos.getNode());
-		if (contentPanel != null) {
-			scrollToPos(contentPanel, jumpPos.getPos());
-			selectTab(contentPanel);
+		JNode jumpNode = jumpPos.getNode();
+		ContentPanel contentPanel = getContentPanel(jumpNode);
+		if (contentPanel == null) {
+			return null;
 		}
+		selectTab(contentPanel);
+		int pos = jumpPos.getPos();
+		if (pos < 0) {
+			LOG.warn("Invalid jump: {}", jumpPos, new JadxRuntimeException());
+			pos = 0;
+		}
+		contentPanel.scrollToPos(pos);
 		return contentPanel;
-	}
-
-	private void scrollToPos(ContentPanel contentPanel, int pos) {
-		if (pos == 0) {
-			LOG.warn("Ignore zero jump!", new JadxRuntimeException());
-			return;
-		}
-		if (contentPanel instanceof AbstractCodeContentPanel) {
-			AbstractCodeArea codeArea = ((AbstractCodeContentPanel) contentPanel).getCodeArea();
-			codeArea.scrollToPos(pos);
-			codeArea.requestFocus();
-		}
 	}
 
 	public void selectTab(ContentPanel contentPanel) {
@@ -243,7 +249,7 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 		} else {
 			selectTab(panel);
 		}
-		ClassCodeContentPanel codePane = ((ClassCodeContentPanel) panel);
+		ClassCodeContentPanel codePane = (ClassCodeContentPanel) panel;
 		codePane.showSmaliPane();
 		SmaliArea smaliArea = (SmaliArea) codePane.getSmaliCodeArea();
 		if (debugMode) {
@@ -256,7 +262,10 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 	public @Nullable JumpPosition getCurrentPosition() {
 		ContentPanel selectedCodePanel = getSelectedContentPanel();
 		if (selectedCodePanel instanceof AbstractCodeContentPanel) {
-			return ((AbstractCodeContentPanel) selectedCodePanel).getCodeArea().getCurrentPosition();
+			AbstractCodeArea codeArea = ((AbstractCodeContentPanel) selectedCodePanel).getCodeArea();
+			if (codeArea != null) {
+				return codeArea.getCurrentPosition();
+			}
 		}
 		return null;
 	}
@@ -414,7 +423,7 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 	}
 
 	@Override
-	public void onTabCodeJump(TabBlueprint blueprint, JumpPosition position) {
+	public void onTabCodeJump(TabBlueprint blueprint, @Nullable JumpPosition prevPos, JumpPosition position) {
 		showCode(position);
 	}
 
@@ -551,7 +560,7 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 				return;
 			}
 			if (pane instanceof AbstractCodeContentPanel) {
-				((AbstractCodeContentPanel) pane).getCodeArea().addFocusListener(INSTANCE);
+				((AbstractCodeContentPanel) pane).getChildrenComponent().addFocusListener(INSTANCE);
 				return;
 			}
 			if (pane instanceof HtmlPanel) {
@@ -559,6 +568,10 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 				return;
 			}
 			if (pane instanceof ImagePanel) {
+				pane.addFocusListener(INSTANCE);
+				return;
+			}
+			if (pane instanceof FontPanel) {
 				pane.addFocusListener(INSTANCE);
 				return;
 			}
@@ -571,7 +584,7 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 				return;
 			}
 			if (pane instanceof AbstractCodeContentPanel) {
-				SwingUtilities.invokeLater(() -> ((AbstractCodeContentPanel) pane).getCodeArea().requestFocus());
+				SwingUtilities.invokeLater(() -> ((AbstractCodeContentPanel) pane).getChildrenComponent().requestFocus());
 				return;
 			}
 			if (pane instanceof HtmlPanel) {
@@ -580,6 +593,10 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 			}
 			if (pane instanceof ImagePanel) {
 				SwingUtilities.invokeLater(((ImagePanel) pane)::requestFocusInWindow);
+				return;
+			}
+			if (pane instanceof FontPanel) {
+				SwingUtilities.invokeLater(((FontPanel) pane)::requestFocusInWindow);
 				return;
 			}
 			// throw new JadxRuntimeException("Add the new ContentPanel to TabbedPane.FocusManager: " + pane);

@@ -8,19 +8,21 @@ public class ApplicationParams {
 	private final String applicationLabel;
 	private final Integer minSdkVersion;
 	private final Integer targetSdkVersion;
+	private final Integer compileSdkVersion;
 	private final Integer versionCode;
 	private final String versionName;
-	private final String mainActivtiy;
+	private final String mainActivity;
 	private final String application;
 
-	public ApplicationParams(String applicationLabel, Integer minSdkVersion, Integer targetSdkVersion, Integer versionCode,
-			String versionName, String mainActivtiy, String application) {
+	public ApplicationParams(String applicationLabel, Integer minSdkVersion, Integer targetSdkVersion, Integer compileSdkVersion,
+			Integer versionCode, String versionName, String mainActivity, String application) {
 		this.applicationLabel = applicationLabel;
 		this.minSdkVersion = minSdkVersion;
 		this.targetSdkVersion = targetSdkVersion;
+		this.compileSdkVersion = compileSdkVersion;
 		this.versionCode = versionCode;
 		this.versionName = versionName;
-		this.mainActivtiy = mainActivtiy;
+		this.mainActivity = mainActivity;
 		this.application = application;
 	}
 
@@ -36,6 +38,10 @@ public class ApplicationParams {
 		return targetSdkVersion;
 	}
 
+	public Integer getCompileSdkVersion() {
+		return compileSdkVersion;
+	}
+
 	public Integer getVersionCode() {
 		return versionCode;
 	}
@@ -45,11 +51,11 @@ public class ApplicationParams {
 	}
 
 	public String getMainActivity() {
-		return mainActivtiy;
+		return mainActivity;
 	}
 
 	public JavaClass getMainActivityJavaClass(JadxDecompiler decompiler) {
-		return decompiler.searchJavaClassByOrigFullName(mainActivtiy);
+		return decompiler.searchJavaClassByOrigFullName(mainActivity);
 	}
 
 	public String getApplication() {

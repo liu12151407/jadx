@@ -1,8 +1,8 @@
 package jadx.cli;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
@@ -13,6 +13,8 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import org.jetbrains.annotations.Nullable;
 
 import com.beust.jcommander.DynamicParameter;
 import com.beust.jcommander.IStringConverter;
@@ -30,13 +32,14 @@ import jadx.api.args.ResourceNameSource;
 import jadx.api.args.UseSourceNameAsClassNameAlias;
 import jadx.api.args.UserRenamesMappingsMode;
 import jadx.core.deobf.conditions.DeobfWhitelist;
+import jadx.core.export.ExportGradleType;
 import jadx.core.utils.exceptions.JadxArgsValidateException;
 import jadx.core.utils.files.FileUtils;
 
 public class JadxCLIArgs {
 
 	@Parameter(description = "<input files> (.apk, .dex, .jar, .class, .smali, .zip, .aar, .arsc, .aab, .xapk, .apkm, .jadx.kts)")
-	protected List<String> files = new ArrayList<>(1);
+	protected List<String> files = Collections.emptyList();
 
 	@Parameter(names = { "-d", "--output-dir" }, description = "output directory")
 	protected String outDir;
@@ -53,6 +56,9 @@ public class JadxCLIArgs {
 	@Parameter(names = { "-s", "--no-src" }, description = "do not decompile source code")
 	protected boolean skipSources = false;
 
+	@Parameter(names = { "-j", "--threads-count" }, description = "processing threads count")
+	protected int threadsCount = JadxArgs.DEFAULT_THREADS_COUNT;
+
 	@Parameter(names = { "--single-class" }, description = "decompile a single class, full name, raw or alias")
 	protected String singleClass = null;
 
@@ -62,11 +68,19 @@ public class JadxCLIArgs {
 	@Parameter(names = { "--output-format" }, description = "can be 'java' or 'json'")
 	protected String outputFormat = "java";
 
-	@Parameter(names = { "-e", "--export-gradle" }, description = "save as android gradle project")
+	@Parameter(names = { "-e", "--export-gradle" }, description = "save as gradle project (set '--export-gradle-type' to 'auto')")
 	protected boolean exportAsGradleProject = false;
 
-	@Parameter(names = { "-j", "--threads-count" }, description = "processing threads count")
-	protected int threadsCount = JadxArgs.DEFAULT_THREADS_COUNT;
+	@Parameter(
+			names = { "--export-gradle-type" },
+			description = "Gradle project template for export:"
+					+ "\n 'auto' - detect automatically"
+					+ "\n 'android-app' - Android Application (apk)"
+					+ "\n 'android-library' - Android Library (aar)"
+					+ "\n 'simple-java' - simple Java",
+			converter = ExportGradleTypeConverter.class
+	)
+	protected @Nullable ExportGradleType exportGradleType = null;
 
 	@Parameter(
 			names = { "-m", "--decompilation-mode" },
@@ -214,6 +228,12 @@ public class JadxCLIArgs {
 	protected UseKotlinMethodsForVarNames useKotlinMethodsForVarNames = UseKotlinMethodsForVarNames.APPLY;
 
 	@Parameter(
+			names = { "--use-headers-for-detect-resource-extensions" },
+			description = "Use headers for detect resource extensions if resource obfuscated"
+	)
+	protected boolean useHeadersForDetectResourceExtensions = false;
+
+	@Parameter(
 			names = { "--rename-flags" },
 			description = "fix options (comma-separated list of):"
 					+ "\n 'case' - fix case sensitivity issues (according to --fs-case-sensitive option),"
@@ -283,29 +303,11 @@ public class JadxCLIArgs {
 	protected Map<String, String> pluginOptions = new HashMap<>();
 
 	public boolean processArgs(String[] args) {
-		JCommanderWrapper<JadxCLIArgs> jcw = new JCommanderWrapper<>(this);
+		JCommanderWrapper jcw = new JCommanderWrapper(this);
 		return jcw.parse(args) && process(jcw);
 	}
 
-	/**
-	 * Set values only for options provided in cmd.
-	 * Used to merge saved options and options passed in command line.
-	 */
-	public boolean overrideProvided(String[] args) {
-		JCommanderWrapper<JadxCLIArgs> jcw = new JCommanderWrapper<>(newInstance());
-		if (!jcw.parse(args)) {
-			return false;
-		}
-		jcw.overrideProvided(this);
-		return process(jcw);
-	}
-
-	protected JadxCLIArgs newInstance() {
-		return new JadxCLIArgs();
-	}
-
-	private boolean process(JCommanderWrapper<JadxCLIArgs> jcw) {
-		files.addAll(jcw.getUnknownOptions());
+	public boolean process(JCommanderWrapper jcw) {
 		if (jcw.processCommands()) {
 			return false;
 		}
@@ -358,12 +360,16 @@ public class JadxCLIArgs {
 		args.setDeobfuscationMaxLength(deobfuscationMaxLength);
 		args.setDeobfuscationWhitelist(Arrays.asList(deobfuscationWhitelistStr.split(" ")));
 		args.setUseSourceNameAsClassNameAlias(getUseSourceNameAsClassNameAlias());
+		args.setUseHeadersForDetectResourceExtensions(useHeadersForDetectResourceExtensions);
 		args.setSourceNameRepeatLimit(sourceNameRepeatLimit);
 		args.setUseKotlinMethodsForVarNames(useKotlinMethodsForVarNames);
 		args.setResourceNameSource(resourceNameSource);
 		args.setEscapeUnicode(escapeUnicode);
 		args.setRespectBytecodeAccModifiers(respectBytecodeAccessModifiers);
-		args.setExportAsGradleProject(exportAsGradleProject);
+		args.setExportGradleType(exportGradleType);
+		if (exportAsGradleProject && exportGradleType == null) {
+			args.setExportGradleType(ExportGradleType.AUTO);
+		}
 		args.setSkipXmlPrettyPrint(skipXmlPrettyPrint);
 		args.setUseImports(useImports);
 		args.setDebugInfo(debugInfo);
@@ -386,6 +392,10 @@ public class JadxCLIArgs {
 
 	public List<String> getFiles() {
 		return files;
+	}
+
+	public void setFiles(List<String> files) {
+		this.files = files;
 	}
 
 	public String getOutDir() {
@@ -583,6 +593,10 @@ public class JadxCLIArgs {
 		return fsCaseSensitive;
 	}
 
+	public boolean isUseHeadersForDetectResourceExtensions() {
+		return useHeadersForDetectResourceExtensions;
+	}
+
 	public CommentsLevel getCommentsLevel() {
 		return commentsLevel;
 	}
@@ -661,6 +675,12 @@ public class JadxCLIArgs {
 	public static class DecompilationModeConverter extends BaseEnumConverter<DecompilationMode> {
 		public DecompilationModeConverter() {
 			super(DecompilationMode::valueOf, DecompilationMode::values);
+		}
+	}
+
+	public static class ExportGradleTypeConverter extends BaseEnumConverter<ExportGradleType> {
+		public ExportGradleTypeConverter() {
+			super(ExportGradleType::valueOf, ExportGradleType::values);
 		}
 	}
 

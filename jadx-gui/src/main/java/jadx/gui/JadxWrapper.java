@@ -23,6 +23,7 @@ import jadx.api.impl.InMemoryCodeCache;
 import jadx.api.metadata.ICodeNodeRef;
 import jadx.api.usage.impl.EmptyUsageInfoCache;
 import jadx.api.usage.impl.InMemoryUsageInfoCache;
+import jadx.cli.JadxAppCommon;
 import jadx.cli.plugins.JadxFilesGetter;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.ProcessState;
@@ -65,7 +66,9 @@ public class JadxWrapper {
 				JadxProject project = getProject();
 				JadxArgs jadxArgs = getSettings().toJadxArgs();
 				jadxArgs.setPluginLoader(new JadxExternalPluginsLoader());
+				jadxArgs.setFilesGetter(JadxFilesGetter.INSTANCE);
 				project.fillJadxArgs(jadxArgs);
+				JadxAppCommon.applyEnvVars(jadxArgs);
 
 				decompiler = new JadxDecompiler(jadxArgs);
 				guiPluginsContext = initGuiPluginsContext(decompiler, mainWindow);
@@ -147,7 +150,7 @@ public class JadxWrapper {
 		decompiler.getPluginManager().registerAddPluginListener(pluginContext -> {
 			AppContext appContext = new AppContext();
 			appContext.setGuiContext(guiPluginsContext.buildForPlugin(pluginContext));
-			appContext.setFilesGetter(JadxFilesGetter.INSTANCE);
+			appContext.setFilesGetter(decompiler.getArgs().getFilesGetter());
 			pluginContext.setAppContext(appContext);
 		});
 		return guiPluginsContext;

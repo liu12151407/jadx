@@ -20,7 +20,7 @@ import jadx.core.xmlgen.ResContainer;
 
 public class AndroidManifestParser {
 	private final Document androidManifest;
-	private final Document appStrings;
+	private final @Nullable Document appStrings;
 	private final EnumSet<AppAttribute> parseAttrs;
 	private final IJadxSecurity security;
 
@@ -28,7 +28,7 @@ public class AndroidManifestParser {
 		this(androidManifestRes, null, parseAttrs, security);
 	}
 
-	public AndroidManifestParser(ResourceFile androidManifestRes, ResContainer appStrings,
+	public AndroidManifestParser(ResourceFile androidManifestRes, @Nullable ResContainer appStrings,
 			EnumSet<AppAttribute> parseAttrs, IJadxSecurity security) {
 		this.parseAttrs = parseAttrs;
 		this.security = Objects.requireNonNull(security);
@@ -61,6 +61,7 @@ public class AndroidManifestParser {
 		String applicationLabel = null;
 		Integer minSdkVersion = null;
 		Integer targetSdkVersion = null;
+		Integer compileSdkVersion = null;
 		Integer versionCode = null;
 		String versionName = null;
 		String mainActivity = null;
@@ -89,6 +90,14 @@ public class AndroidManifestParser {
 					targetSdkVersion = minSdkVersion;
 				}
 			}
+			if (parseAttrs.contains(AppAttribute.COMPILE_SDK_VERSION)) {
+				String stringCompileSdk = usesSdk.getAttribute("android:compileSdkVersion");
+				if (!stringCompileSdk.isEmpty()) {
+					compileSdkVersion = Integer.valueOf(stringCompileSdk);
+				} else {
+					compileSdkVersion = targetSdkVersion;
+				}
+			}
 		}
 		if (manifest != null) {
 			if (parseAttrs.contains(AppAttribute.VERSION_CODE)) {
@@ -105,8 +114,8 @@ public class AndroidManifestParser {
 			application = getApplicationName();
 		}
 
-		return new ApplicationParams(applicationLabel, minSdkVersion, targetSdkVersion, versionCode,
-				versionName, mainActivity, application);
+		return new ApplicationParams(applicationLabel, minSdkVersion, targetSdkVersion, compileSdkVersion,
+				versionCode, versionName, mainActivity, application);
 	}
 
 	private String getApplicationLabel() {

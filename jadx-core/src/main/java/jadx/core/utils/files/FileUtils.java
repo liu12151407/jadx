@@ -24,9 +24,9 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.stream.Collectors;
@@ -37,6 +37,8 @@ import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.core.plugins.files.IJadxFilesGetter;
+import jadx.core.utils.ListUtils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
 public class FileUtils {
@@ -56,6 +58,7 @@ public class FileUtils {
 
 	public static synchronized Path updateTempRootDir(Path newTempRootDir) {
 		try {
+			makeDirs(newTempRootDir);
 			Path dir = Files.createTempDirectory(newTempRootDir, JADX_TMP_INSTANCE_PREFIX);
 			tempRootDir = dir;
 			dir.toFile().deleteOnExit();
@@ -155,54 +158,73 @@ public class FileUtils {
 		}
 	}
 
-	private static final SimpleFileVisitor<Path> FILE_DELETE_VISITOR = new SimpleFileVisitor<>() {
-		@Override
-		public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-			Files.delete(file);
-			return FileVisitResult.CONTINUE;
-		}
-
-		@Override
-		public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-			Files.delete(dir);
-			return FileVisitResult.CONTINUE;
-		}
-	};
-
 	private static void deleteDir(Path dir) {
+		deleteDir(dir, false);
+	}
+
+	private static void deleteDir(Path dir, boolean keepRootDir) {
 		try {
-			Files.walkFileTree(dir, Collections.emptySet(), Integer.MAX_VALUE, FILE_DELETE_VISITOR);
+			List<Path> files = new ArrayList<>();
+			List<Path> directories = new ArrayList<>();
+			Files.walkFileTree(dir, Collections.emptySet(), Integer.MAX_VALUE, new SimpleFileVisitor<>() {
+				@Override
+				public @NotNull FileVisitResult visitFile(@NotNull Path file, @NotNull BasicFileAttributes attrs) {
+					files.add(file);
+					return FileVisitResult.CONTINUE;
+				}
+
+				@Override
+				public @NotNull FileVisitResult postVisitDirectory(@NotNull Path directory, IOException exc) {
+					directories.add(directory);
+					return FileVisitResult.CONTINUE;
+				}
+			});
+			// delete files in parallel
+			if (!files.isEmpty()) {
+				files.parallelStream().forEach(path -> {
+					try {
+						Files.delete(path);
+					} catch (Exception e) {
+						LOG.warn("Failed to delete file {}", path.toAbsolutePath(), e);
+					}
+				});
+			}
+			// after all files are deleted, remove empty directories
+			if (keepRootDir) {
+				// root dir always last
+				ListUtils.removeLast(directories);
+			}
+			for (Path directory : directories) {
+				try {
+					Files.delete(directory);
+				} catch (IOException e) {
+					LOG.warn("Failed to delete directory {}", directory.toAbsolutePath(), e);
+				}
+			}
 		} catch (Exception e) {
 			throw new JadxRuntimeException("Failed to delete directory " + dir, e);
 		}
 	}
 
 	public static void clearTempRootDir() {
-		clearDir(tempRootDir);
+		if (Files.isDirectory(tempRootDir)) {
+			clearDir(tempRootDir);
+		}
 	}
 
 	public static void clearDir(Path clearDir) {
 		try {
-			Files.walkFileTree(clearDir, Collections.emptySet(), Integer.MAX_VALUE, new SimpleFileVisitor<>() {
-				@Override
-				public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-					Files.delete(file);
-					return FileVisitResult.CONTINUE;
-				}
-
-				@Override
-				public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-					if (!dir.equals(clearDir)) {
-						Files.delete(dir);
-					}
-					return FileVisitResult.CONTINUE;
-				}
-			});
+			deleteDir(clearDir, true);
 		} catch (Exception e) {
 			throw new JadxRuntimeException("Failed to clear directory " + clearDir, e);
 		}
 	}
 
+	/**
+	 * Deprecated.
+	 * Migrate to {@link IJadxFilesGetter} from jadx args to get temp dir
+	 */
+	@Deprecated
 	public static Path createTempDir(String prefix) {
 		try {
 			Path dir = Files.createTempDirectory(tempRootDir, prefix);
@@ -213,6 +235,11 @@ public class FileUtils {
 		}
 	}
 
+	/**
+	 * Deprecated.
+	 * Migrate to {@link IJadxFilesGetter} from jadx args to get temp dir
+	 */
+	@Deprecated
 	public static Path createTempFile(String suffix) {
 		try {
 			Path path = Files.createTempFile(tempRootDir, JADX_TMP_PREFIX, suffix);
@@ -223,11 +250,31 @@ public class FileUtils {
 		}
 	}
 
+	/**
+	 * Deprecated.
+	 * Prefer {@link IJadxFilesGetter} from jadx args to get temp dir
+	 */
+	@Deprecated
 	public static Path createTempFileNoDelete(String suffix) {
 		try {
 			return Files.createTempFile(Files.createTempDirectory("jadx-persist"), "jadx-", suffix);
 		} catch (Exception e) {
 			throw new JadxRuntimeException("Failed to create temp file with suffix: " + suffix, e);
+		}
+	}
+
+	/**
+	 * Deprecated.
+	 * Migrate to {@link IJadxFilesGetter} from jadx args to get temp dir
+	 */
+	@Deprecated
+	public static Path createTempFileNonPrefixed(String fileName) {
+		try {
+			Path path = Files.createFile(tempRootDir.resolve(fileName));
+			path.toFile().deleteOnExit();
+			return path;
+		} catch (Exception e) {
+			throw new JadxRuntimeException("Failed to create non-prefixed temp file: " + fileName, e);
 		}
 	}
 
@@ -264,6 +311,16 @@ public class FileUtils {
 		FileUtils.makeDirsForFile(file);
 		Files.writeString(file, data, StandardCharsets.UTF_8,
 				StandardOpenOption.WRITE, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+	}
+
+	public static void writeFile(Path file, byte[] data) throws IOException {
+		FileUtils.makeDirsForFile(file);
+		Files.write(file, data, StandardOpenOption.WRITE, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+	}
+
+	public static void writeFile(Path file, InputStream is) throws IOException {
+		FileUtils.makeDirsForFile(file);
+		Files.copy(is, file, StandardCopyOption.REPLACE_EXISTING);
 	}
 
 	public static String readFile(Path textFile) throws IOException {
@@ -343,20 +400,18 @@ public class FileUtils {
 		return new String(hexChars, StandardCharsets.US_ASCII);
 	}
 
+	private static final byte[] ZIP_FILE_MAGIC = { 0x50, 0x4B, 0x03, 0x04 };
+
 	public static boolean isZipFile(File file) {
 		try (InputStream is = new FileInputStream(file)) {
-			byte[] headers = new byte[4];
-			int read = is.read(headers, 0, 4);
-			if (read == headers.length) {
-				String headerString = bytesToHex(headers);
-				if (Objects.equals(headerString, "504b0304")) {
-					return true;
-				}
-			}
+			int len = ZIP_FILE_MAGIC.length;
+			byte[] headers = new byte[len];
+			int read = is.read(headers);
+			return read == len && Arrays.equals(headers, ZIP_FILE_MAGIC);
 		} catch (Exception e) {
-			LOG.error("Failed read zip file: {}", file.getAbsolutePath(), e);
+			LOG.error("Failed to read zip file: {}", file.getAbsolutePath(), e);
+			return false;
 		}
-		return false;
 	}
 
 	public static String getPathBaseName(Path file) {

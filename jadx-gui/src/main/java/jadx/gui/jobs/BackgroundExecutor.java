@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.api.utils.tasks.ITaskExecutor;
+import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.gui.settings.JadxSettings;
 import jadx.gui.ui.MainWindow;
@@ -103,8 +104,16 @@ public class BackgroundExecutor {
 		return execute(new SimpleTask(title, Collections.singletonList(backgroundRunnable)));
 	}
 
+	public void startLoading(Runnable backgroundRunnable, Runnable onFinishUiRunnable) {
+		execute(new SimpleTask(NLS.str("progress.load"), backgroundRunnable, onFinishUiRunnable));
+	}
+
+	public void startLoading(Runnable backgroundRunnable) {
+		execute(new SimpleTask(NLS.str("progress.load"), backgroundRunnable));
+	}
+
 	private synchronized void reset() {
-		taskQueueExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+		taskQueueExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(1, Utils.simpleThreadFactory("bg"));
 		taskRunning.clear();
 		idSupplier.set(0);
 	}
@@ -162,6 +171,7 @@ public class BackgroundExecutor {
 				} finally {
 					taskComplete(id);
 					progressPane.changeVisibility(this, false);
+					removePropertyChangeListener(progressPane);
 				}
 			}
 			return status;

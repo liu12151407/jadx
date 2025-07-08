@@ -15,7 +15,6 @@ import org.jetbrains.annotations.Nullable;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
-import jadx.api.plugins.utils.ZipSecurity;
 import jadx.core.utils.files.FileUtils;
 import jadx.plugins.tools.data.JadxPluginListCache;
 import jadx.plugins.tools.data.JadxPluginMetadata;
@@ -24,6 +23,7 @@ import jadx.plugins.tools.resolvers.github.LocationInfo;
 import jadx.plugins.tools.resolvers.github.data.Asset;
 import jadx.plugins.tools.resolvers.github.data.Release;
 import jadx.plugins.tools.utils.PluginUtils;
+import jadx.zip.ZipReader;
 
 import static jadx.core.utils.GsonUtils.buildGson;
 import static jadx.plugins.tools.utils.PluginFiles.PLUGINS_LIST_CACHE;
@@ -112,27 +112,35 @@ public class JadxPluginsList {
 	}
 
 	private JadxPluginListCache fetchBundle(Release release) {
-		Asset listAsset = release.getAssets().get(0);
-		Path tmpListFile = FileUtils.createTempFile("list.zip");
-		PluginUtils.downloadFile(listAsset.getDownloadUrl(), tmpListFile);
-
-		JadxPluginListCache listCache = new JadxPluginListCache();
-		listCache.setVersion(release.getName());
-		listCache.setList(loadListBundle(tmpListFile));
-		return listCache;
+		try {
+			Asset listAsset = release.getAssets().get(0);
+			Path tmpListFile = Files.createTempFile("plugins-list", ".zip");
+			try {
+				PluginUtils.downloadFile(listAsset.getDownloadUrl(), tmpListFile);
+				JadxPluginListCache listCache = new JadxPluginListCache();
+				listCache.setVersion(release.getName());
+				listCache.setList(loadListBundle(tmpListFile));
+				return listCache;
+			} finally {
+				Files.deleteIfExists(tmpListFile);
+			}
+		} catch (Exception e) {
+			throw new RuntimeException("Failed to load plugin-list bundle for release:" + release.getName(), e);
+		}
 	}
 
 	private static List<JadxPluginMetadata> loadListBundle(Path tmpListFile) {
 		Gson gson = buildGson();
 		List<JadxPluginMetadata> entries = new ArrayList<>();
-		ZipSecurity.readZipEntries(tmpListFile.toFile(), (entry, in) -> {
+		new ZipReader().visitEntries(tmpListFile.toFile(), entry -> {
 			if (entry.getName().endsWith(".json")) {
-				try (Reader reader = new InputStreamReader(in)) {
+				try (Reader reader = new InputStreamReader(entry.getInputStream())) {
 					entries.addAll(gson.fromJson(reader, LIST_TYPE));
 				} catch (Exception e) {
 					throw new RuntimeException("Failed to read plugins list entry: " + entry.getName());
 				}
 			}
+			return null;
 		});
 		return entries;
 	}

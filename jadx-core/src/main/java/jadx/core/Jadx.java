@@ -16,6 +16,7 @@ import jadx.core.deobf.DeobfuscatorVisitor;
 import jadx.core.deobf.SaveDeobfMapping;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.visitors.AnonymousClassVisitor;
+import jadx.core.dex.visitors.ApplyVariableNames;
 import jadx.core.dex.visitors.AttachCommentsVisitor;
 import jadx.core.dex.visitors.AttachMethodDetails;
 import jadx.core.dex.visitors.AttachTryCatchVisitor;
@@ -35,6 +36,7 @@ import jadx.core.dex.visitors.InitCodeVariables;
 import jadx.core.dex.visitors.InlineMethods;
 import jadx.core.dex.visitors.MarkMethodsForInline;
 import jadx.core.dex.visitors.MethodInvokeVisitor;
+import jadx.core.dex.visitors.MethodThrowsVisitor;
 import jadx.core.dex.visitors.MethodVisitor;
 import jadx.core.dex.visitors.ModVisitor;
 import jadx.core.dex.visitors.MoveInlineVisitor;
@@ -102,7 +104,6 @@ public class Jadx {
 		passes.add(new SignatureProcessor());
 		passes.add(new OverrideMethodVisitor());
 		passes.add(new AddAndroidConstants());
-		passes.add(new CollectConstValues());
 
 		// rename and deobfuscation
 		passes.add(new DeobfuscatorVisitor());
@@ -111,6 +112,7 @@ public class Jadx {
 		passes.add(new SaveDeobfMapping());
 
 		passes.add(new UsageInfoVisitor());
+		passes.add(new CollectConstValues());
 		passes.add(new ProcessAnonymous());
 		passes.add(new ProcessMethodsForInline());
 		return passes;
@@ -180,6 +182,8 @@ public class Jadx {
 		passes.add(new ReturnVisitor());
 		passes.add(new CleanRegions());
 
+		passes.add(new MethodThrowsVisitor());
+
 		passes.add(new CodeShrinkVisitor());
 		passes.add(new MethodInvokeVisitor());
 		passes.add(new SimplifyVisitor());
@@ -197,6 +201,7 @@ public class Jadx {
 			passes.add(new MarkMethodsForInline());
 		}
 		passes.add(new ProcessVariables());
+		passes.add(new ApplyVariableNames());
 		passes.add(new PrepareForCodeGen());
 		if (args.isCfgOutput()) {
 			passes.add(DotGraphVisitor.dumpRegions());

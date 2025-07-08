@@ -26,6 +26,7 @@ import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.LoopInfo;
 import jadx.core.dex.attributes.nodes.MethodOverrideAttr;
+import jadx.core.dex.attributes.nodes.MethodThrowsAttr;
 import jadx.core.dex.attributes.nodes.NotificationAttrNode;
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.info.AccessInfo.AFType;
@@ -366,14 +367,11 @@ public class MethodNode extends NotificationAttrNode implements IMethodDetails, 
 
 	public void setBasicBlocks(List<BlockNode> blocks) {
 		this.blocks = blocks;
-		updateBlockIds(blocks);
+		updateBlockPositions();
 	}
 
-	public void updateBlockIds(List<BlockNode> blocks) {
-		int count = blocks.size();
-		for (int i = 0; i < count; i++) {
-			blocks.get(i).setId(i);
-		}
+	public void updateBlockPositions() {
+		BlockNode.updateBlockPositions(blocks);
 	}
 
 	public int getNextBlockCId() {
@@ -480,11 +478,15 @@ public class MethodNode extends NotificationAttrNode implements IMethodDetails, 
 
 	@Override
 	public List<ArgType> getThrows() {
-		ExceptionsAttr exceptionsAttr = get(JadxAttrType.EXCEPTIONS);
-		if (exceptionsAttr == null) {
-			return Collections.emptyList();
+		MethodThrowsAttr throwsAttr = get(AType.METHOD_THROWS);
+		if (throwsAttr != null) {
+			return Utils.collectionMap(throwsAttr.getList(), ArgType::object);
 		}
-		return Utils.collectionMap(exceptionsAttr.getList(), ArgType::object);
+		ExceptionsAttr exceptionsAttr = get(JadxAttrType.EXCEPTIONS);
+		if (exceptionsAttr != null) {
+			return Utils.collectionMap(exceptionsAttr.getList(), ArgType::object);
+		}
+		return Collections.emptyList();
 	}
 
 	/**

@@ -5,7 +5,6 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -48,7 +47,6 @@ import static jadx.core.utils.GsonUtils.interfaceReplace;
 public class JadxProject {
 	private static final Logger LOG = LoggerFactory.getLogger(JadxProject.class);
 
-	private static final int CURRENT_PROJECT_VERSION = 1;
 	public static final String PROJECT_EXTENSION = "jadx";
 
 	private static final int SEARCH_HISTORY_LIMIT = 30;
@@ -133,31 +131,16 @@ public class JadxProject {
 		changed();
 	}
 
-	public List<String[]> getTreeExpansions() {
-		return data.getTreeExpansions();
-	}
-
-	public void addTreeExpansion(String[] expansion) {
-		data.getTreeExpansions().add(expansion);
+	public void setTreeExpansions(List<String> list) {
+		if (list.equals(data.getTreeExpansionsV2())) {
+			return;
+		}
+		data.setTreeExpansionsV2(list);
 		changed();
 	}
 
-	public void removeTreeExpansion(String[] expansion) {
-		data.getTreeExpansions().removeIf(strings -> isParentOfExpansion(expansion, strings));
-		changed();
-	}
-
-	private boolean isParentOfExpansion(String[] parent, String[] child) {
-		if (Arrays.equals(parent, child)) {
-			return true;
-		}
-		for (int i = child.length - parent.length; i > 0; i--) {
-			String[] arr = Arrays.copyOfRange(child, i, child.length);
-			if (Arrays.equals(parent, arr)) {
-				return true;
-			}
-		}
-		return false;
+	public List<String> getTreeExpansions() {
+		return data.getTreeExpansionsV2();
 	}
 
 	public JadxCodeData getCodeData() {
@@ -266,6 +249,22 @@ public class JadxProject {
 		changed();
 	}
 
+	public void setSearchResourcesFilter(String searchResourcesFilter) {
+		data.setSearchResourcesFilter(searchResourcesFilter);
+	}
+
+	public String getSearchResourcesFilter() {
+		return data.getSearchResourcesFilter();
+	}
+
+	public void setSearchResourcesSizeLimit(int searchResourcesSizeLimit) {
+		data.setSearchResourcesSizeLimit(searchResourcesSizeLimit);
+	}
+
+	public int getSearchResourcesSizeLimit() {
+		return data.getSearchResourcesSizeLimit();
+	}
+
 	private void changed() {
 		JadxSettings settings = mainWindow.getSettings();
 		if (settings != null && settings.getSaveOption() == JadxSettings.SAVEOPTION.ALWAYS) {
@@ -318,7 +317,6 @@ public class JadxProject {
 			project.data = loadProjectData(path);
 			project.saved = true;
 			project.setProjectPath(path);
-			project.upgrade();
 			return project;
 		} catch (Exception e) {
 			LOG.error("Error loading project", e);
@@ -343,21 +341,5 @@ public class JadxProject {
 				.registerTypeAdapter(IJavaNodeRef.class, interfaceReplace(JadxNodeRef.class))
 				.registerTypeAdapter(IJavaCodeRef.class, interfaceReplace(JadxCodeRef.class))
 				.create();
-	}
-
-	private void upgrade() {
-		int fromVersion = data.getProjectVersion();
-		if (fromVersion == CURRENT_PROJECT_VERSION) {
-			return;
-		}
-		LOG.debug("upgrade project settings from version: {} to {}", fromVersion, CURRENT_PROJECT_VERSION);
-		if (fromVersion == 0) {
-			fromVersion++;
-		}
-		if (fromVersion != CURRENT_PROJECT_VERSION) {
-			throw new JadxRuntimeException("Project update failed");
-		}
-		data.setProjectVersion(CURRENT_PROJECT_VERSION);
-		save();
 	}
 }

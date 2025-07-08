@@ -65,7 +65,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 		resourceIds = null;
 		is = new ParserStream(inputStream);
 		if (!isBinaryXml()) {
-			return ResourcesLoader.loadToCodeWriter(inputStream);
+			return ResourcesLoader.loadToCodeWriter(is);
 		}
 		nsMapGenerated = new HashSet<>();
 		nsMap = new HashMap<>();
@@ -314,7 +314,7 @@ public class BinaryXMLParser extends CommonBinaryParser {
 			writer.add(' ');
 		}
 		writer.add(attrFullName).add("=\"");
-		String decodedAttr = manifestAttributes.decode(attrName, attrValData);
+		String decodedAttr = manifestAttributes.decode(attrFullName, attrValData);
 		if (decodedAttr != null) {
 			memorizePackageName(attrName, decodedAttr);
 			if (isDeobfCandidateAttr(attrFullName)) {

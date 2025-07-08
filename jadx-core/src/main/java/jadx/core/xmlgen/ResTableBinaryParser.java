@@ -1,6 +1,7 @@
 package jadx.core.xmlgen;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -13,7 +14,6 @@ import org.slf4j.LoggerFactory;
 
 import jadx.api.ICodeInfo;
 import jadx.api.args.ResourceNameSource;
-import jadx.api.plugins.utils.ZipSecurity;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.IFieldInfoRef;
@@ -67,6 +67,7 @@ public class ResTableBinaryParser extends CommonBinaryParser implements IResTabl
 
 	private ResourceStorage resStorage;
 	private BinaryXMLStrings strings;
+	private String baseFileName = "";
 
 	public ResTableBinaryParser(RootNode root) {
 		this(root, false);
@@ -75,6 +76,11 @@ public class ResTableBinaryParser extends CommonBinaryParser implements IResTabl
 	public ResTableBinaryParser(RootNode root, boolean useRawResNames) {
 		this.root = root;
 		this.useRawResName = useRawResNames;
+	}
+
+	@Override
+	public void setBaseFileName(String fileName) {
+		this.baseFileName = fileName;
 	}
 
 	@Override
@@ -97,47 +103,58 @@ public class ResTableBinaryParser extends CommonBinaryParser implements IResTabl
 
 		ICodeInfo content = XmlGenUtils.makeXmlDump(root.makeCodeWriter(), resStorage);
 		List<ResContainer> xmlFiles = resGen.makeResourcesXml(root.getArgs());
-		return ResContainer.resourceTable("res", xmlFiles, content);
+		return ResContainer.resourceTable(baseFileName, xmlFiles, content);
 	}
 
 	void decodeTableChunk() throws IOException {
 		is.checkInt16(RES_TABLE_TYPE, "Not a table chunk");
 		is.checkInt16(0x000c, "Unexpected table header size");
-		/* int size = */
-		is.readInt32();
+		int size = is.readInt32();
 		int pkgCount = is.readInt32();
 
-		strings = parseStringPool();
-		for (int i = 0; i < pkgCount; i++) {
-			parsePackage();
+		int pkgNum = 0;
+		while (is.getPos() < size) {
+			long chuckStart = is.getPos();
+			int type = is.readInt16();
+			int headerSize = is.readInt16();
+			long chunkSize = is.readUInt32();
+			long chunkEnd = chuckStart + chunkSize;
+			switch (type) {
+				case RES_NULL_TYPE:
+					// skip
+					break;
+
+				case RES_STRING_POOL_TYPE:
+					strings = parseStringPoolNoSize(chuckStart, chunkEnd);
+					break;
+
+				case RES_TABLE_PACKAGE_TYPE:
+					parsePackage(chuckStart, headerSize, chunkEnd);
+					pkgNum++;
+					break;
+			}
+			is.skipToPos(chunkEnd, "Skip to table chunk end");
+		}
+		if (pkgNum != pkgCount) {
+			LOG.warn("Unexpected package chunks, read: {}, expected: {}", pkgNum, pkgCount);
 		}
 	}
 
-	private PackageChunk parsePackage() throws IOException {
-		long start = is.getPos();
-		is.checkInt16(RES_TABLE_PACKAGE_TYPE, "Not a table chunk");
-		int headerSize = is.readInt16();
+	private void parsePackage(long pkgChunkStart, int headerSize, long pkgChunkEnd) throws IOException {
 		if (headerSize < 0x011c) {
 			die("Package header size too small");
+			return;
 		}
-		long size = is.readUInt32();
-		long endPos = start + size;
-
 		int id = is.readInt32();
 		String name = is.readString16Fixed(128);
-
-		long typeStringsOffset = start + is.readInt32();
-		/* int lastPublicType = */
-		is.readInt32();
-		long keyStringsOffset = start + is.readInt32();
-		/* int lastPublicKey = */
-		is.readInt32();
-
+		long typeStringsOffset = pkgChunkStart + is.readInt32();
+		int lastPublicType = is.readInt32();
+		long keyStringsOffset = pkgChunkStart + is.readInt32();
+		int lastPublicKey = is.readInt32();
 		if (headerSize >= 0x0120) {
-			/* int typeIdOffset = */
-			is.readInt32();
+			int typeIdOffset = is.readInt32();
 		}
-		is.skipToPos(start + headerSize, "package header end");
+		is.skipToPos(pkgChunkStart + headerSize, "package header end");
 
 		BinaryXMLStrings typeStrings = null;
 		if (typeStringsOffset != 0) {
@@ -153,7 +170,7 @@ public class ResTableBinaryParser extends CommonBinaryParser implements IResTabl
 		PackageChunk pkg = new PackageChunk(id, name, typeStrings, keyStrings);
 		resStorage.setAppPackage(name);
 
-		while (is.getPos() < endPos) {
+		while (is.getPos() < pkgChunkEnd) {
 			long chunkStart = is.getPos();
 			int type = is.readInt16();
 			LOG.trace("res package chunk start at {} type {}", chunkStart, type);
@@ -183,7 +200,6 @@ public class ResTableBinaryParser extends CommonBinaryParser implements IResTabl
 					LOG.warn("Unknown chunk type {} encountered at offset {}", type, chunkStart);
 			}
 		}
-		return pkg;
 	}
 
 	@SuppressWarnings("unused")
@@ -240,19 +256,19 @@ public class ResTableBinaryParser extends CommonBinaryParser implements IResTabl
 		// The type identifier this chunk is holding. Type IDs start at 1 (corresponding
 		// to the value of the type bits in a resource identifier). 0 is invalid.
 		int id = is.readInt8();
+		String typeName = pkg.getTypeStrings().get(id - 1);
 
 		int flags = is.readInt8();
 		boolean isSparse = (flags & FLAG_SPARSE) != 0;
 		boolean isOffset16 = (flags & FLAG_OFFSET16) != 0;
 
-		is.checkInt16(0, "type chunk, reserved");
+		is.readInt16(); // ignore reserved value - should be zero but in some apps it is not zero; see #2402
 		int entryCount = is.readInt32();
 		long entriesStart = start + is.readInt32();
 
 		EntryConfig config = parseConfig();
 
 		if (config.isInvalid) {
-			String typeName = pkg.getTypeStrings().get(id - 1);
 			LOG.warn("Invalid config flags detected: {}{}", typeName, config.getQualifiers());
 		}
 
@@ -276,33 +292,33 @@ public class ResTableBinaryParser extends CommonBinaryParser implements IResTabl
 			}
 		}
 		is.skipToPos(entriesStart, "Failed to skip to entries start");
+		int ignoredEoc = 0; // ignored entries because they are located after end of chunk
 		for (EntryOffset entryOffset : offsets) {
 			int offset = entryOffset.getOffset();
 			if (offset == NO_ENTRY) {
 				continue;
 			}
-			int index = entryOffset.getIdx();
-			if (is.getPos() >= chunkEnd) {
-				// Certain resource obfuscated apps like com.facebook.orca have more entries defined
-				// than actually fit into the chunk size -> ignore the remaining entries
-				LOG.warn("End of chunk reached - ignoring remaining {} entries", entryCount - index);
-				break;
-			}
 			long entryStartOffset = entriesStart + offset;
+			if (entryStartOffset >= chunkEnd) {
+				// Certain resource obfuscated apps like com.facebook.orca have more entries defined
+				// than actually fit into the chunk size -> ignore this entry
+				ignoredEoc++;
+				// LOG.debug("Pos is after chunk end: {} end {}", entryStartOffset, chunkEnd);
+				continue;
+			}
 			if (entryStartOffset < is.getPos()) {
 				// workaround for issue #2343: if the entryStartOffset is located before our current position
 				is.reset();
 			}
+			int index = entryOffset.getIdx();
 			is.skipToPos(entryStartOffset, "Expected start of entry " + index);
 			parseEntry(pkg, id, index, config.getQualifiers());
 		}
-		if (chunkEnd > is.getPos()) {
-			// Skip remaining unknown data in this chunk (e.g. type 8 entries")
-			long skipSize = chunkEnd - is.getPos();
-			LOG.debug("Unknown data at the end of type chunk encountered, skipping {} bytes and continuing at offset {}", skipSize,
-					chunkEnd);
-			is.skip(skipSize);
+		if (ignoredEoc > 0) {
+			// invalid = data offset is after the chunk end
+			LOG.warn("{} entries of type {} has been ignored (invalid offset)", ignoredEoc, typeName);
 		}
+		is.skipToPos(chunkEnd, "End of chunk");
 	}
 
 	private static class EntryOffset {
@@ -392,7 +408,7 @@ public class ResTableBinaryParser extends CommonBinaryParser implements IResTabl
 	private static final ResourceEntry STUB_ENTRY = new ResourceEntry(-1, "stub", "stub", "stub", "");
 
 	private ResourceEntry buildResourceEntry(PackageChunk pkg, String config, int resRef, String typeName, String origKeyName) {
-		if (!ZipSecurity.isValidZipEntryName(origKeyName)) {
+		if (!root.getArgs().getSecurity().isValidEntryName(origKeyName)) {
 			// malicious entry, ignore it
 			// can't return null here, return stub without adding it to storage
 			return STUB_ENTRY;
@@ -494,69 +510,59 @@ public class ResTableBinaryParser extends CommonBinaryParser implements IResTabl
 	private EntryConfig parseConfig() throws IOException {
 		long start = is.getPos();
 		int size = is.readInt32();
-		if (size < 28) {
-			throw new IOException("Config size < 28");
+		if (size < 4) {
+			throw new IOException("Config size < 4");
 		}
 
-		short mcc = (short) is.readInt16();
-		short mnc = (short) is.readInt16();
+		// Android zero fill this structure and only read the data present
+		var configData = new byte[Math.max(52, size - 4)];
+		is.readFully(configData, 0, size - 4);
+		var configIs = new ParserStream(new ByteArrayInputStream(configData));
 
-		char[] language = unpackLocaleOrRegion((byte) is.readInt8(), (byte) is.readInt8(), 'a');
-		char[] country = unpackLocaleOrRegion((byte) is.readInt8(), (byte) is.readInt8(), '0');
+		short mcc = (short) configIs.readInt16();
+		short mnc = (short) configIs.readInt16();
 
-		byte orientation = (byte) is.readInt8();
-		byte touchscreen = (byte) is.readInt8();
-		int density = is.readInt16();
+		char[] language = unpackLocaleOrRegion((byte) configIs.readInt8(), (byte) configIs.readInt8(), 'a');
+		char[] country = unpackLocaleOrRegion((byte) configIs.readInt8(), (byte) configIs.readInt8(), '0');
 
-		byte keyboard = (byte) is.readInt8();
-		byte navigation = (byte) is.readInt8();
-		byte inputFlags = (byte) is.readInt8();
-		byte grammaticalInflection = (byte) is.readInt8();
+		byte orientation = (byte) configIs.readInt8();
+		byte touchscreen = (byte) configIs.readInt8();
+		int density = configIs.readInt16();
 
-		short screenWidth = (short) is.readInt16();
-		short screenHeight = (short) is.readInt16();
+		byte keyboard = (byte) configIs.readInt8();
+		byte navigation = (byte) configIs.readInt8();
+		byte inputFlags = (byte) configIs.readInt8();
+		byte grammaticalInflection = (byte) configIs.readInt8();
 
-		short sdkVersion = (short) is.readInt16();
-		is.readInt16(); // minorVersion must always be 0
+		short screenWidth = (short) configIs.readInt16();
+		short screenHeight = (short) configIs.readInt16();
 
-		byte screenLayout = 0;
-		byte uiMode = 0;
-		short smallestScreenWidthDp = 0;
-		if (size >= 32) {
-			screenLayout = (byte) is.readInt8();
-			uiMode = (byte) is.readInt8();
-			smallestScreenWidthDp = (short) is.readInt16();
-		}
+		short sdkVersion = (short) configIs.readInt16();
+		configIs.readInt16(); // minorVersion must always be 0
 
-		short screenWidthDp = 0;
-		short screenHeightDp = 0;
-		if (size >= 36) {
-			screenWidthDp = (short) is.readInt16();
-			screenHeightDp = (short) is.readInt16();
-		}
+		byte screenLayout = (byte) configIs.readInt8();
+		byte uiMode = (byte) configIs.readInt8();
+		short smallestScreenWidthDp = (short) configIs.readInt16();
+		short screenWidthDp = (short) configIs.readInt16();
+		short screenHeightDp = (short) configIs.readInt16();
 
-		char[] localeScript = null;
-		char[] localeVariant = null;
-		if (size >= 48) {
-			localeScript = readScriptOrVariantChar(4).toCharArray();
-			localeVariant = readScriptOrVariantChar(8).toCharArray();
-		}
+		char[] localeScript = readScriptOrVariantChar(4, configIs).toCharArray();
+		char[] localeVariant = readScriptOrVariantChar(8, configIs).toCharArray();
 
-		byte screenLayout2 = 0;
-		byte colorMode = 0;
-		if (size >= 52) {
-			screenLayout2 = (byte) is.readInt8();
-			colorMode = (byte) is.readInt8();
-			is.readInt16(); // reserved padding
-		}
+		byte screenLayout2 = (byte) configIs.readInt8();
+		byte colorMode = (byte) configIs.readInt8();
+		configIs.readInt16(); // reserved padding
 
-		is.skipToPos(start + size, "Config skip trailing bytes");
+		is.checkPos(start + size, "Config skip trailing bytes");
 
 		return new EntryConfig(mcc, mnc, language, country,
 				orientation, touchscreen, density, keyboard, navigation,
 				inputFlags, grammaticalInflection, screenWidth, screenHeight, sdkVersion,
 				screenLayout, uiMode, smallestScreenWidthDp, screenWidthDp,
-				screenHeightDp, localeScript, localeVariant, screenLayout2,
+				screenHeightDp,
+				localeScript.length == 0 ? null : localeScript,
+				localeVariant.length == 0 ? null : localeVariant,
+				screenLayout2,
 				colorMode, false, size);
 	}
 
@@ -575,16 +581,20 @@ public class ResTableBinaryParser extends CommonBinaryParser implements IResTabl
 	}
 
 	private String readScriptOrVariantChar(int length) throws IOException {
-		long start = is.getPos();
+		return readScriptOrVariantChar(length, is);
+	}
+
+	private static String readScriptOrVariantChar(int length, ParserStream ps) throws IOException {
+		long start = ps.getPos();
 		StringBuilder sb = new StringBuilder(16);
 		for (int i = 0; i < length; i++) {
-			short ch = (short) is.readInt8();
+			short ch = (short) ps.readInt8();
 			if (ch == 0) {
 				break;
 			}
 			sb.append((char) ch);
 		}
-		is.skipToPos(start + length, "readScriptOrVariantChar");
+		ps.skipToPos(start + length, "readScriptOrVariantChar");
 		return sb.toString();
 	}
 

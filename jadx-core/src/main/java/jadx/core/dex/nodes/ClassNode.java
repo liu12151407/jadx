@@ -150,6 +150,8 @@ public class ClassNode extends NotificationAttrNode
 		IUsageInfoData usageInfoData = root.getArgs().getUsageInfoCache().get(root);
 		if (usageInfoData != null) {
 			usageInfoData.applyForClass(this);
+		} else {
+			LOG.warn("Can't restore usage data for class: {}", this);
 		}
 	}
 
@@ -838,6 +840,9 @@ public class ClassNode extends NotificationAttrNode
 		return clsInfo.getAliasShortName();
 	}
 
+	/**
+	 * Deprecated. Use {@link #getAlias()}
+	 */
 	@Deprecated
 	public String getShortName() {
 		return clsInfo.getAliasShortName();

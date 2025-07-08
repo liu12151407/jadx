@@ -31,9 +31,11 @@ import javax.swing.text.DefaultCaret;
 
 import org.fife.ui.rsyntaxtextarea.AbstractTokenMakerFactory;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
+import org.fife.ui.rsyntaxtextarea.RSyntaxUtilities;
 import org.fife.ui.rsyntaxtextarea.Token;
 import org.fife.ui.rsyntaxtextarea.TokenMakerFactory;
 import org.fife.ui.rsyntaxtextarea.TokenTypes;
+import org.fife.ui.rtextarea.Gutter;
 import org.fife.ui.rtextarea.SearchContext;
 import org.fife.ui.rtextarea.SearchEngine;
 import org.jetbrains.annotations.Nullable;
@@ -48,6 +50,7 @@ import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JEditableNode;
 import jadx.gui.treemodel.JNode;
 import jadx.gui.ui.MainWindow;
+import jadx.gui.ui.action.JNodeAction;
 import jadx.gui.ui.panel.ContentPanel;
 import jadx.gui.utils.DefaultPopupMenuListener;
 import jadx.gui.utils.JumpPosition;
@@ -365,16 +368,19 @@ public abstract class AbstractCodeArea extends RSyntaxTextArea {
 		RSyntaxTextArea area = new RSyntaxTextArea();
 		area.setEditable(false);
 		area.setCodeFoldingEnabled(false);
+		area.setAntiAliasingEnabled(true);
 		loadCommonSettings(mainWindow, area);
 		return area;
 	}
 
 	public static void loadCommonSettings(MainWindow mainWindow, RSyntaxTextArea area) {
-		area.setAntiAliasingEnabled(true);
-		mainWindow.getEditorTheme().apply(area);
-
 		JadxSettings settings = mainWindow.getSettings();
+		mainWindow.getEditorThemeManager().apply(area);
 		area.setFont(settings.getFont());
+		Gutter gutter = RSyntaxUtilities.getGutter(area);
+		if (gutter != null) {
+			gutter.setLineNumberFont(settings.getFont());
+		}
 	}
 
 	public void loadSettings() {
@@ -429,8 +435,12 @@ public abstract class AbstractCodeArea extends RSyntaxTextArea {
 		SearchEngine.markAll(this, context);
 	}
 
-	public JumpPosition getCurrentPosition() {
-		return new JumpPosition(node, getCaretPosition());
+	public @Nullable JumpPosition getCurrentPosition() {
+		int pos = getCaretPosition();
+		if (pos == 0) {
+			return null;
+		}
+		return new JumpPosition(node, pos);
 	}
 
 	public int getLineStartFor(int pos) throws BadLocationException {

@@ -26,6 +26,7 @@ import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JNode;
 import jadx.gui.treemodel.JResource;
 import jadx.gui.ui.MainWindow;
+import jadx.gui.ui.action.*;
 import jadx.gui.ui.codearea.mode.JCodeMode;
 import jadx.gui.ui.panel.ContentPanel;
 import jadx.gui.utils.CaretPositionFix;
@@ -45,6 +46,7 @@ public final class CodeArea extends AbstractCodeArea {
 	private static final long serialVersionUID = 6312736869579635796L;
 
 	private @Nullable ICodeInfo cachedCodeInfo;
+	private @Nullable MouseHoverHighlighter mouseHoverHighlighter;
 	private final ShortcutsController shortcutsController;
 
 	CodeArea(ContentPanel contentPanel, JNode node) {
@@ -76,7 +78,16 @@ public final class CodeArea extends AbstractCodeArea {
 		});
 
 		if (isJavaCode) {
-			addMouseMotionListener(new MouseHoverHighlighter(this, codeLinkGenerator));
+			mouseHoverHighlighter = new MouseHoverHighlighter(this, codeLinkGenerator);
+			addMouseMotionListener(mouseHoverHighlighter);
+		}
+	}
+
+	@Override
+	public void loadSettings() {
+		super.loadSettings();
+		if (mouseHoverHighlighter != null) {
+			mouseHoverHighlighter.loadSettings();
 		}
 	}
 
@@ -137,6 +148,7 @@ public final class CodeArea extends AbstractCodeArea {
 		JNodePopupBuilder popup = new JNodePopupBuilder(this, popupMenu, shortcutsController);
 		popup.addSeparator();
 		popup.add(new FindUsageAction(this));
+		popup.add(new UsageDialogPlusAction(this));
 		popup.add(new GoToDeclarationAction(this));
 		popup.add(new CommentAction(this));
 		popup.add(new CommentSearchAction(this));
@@ -185,6 +197,10 @@ public final class CodeArea extends AbstractCodeArea {
 			}
 			if (type == TokenTypes.ANNOTATION && token.length() > 1) {
 				return token.getOffset() + 1;
+			}
+			if (type == TokenTypes.RESERVED_WORD && token.length() == 6 && token.getLexeme().equals("static")) {
+				// maybe a class init method
+				return token.getOffset();
 			}
 		} else if (type == TokenTypes.MARKUP_TAG_ATTRIBUTE_VALUE) {
 			return token.getOffset() + 1; // skip quote at start (")

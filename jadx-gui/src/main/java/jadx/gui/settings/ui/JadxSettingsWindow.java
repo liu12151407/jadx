@@ -32,13 +32,13 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
 import javax.swing.JSplitPane;
-import javax.swing.JTextField;
 import javax.swing.KeyStroke;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 import javax.swing.WindowConstants;
 
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,6 +57,8 @@ import jadx.api.plugins.events.JadxEvents;
 import jadx.api.plugins.events.types.ReloadSettingsWindow;
 import jadx.api.plugins.gui.ISettingsGroup;
 import jadx.core.utils.GsonUtils;
+import jadx.core.utils.StringUtils;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.gui.settings.JadxSettings;
 import jadx.gui.settings.JadxSettingsAdapter;
 import jadx.gui.settings.JadxUpdateChannel;
@@ -67,7 +69,8 @@ import jadx.gui.settings.ui.font.JadxFontDialog;
 import jadx.gui.settings.ui.plugins.PluginSettings;
 import jadx.gui.settings.ui.shortcut.ShortcutsSettingsGroup;
 import jadx.gui.ui.MainWindow;
-import jadx.gui.ui.codearea.EditorTheme;
+import jadx.gui.ui.codearea.theme.EditorThemeManager;
+import jadx.gui.ui.codearea.theme.ThemeIdAndName;
 import jadx.gui.ui.tab.dnd.TabDndGhostType;
 import jadx.gui.utils.FontUtils;
 import jadx.gui.utils.LafManager;
@@ -75,7 +78,6 @@ import jadx.gui.utils.LangLocale;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.UiUtils;
 import jadx.gui.utils.ui.ActionHandler;
-import jadx.gui.utils.ui.DocumentUpdateListener;
 
 public class JadxSettingsWindow extends JDialog {
 	private static final long serialVersionUID = -1804570470377354148L;
@@ -91,6 +93,8 @@ public class JadxSettingsWindow extends JDialog {
 
 	private transient boolean needReload = false;
 	private transient SettingsTree tree;
+	private List<ISettingsGroup> groups;
+	private JPanel wrapGroupPanel;
 
 	public JadxSettingsWindow(MainWindow mainWindow, JadxSettings settings) {
 		this.mainWindow = mainWindow;
@@ -116,6 +120,7 @@ public class JadxSettingsWindow extends JDialog {
 
 	private void reloadUI() {
 		int[] selection = tree.getSelectionRows();
+		closeGroups(false);
 		getContentPane().removeAll();
 		initUI();
 		// wait for other events to process
@@ -126,22 +131,22 @@ public class JadxSettingsWindow extends JDialog {
 	}
 
 	private void initUI() {
-		JPanel wrapGroupPanel = new JPanel(new BorderLayout(10, 10));
+		wrapGroupPanel = new JPanel(new BorderLayout(10, 10));
 
-		List<ISettingsGroup> groups = new ArrayList<>();
+		groups = new ArrayList<>();
 		groups.add(makeDecompilationGroup());
 		groups.add(makeDeobfuscationGroup());
 		groups.add(makeRenameGroup());
 		groups.add(new CacheSettingsGroup(this));
 		groups.add(makeAppearanceGroup());
 		groups.add(new ShortcutsSettingsGroup(this, settings));
-		groups.add(makeSearchResGroup());
 		groups.add(makeProjectGroup());
 		groups.add(new PluginSettings(mainWindow, settings).build());
 		groups.add(makeOtherGroup());
 
-		tree = new SettingsTree();
-		tree.init(wrapGroupPanel, groups);
+		tree = new SettingsTree(this);
+		tree.init(groups);
+		tree.setFocusable(true);
 		JScrollPane leftPane = new JScrollPane(tree);
 		leftPane.setBorder(BorderFactory.createEmptyBorder(10, 10, 3, 3));
 
@@ -182,6 +187,7 @@ public class JadxSettingsWindow extends JDialog {
 		buttonPane.setLayout(new BoxLayout(buttonPane, BoxLayout.LINE_AXIS));
 		buttonPane.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 		buttonPane.add(resetBtn);
+		buttonPane.add(Box.createRigidArea(new Dimension(10, 0)));
 		buttonPane.add(copyBtn);
 		buttonPane.add(Box.createHorizontalGlue());
 		buttonPane.add(saveBtn);
@@ -190,6 +196,46 @@ public class JadxSettingsWindow extends JDialog {
 
 		getRootPane().setDefaultButton(saveBtn);
 		return buttonPane;
+	}
+
+	/**
+	 * Activate the settings page by location.
+	 *
+	 * @param location - can be title of a settings group or settings group class implementation (end
+	 *                 with .class)
+	 */
+	public void activatePage(String location) {
+		if (location.endsWith(".class")) {
+			String clsName = StringUtils.removeSuffix(location, ".class");
+			for (ISettingsGroup group : groups) {
+				String groupCls = group.getClass().getSimpleName();
+				if (groupCls.equals(clsName)) {
+					selectGroup(group);
+					return;
+				}
+			}
+			throw new JadxRuntimeException("No setting group class: " + location);
+		} else {
+			for (ISettingsGroup group : groups) {
+				if (group.getTitle().equals(location)) {
+					selectGroup(group);
+					return;
+				}
+			}
+			throw new JadxRuntimeException("No setting group with title: " + location);
+		}
+	}
+
+	public void selectGroup(ISettingsGroup group) {
+		tree.selectGroup(group);
+	}
+
+	public void activateGroup(@Nullable ISettingsGroup group) {
+		wrapGroupPanel.removeAll();
+		if (group != null) {
+			wrapGroupPanel.add(group.buildComponent());
+		}
+		wrapGroupPanel.updateUI();
 	}
 
 	private static void enableComponents(Container container, boolean enable) {
@@ -230,6 +276,13 @@ public class JadxSettingsWindow extends JDialog {
 			needReload();
 		});
 
+		JCheckBox useHeaders = new JCheckBox();
+		useHeaders.setSelected(settings.isUseHeadersForDetectResourceExtensions());
+		useHeaders.addItemListener(e -> {
+			settings.setUseHeadersForDetectResourceExtension(e.getStateChange() == ItemEvent.SELECTED);
+			needReload();
+		});
+
 		JComboBox<GeneratedRenamesMappingFileMode> generatedRenamesMappingFileModeCB =
 				new JComboBox<>(GeneratedRenamesMappingFileMode.values());
 		generatedRenamesMappingFileModeCB.setSelectedItem(settings.getGeneratedRenamesMappingFileMode());
@@ -261,6 +314,7 @@ public class JadxSettingsWindow extends JDialog {
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_min_len"), minLenSpinner);
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_max_len"), maxLenSpinner);
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_res_name_source"), resNamesSource);
+		deobfGroup.addRow(NLS.str("preferences.deobfuscation_res_use_headers"), useHeaders);
 		deobfGroup.addRow(NLS.str("preferences.generated_renames_mapping_file_mode"), generatedRenamesMappingFileModeCB);
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_whitelist"),
 				NLS.str("preferences.deobfuscation_whitelist.tooltip"), editWhitelistedEntities);
@@ -348,19 +402,15 @@ public class JadxSettingsWindow extends JDialog {
 		JButton fontBtn = new JButton(NLS.str("preferences.select_font"));
 		JButton smaliFontBtn = new JButton(NLS.str("preferences.select_smali_font"));
 
-		EditorTheme[] editorThemes = EditorTheme.getAllThemes();
-		JComboBox<EditorTheme> themesCbx = new JComboBox<>(editorThemes);
-		for (EditorTheme theme : editorThemes) {
-			if (theme.getPath().equals(settings.getEditorThemePath())) {
-				themesCbx.setSelectedItem(theme);
-				break;
+		EditorThemeManager editorThemeManager = mainWindow.getEditorThemeManager();
+		JComboBox<ThemeIdAndName> themesCbx = new JComboBox<>(editorThemeManager.getThemeIdNameArray());
+		themesCbx.setSelectedItem(editorThemeManager.getCurrentThemeIdName());
+		themesCbx.addActionListener(evt -> {
+			ThemeIdAndName selected = (ThemeIdAndName) themesCbx.getSelectedItem();
+			if (selected != null) {
+				settings.setEditorTheme(selected.getId());
+				mainWindow.loadSettings();
 			}
-		}
-		themesCbx.addActionListener(e -> {
-			int i = themesCbx.getSelectedIndex();
-			EditorTheme editorTheme = editorThemes[i];
-			settings.setEditorThemePath(editorTheme.getPath());
-			mainWindow.loadSettings();
 		});
 
 		JComboBox<String> lafCbx = new JComboBox<>(LafManager.getThemes());
@@ -629,6 +679,10 @@ public class JadxSettingsWindow extends JDialog {
 		jumpOnDoubleClick.setSelected(settings.isJumpOnDoubleClick());
 		jumpOnDoubleClick.addItemListener(e -> settings.setJumpOnDoubleClick(e.getStateChange() == ItemEvent.SELECTED));
 
+		JSpinner resultsPerPage = new JSpinner(
+				new SpinnerNumberModel(settings.getSearchResultsPerPage(), 0, Integer.MAX_VALUE, 1));
+		resultsPerPage.addChangeListener(ev -> settings.setSearchResultsPerPage((Integer) resultsPerPage.getValue()));
+
 		JCheckBox useAltFileDialog = new JCheckBox();
 		useAltFileDialog.setSelected(settings.isUseAlternativeFileDialog());
 		useAltFileDialog.addItemListener(e -> settings.setUseAlternativeFileDialog(e.getStateChange() == ItemEvent.SELECTED));
@@ -636,6 +690,10 @@ public class JadxSettingsWindow extends JDialog {
 		JCheckBox update = new JCheckBox();
 		update.setSelected(settings.isCheckForUpdates());
 		update.addItemListener(e -> settings.setCheckForUpdates(e.getStateChange() == ItemEvent.SELECTED));
+
+		JCheckBox disableTooltipOnHover = new JCheckBox();
+		disableTooltipOnHover.setSelected(settings.isDisableTooltipOnHover());
+		disableTooltipOnHover.addItemListener(e -> settings.setDisableTooltipOnHover(e.getStateChange() == ItemEvent.SELECTED));
 
 		JCheckBox cfg = new JCheckBox();
 		cfg.setSelected(settings.isCfgOutput());
@@ -670,6 +728,8 @@ public class JadxSettingsWindow extends JDialog {
 		SettingsGroup group = new SettingsGroup(NLS.str("preferences.other"));
 		group.addRow(NLS.str("preferences.lineNumbersMode"), lineNumbersMode);
 		group.addRow(NLS.str("preferences.jumpOnDoubleClick"), jumpOnDoubleClick);
+		group.addRow(NLS.str("preferences.disable_tooltip_on_hover"), disableTooltipOnHover);
+		group.addRow(NLS.str("preferences.search_results_per_page"), resultsPerPage);
 		group.addRow(NLS.str("preferences.useAlternativeFileDialog"), useAltFileDialog);
 		group.addRow(NLS.str("preferences.cfg"), cfg);
 		group.addRow(NLS.str("preferences.raw_cfg"), rawCfg);
@@ -679,30 +739,14 @@ public class JadxSettingsWindow extends JDialog {
 		return group;
 	}
 
-	private SettingsGroup makeSearchResGroup() {
-		JSpinner resultsPerPage = new JSpinner(
-				new SpinnerNumberModel(settings.getSearchResultsPerPage(), 0, Integer.MAX_VALUE, 1));
-		resultsPerPage.addChangeListener(ev -> settings.setSearchResultsPerPage((Integer) resultsPerPage.getValue()));
-
-		JSpinner sizeLimit = new JSpinner(
-				new SpinnerNumberModel(settings.getSrhResourceSkipSize(), 0, Integer.MAX_VALUE, 1));
-		sizeLimit.addChangeListener(ev -> settings.setSrhResourceSkipSize((Integer) sizeLimit.getValue()));
-
-		JTextField fileExtField = new JTextField();
-		fileExtField.getDocument().addDocumentListener(new DocumentUpdateListener((ev) -> {
-			String ext = fileExtField.getText();
-			settings.setSrhResourceFileExt(ext);
-		}));
-		fileExtField.setText(settings.getSrhResourceFileExt());
-
-		SettingsGroup searchGroup = new SettingsGroup(NLS.str("preferences.search_group_title"));
-		searchGroup.addRow(NLS.str("preferences.search_results_per_page"), resultsPerPage);
-		searchGroup.addRow(NLS.str("preferences.res_skip_file"), sizeLimit);
-		searchGroup.addRow(NLS.str("preferences.res_file_ext"), fileExtField);
-		return searchGroup;
+	private void closeGroups(boolean save) {
+		for (ISettingsGroup group : groups) {
+			group.close(save);
+		}
 	}
 
 	private void save() {
+		closeGroups(true);
 		settings.sync();
 		enableComponents(this, false);
 		SwingUtilities.invokeLater(() -> {
@@ -722,6 +766,7 @@ public class JadxSettingsWindow extends JDialog {
 	}
 
 	private void cancel() {
+		closeGroups(false);
 		JadxSettingsAdapter.fill(settings, startSettings);
 		mainWindow.loadSettings();
 		dispose();
