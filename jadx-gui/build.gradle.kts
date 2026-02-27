@@ -2,9 +2,9 @@ plugins {
 	id("jadx-kotlin")
 	id("application")
 	id("jadx-library")
-	id("edu.sc.seis.launch4j") version "3.0.6"
-	id("com.gradleup.shadow") version "8.3.7"
-	id("org.beryx.runtime") version "1.13.1"
+	id("com.gradleup.shadow") version "8.3.8"
+	id("edu.sc.seis.launch4j") version "4.0.0"
+	id("org.beryx.runtime") version "2.0.1"
 }
 
 dependencies {
@@ -16,37 +16,30 @@ dependencies {
 	// import mappings
 	implementation(project(":jadx-plugins:jadx-rename-mappings"))
 
-	// jadx-script autocomplete support
-	implementation(project(":jadx-plugins:jadx-script:jadx-script-ide"))
-	implementation(project(":jadx-plugins:jadx-script:jadx-script-runtime"))
-	implementation(kotlin("scripting-common"))
-	implementation("com.fifesoft:autocomplete:3.3.2")
-
-	// use KtLint for format and check jadx scripts
-	implementation("com.pinterest.ktlint:ktlint-rule-engine:1.6.0")
-	implementation("com.pinterest.ktlint:ktlint-ruleset-standard:1.6.0")
-
 	implementation("org.jcommander:jcommander:2.0")
-	implementation("ch.qos.logback:logback-classic:1.5.18")
-	implementation("io.github.oshai:kotlin-logging-jvm:7.0.7")
+	implementation("ch.qos.logback:logback-classic:1.5.21")
+	implementation("io.github.oshai:kotlin-logging-jvm:7.0.13")
 
-	implementation("com.fifesoft:rsyntaxtextarea:3.6.0")
+	implementation("com.fifesoft:rsyntaxtextarea:3.6.1")
+	implementation("com.fifesoft:autocomplete:3.3.2")
 	implementation("org.drjekyll:fontchooser:3.1.0")
 	implementation("hu.kazocsaba:image-viewer:1.2.3")
 	implementation("com.twelvemonkeys.imageio:imageio-webp:3.12.0") // WebP support for image viewer
 
-	implementation("com.formdev:flatlaf:3.6")
-	implementation("com.formdev:flatlaf-intellij-themes:3.6")
-	implementation("com.formdev:flatlaf-extras:3.6")
+	implementation("com.formdev:flatlaf:3.7")
+	implementation("com.formdev:flatlaf-intellij-themes:3.7")
+	implementation("com.formdev:flatlaf-extras:3.7")
+	implementation("com.formdev:flatlaf-fonts-inter:4.1")
+	implementation("com.formdev:flatlaf-fonts-jetbrains-mono:2.304")
 
-	implementation("com.google.code.gson:gson:2.13.1")
-	implementation("org.apache.commons:commons-lang3:3.17.0")
-	implementation("org.apache.commons:commons-text:1.13.1")
-	implementation("commons-io:commons-io:2.19.0")
+	implementation("com.google.code.gson:gson:2.13.2")
+	implementation("org.apache.commons:commons-lang3:3.20.0")
+	implementation("org.apache.commons:commons-text:1.15.0")
+	implementation("commons-io:commons-io:2.21.0")
 
-	implementation("io.reactivex.rxjava3:rxjava:3.1.10")
+	implementation("io.reactivex.rxjava3:rxjava:3.1.12")
 	implementation("com.github.akarnokd:rxjava3-swing:3.1.1")
-	implementation("com.android.tools.build:apksig:8.11.0")
+	implementation("com.android.tools.build:apksig:8.13.1")
 	implementation("io.github.skylot:jdwp:2.0.0")
 
 	// Library for hex viewing data
@@ -56,6 +49,11 @@ dependencies {
 	implementation("org.exbin.bined:bined-swing-section:$bined")
 	implementation("org.exbin.auxiliary:binary_data:$bined")
 	implementation("org.exbin.auxiliary:binary_data-array:$bined")
+
+	// Library for rendering GraphViz DOT files
+	implementation("guru.nidi:graphviz-java:0.18.1")
+	implementation("com.eclipsesource.j2v8:j2v8_linux_x86_64:4.6.0")
+	implementation("com.eclipsesource.j2v8:j2v8_win32_x86_64:4.6.0")
 
 	testImplementation(project.project(":jadx-core").sourceSets.getByName("test").output)
 }
@@ -167,7 +165,7 @@ fun escapeJVMOptions(): List<String> {
 }
 
 runtime {
-	addOptions("--strip-debug", "--compress", "zip-9", "--no-header-files", "--no-man-pages")
+	addOptions("--strip-debug", "--no-header-files", "--no-man-pages")
 	addModules(
 		"java.desktop",
 		"java.naming",
@@ -226,6 +224,20 @@ val copyDistWinWithJre by tasks.registering(Copy::class) {
 	}
 	into(layout.buildDirectory.dir("jadx-gui-with-jre-win"))
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+/**
+ * Register and expose distribution artifacts to use in top level packaging tasks
+ */
+val distWinConfiguration by configurations.creating {
+	isCanBeResolved = false
+}
+val distWinWithJreConfiguration by configurations.creating {
+	isCanBeResolved = false
+}
+artifacts {
+	add(distWinConfiguration.name, copyDistWin)
+	add(distWinWithJreConfiguration.name, copyDistWinWithJre)
 }
 
 val syncNLSLines by tasks.registering(JavaExec::class) {

@@ -1,5 +1,5 @@
 plugins {
-	id("org.gradle.toolchains.foojay-resolver-convention") version ("0.8.0")
+	id("org.gradle.toolchains.foojay-resolver-convention") version ("1.0.0")
 }
 
 if (!JavaVersion.current().isJava11Compatible) {
@@ -29,8 +29,4 @@ include("jadx-plugins:jadx-kotlin-source-debug-extension")
 include("jadx-plugins:jadx-xapk-input")
 include("jadx-plugins:jadx-aab-input")
 include("jadx-plugins:jadx-apkm-input")
-
-include("jadx-plugins:jadx-script:jadx-script-plugin")
-include("jadx-plugins:jadx-script:jadx-script-runtime")
-include("jadx-plugins:jadx-script:jadx-script-ide")
-include("jadx-plugins:jadx-script:examples")
+include("jadx-plugins:jadx-apks-input")

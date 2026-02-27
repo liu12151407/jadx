@@ -1,7 +1,6 @@
 package jadx.core.dex.visitors;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -153,12 +152,12 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 						return;
 					}
 				}
-				visitThrows(mth, exceptionType);
+				visitThrows(mth, exceptionType, excludedExceptions);
 			} else {
 				if (throwArg instanceof InsnWrapArg) {
 					InsnWrapArg insnWrapArg = (InsnWrapArg) throwArg;
 					ArgType exceptionType = insnWrapArg.getType();
-					visitThrows(mth, exceptionType);
+					visitThrows(mth, exceptionType, excludedExceptions);
 				}
 			}
 			return;
@@ -180,7 +179,9 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 				MethodThrowsAttr cAttr = cMth.get(AType.METHOD_THROWS);
 				MethodThrowsAttr attr = mth.get(AType.METHOD_THROWS);
 				if (attr != null && cAttr != null && !cAttr.getList().isEmpty()) {
-					attr.getList().addAll(filterExceptions(cAttr.getList(), excludedExceptions));
+					for (String argTypeStr : cAttr.getList()) {
+						visitThrows(mth, ArgType.object(argTypeStr), excludedExceptions);
+					}
 				}
 			} else {
 				ClspClass clsDetails = root.getClsp().getClsDetails(classInfo.getType());
@@ -189,8 +190,8 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 					if (cMth != null && cMth.getThrows() != null && !cMth.getThrows().isEmpty()) {
 						MethodThrowsAttr attr = mth.get(AType.METHOD_THROWS);
 						if (attr != null) {
-							for (ArgType ex : cMth.getThrows()) {
-								attr.getList().add(ex.getObject());
+							for (ArgType argType : cMth.getThrows()) {
+								visitThrows(mth, argType, excludedExceptions);
 							}
 						}
 					}
@@ -199,8 +200,14 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 		}
 	}
 
-	private void visitThrows(MethodNode mth, ArgType excType) {
+	private void visitThrows(MethodNode mth, ArgType excType, Set<String> excludedExceptions) {
 		if (excType.isTypeKnown() && isThrowsRequired(mth, excType)) {
+			for (String excludedException : excludedExceptions) {
+				if (isBaseException(excType.getObject(), excludedException)) {
+					return;
+				}
+			}
+
 			mth.get(AType.METHOD_THROWS).getList().add(excType.getObject());
 		}
 	}
@@ -231,7 +238,7 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 	}
 
 	/**
-	 * @return is 'possibleParent' a exception class of 'exception'
+	 * @return is 'possibleParent' an exception class of 'exception'
 	 */
 	private boolean isBaseException(String exception, String possibleParent) {
 		if (exception.equals(possibleParent)) {
@@ -245,23 +252,6 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 			return true;
 		}
 		return root.getClsp().isImplements(type.getObject(), baseType.getObject());
-	}
-
-	private Collection<String> filterExceptions(Set<String> exceptions, Set<String> excludedExceptions) {
-		Set<String> filteredExceptions = new HashSet<>();
-		for (String exception : exceptions) {
-			boolean filtered = false;
-			for (String excluded : excludedExceptions) {
-				filtered = exception.equals(excluded) || isBaseException(exception, excluded);
-				if (filtered) {
-					break;
-				}
-			}
-			if (!filtered) {
-				filteredExceptions.add(exception);
-			}
-		}
-		return filteredExceptions;
 	}
 
 	private @Nullable MethodNode searchOverriddenMethod(ClassNode cls, MethodInfo mth, String signature) {

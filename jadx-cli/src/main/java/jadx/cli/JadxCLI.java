@@ -13,6 +13,7 @@ import jadx.api.impl.NoOpCodeCache;
 import jadx.api.impl.SimpleCodeWriter;
 import jadx.api.usage.impl.EmptyUsageInfoCache;
 import jadx.cli.LogHelper.LogLevelEnum;
+import jadx.cli.config.JadxConfigAdapter;
 import jadx.cli.plugins.JadxFilesGetter;
 import jadx.core.utils.exceptions.JadxArgsValidateException;
 import jadx.plugins.tools.JadxExternalPluginsLoader;
@@ -35,15 +36,17 @@ public class JadxCLI {
 
 	public static int execute(String[] args, @Nullable Consumer<JadxArgs> argsMod) {
 		try {
-			JadxCLIArgs cliArgs = new JadxCLIArgs();
-			if (cliArgs.processArgs(args)) {
-				JadxArgs jadxArgs = buildArgs(cliArgs);
-				if (argsMod != null) {
-					argsMod.accept(jadxArgs);
-				}
-				return runSave(jadxArgs, cliArgs);
+			JadxCLIArgs cliArgs = JadxCLIArgs.processArgs(args,
+					new JadxCLIArgs(),
+					new JadxConfigAdapter<>(JadxCLIArgs.class, "cli"));
+			if (cliArgs == null) {
+				return 0;
 			}
-			return 0;
+			JadxArgs jadxArgs = buildArgs(cliArgs);
+			if (argsMod != null) {
+				argsMod.accept(jadxArgs);
+			}
+			return runSave(jadxArgs, cliArgs);
 		} catch (JadxArgsValidateException e) {
 			LOG.error("Incorrect arguments: {}", e.getMessage());
 			return 1;
@@ -54,8 +57,6 @@ public class JadxCLI {
 	}
 
 	private static JadxArgs buildArgs(JadxCLIArgs cliArgs) {
-		LogHelper.initLogLevel(cliArgs);
-		LogHelper.setLogLevelsForLoadingStage();
 		JadxArgs jadxArgs = cliArgs.toJadxArgs();
 		jadxArgs.setCodeCache(new NoOpCodeCache());
 		jadxArgs.setUsageInfoCache(new EmptyUsageInfoCache());
@@ -70,9 +71,8 @@ public class JadxCLI {
 		try (JadxDecompiler jadx = new JadxDecompiler(jadxArgs)) {
 			jadx.load();
 			if (checkForErrors(jadx)) {
-				return 1;
+				return 2;
 			}
-			LogHelper.setLogLevelsForDecompileStage();
 			if (!SingleClassMode.process(jadx, cliArgs)) {
 				save(jadx);
 			}
@@ -80,7 +80,7 @@ public class JadxCLI {
 			if (errorsCount != 0) {
 				jadx.printErrorsReport();
 				LOG.error("finished with errors, count: {}", errorsCount);
-				return 1;
+				return 3;
 			}
 			LOG.info("done");
 			return 0;
@@ -110,10 +110,10 @@ public class JadxCLI {
 				jadx.getArgs().setSkipSources(true);
 			}
 		}
-		if (jadx.getErrorsCount() > 0) {
-			LOG.error("Load with errors! Check log for details");
+		int errorsCount = jadx.getErrorsCount();
+		if (errorsCount > 0) {
+			LOG.error("Loading finished with errors! Count: {}", errorsCount);
 			// continue processing
-			return false;
 		}
 		return false;
 	}

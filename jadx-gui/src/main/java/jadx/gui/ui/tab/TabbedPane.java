@@ -23,6 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.core.utils.exceptions.JadxRuntimeException;
+import jadx.gui.jobs.SilentTask;
 import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JNode;
 import jadx.gui.ui.MainWindow;
@@ -220,16 +221,17 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 	}
 
 	private @Nullable ContentPanel showCode(JumpPosition jumpPos) {
+		UiUtils.uiThreadGuard();
 		JNode jumpNode = jumpPos.getNode();
-		ContentPanel contentPanel = getContentPanel(jumpNode);
+		ContentPanel contentPanel = getTabByNode(jumpNode);
 		if (contentPanel == null) {
 			return null;
 		}
 		selectTab(contentPanel);
 		int pos = jumpPos.getPos();
-		if (pos < 0) {
+		if (pos <= 0) {
 			LOG.warn("Invalid jump: {}", jumpPos, new JadxRuntimeException());
-			pos = 0;
+			pos = Math.max(0, jumpNode.getPos());
 		}
 		contentPanel.scrollToPos(pos);
 		return contentPanel;
@@ -314,9 +316,20 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 		return (TabComponent) component;
 	}
 
-	private @Nullable ContentPanel getContentPanel(JNode node) {
-		controller.openTab(node);
-		return getTabByNode(node);
+	public boolean tabWithTitleExists(String tabTitle) {
+		try {
+			for (int i = 0; i < getTabCount(); i++) {
+				Component component = getTabComponentAt(i);
+				if (component instanceof TabComponent) {
+					if (((TabComponent) component).getTabTitle().equals(tabTitle)) {
+						return true;
+					}
+				}
+			}
+		} catch (Exception e) {
+			LOG.warn("Failed to check tabs titles", e);
+		}
+		return false;
 	}
 
 	public void refresh(JNode node) {
@@ -407,16 +420,21 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 		if (blueprint.isHidden()) {
 			return;
 		}
-		ContentPanel newPanel = blueprint.getNode().getContentPanel(this);
+		JNode node = blueprint.getNode();
+		ContentPanel newPanel = node.getContentPanel(this);
 		if (newPanel != null) {
+			if (node != newPanel.getNode()) {
+				throw new JadxRuntimeException("Incorrect node found in content panel");
+			}
 			FocusManager.listen(newPanel);
 			addContentPanel(newPanel);
+			blueprint.setCreated(true);
 		}
 	}
 
 	@Override
 	public void onTabSelect(TabBlueprint blueprint) {
-		ContentPanel contentPanel = getContentPanel(blueprint.getNode());
+		ContentPanel contentPanel = getTabByNode(blueprint.getNode());
 		if (contentPanel != null) {
 			setSelectedComponent(contentPanel);
 		}
@@ -424,7 +442,10 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 
 	@Override
 	public void onTabCodeJump(TabBlueprint blueprint, @Nullable JumpPosition prevPos, JumpPosition position) {
-		showCode(position);
+		// queue task to wait completion of loading tasks
+		mainWindow.getBackgroundExecutor().execute(new SilentTask(() -> {
+			UiUtils.uiRun(() -> showCode(position));
+		}));
 	}
 
 	@Override
@@ -437,13 +458,31 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 
 	@Override
 	public void onTabClose(TabBlueprint blueprint) {
-		ContentPanel contentPanel = getTabByNode(blueprint.getNode());
-		if (contentPanel == null) {
+		ContentPanel contentPanelToClose = getTabByNode(blueprint.getNode());
+		if (contentPanelToClose == null) {
 			return;
 		}
-		tabsMap.remove(contentPanel.getNode());
-		remove(contentPanel);
-		contentPanel.dispose();
+
+		ContentPanel currentContentPanel = getSelectedContentPanel();
+		if (currentContentPanel == contentPanelToClose) {
+			if (lastTab != null && lastTab.getNode() != null) {
+				selectTab(lastTab);
+			} else if (getTabCount() > 1) {
+				int removalIdx = indexOfComponent(contentPanelToClose);
+				if (removalIdx > 0) { // select left tab
+					setSelectedIndex(removalIdx - 1);
+				} else if (removalIdx == 0) { // select right tab
+					setSelectedIndex(removalIdx + 1);
+				}
+			} else {
+				// no other tabs => inform controller to reset selection
+				controller.deselectTab();
+			}
+		}
+
+		tabsMap.remove(contentPanelToClose.getNode());
+		remove(contentPanelToClose);
+		contentPanelToClose.dispose();
 	}
 
 	@Override
@@ -460,9 +499,13 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 		if (tabComponent == null) {
 			return;
 		}
+		boolean restoreSelection = contentPanel == getSelectedContentPanel();
 		remove(contentPanel);
 		add(contentPanel, position);
 		setTabComponentAt(position, tabComponent);
+		if (restoreSelection) {
+			setSelectedIndex(position);
+		}
 	}
 
 	@Override
@@ -471,7 +514,7 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 		if (tabComponent == null) {
 			return;
 		}
-		tabComponent.updateCloseOrPinButton();
+		tabComponent.update();
 	}
 
 	@Override
@@ -480,7 +523,7 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 		if (tabComponent == null) {
 			return;
 		}
-		tabComponent.updateBookmarkIcon();
+		tabComponent.update();
 	}
 
 	@Override
@@ -491,6 +534,15 @@ public class TabbedPane extends JTabbedPane implements ITabStatesListener {
 		if (blueprint.isHidden() && tabsMap.containsKey(blueprint.getNode())) {
 			onTabClose(blueprint);
 		}
+	}
+
+	@Override
+	public void onTabPreviewChange(TabBlueprint blueprint) {
+		TabComponent tabComponent = getTabComponentByNode(blueprint.getNode());
+		if (tabComponent == null) {
+			return;
+		}
+		tabComponent.update();
 	}
 
 	@Override

@@ -4,7 +4,6 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
-import java.awt.Font;
 import java.awt.GridLayout;
 import java.awt.Label;
 import java.awt.event.MouseAdapter;
@@ -38,6 +37,7 @@ import javax.swing.tree.TreeSelectionModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.commons.app.JadxSystemInfo;
 import jadx.core.utils.StringUtils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.gui.device.debugger.DbgUtils;
@@ -45,10 +45,10 @@ import jadx.gui.device.debugger.DebugSettings;
 import jadx.gui.device.protocol.ADB;
 import jadx.gui.device.protocol.ADBDevice;
 import jadx.gui.device.protocol.ADBDeviceInfo;
+import jadx.gui.settings.JadxSettings;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.panel.IDebugController;
 import jadx.gui.utils.NLS;
-import jadx.gui.utils.SystemInfo;
 import jadx.gui.utils.UiUtils;
 
 public class ADBDialog extends JDialog implements ADB.DeviceStateListener, ADB.JDWPProcessListener {
@@ -120,8 +120,7 @@ public class ADBDialog extends JDialog implements ADB.DeviceStateListener, ADB.J
 		procTreeModel = new DefaultTreeModel(procTreeRoot);
 		procTree.setModel(procTreeModel);
 		procTree.setRowHeight(-1);
-		Font font = mainWindow.getSettings().getFont();
-		procTree.setFont(font.deriveFont(font.getSize() + 1.f));
+		procTree.setFont(mainWindow.getSettings().getCodeFont());
 
 		procTree.addMouseListener(new MouseAdapter() {
 			@Override
@@ -208,7 +207,7 @@ public class ADBDialog extends JDialog implements ADB.DeviceStateListener, ADB.J
 	}
 
 	private void detectADBPath() {
-		boolean isWinOS = SystemInfo.IS_WINDOWS;
+		boolean isWinOS = JadxSystemInfo.IS_WINDOWS;
 		String slash = isWinOS ? "\\" : "/";
 		String adbName = isWinOS ? "adb.exe" : "adb";
 		String sdkPath = System.getenv("ANDROID_HOME");
@@ -427,13 +426,17 @@ public class ADBDialog extends JDialog implements ADB.DeviceStateListener, ADB.J
 	@Override
 	public void dispose() {
 		clear();
-		super.dispose();
-		boolean save = mainWindow.getSettings().getAdbDialogPath().equals(pathTextField.getText());
-		boolean save1 = mainWindow.getSettings().getAdbDialogHost().equals(hostTextField.getText());
-		boolean save2 = mainWindow.getSettings().getAdbDialogPort().equals(portTextField.getText());
-		if (save || save1 || save2) {
-			mainWindow.getSettings().sync();
+		JadxSettings settings = mainWindow.getSettings();
+		boolean changed = !settings.getAdbDialogPath().equals(pathTextField.getText());
+		changed |= !settings.getAdbDialogHost().equals(hostTextField.getText());
+		changed |= !settings.getAdbDialogPort().equals(portTextField.getText());
+		if (changed) {
+			settings.setAdbDialogPath(pathTextField.getText());
+			settings.setAdbDialogHost(hostTextField.getText());
+			settings.setAdbDialogPort(portTextField.getText());
+			settings.sync();
 		}
+		super.dispose();
 	}
 
 	@Override

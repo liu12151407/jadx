@@ -23,6 +23,8 @@ import java.util.function.Function;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import jadx.api.ICodeWriter;
 import jadx.api.JadxDecompiler;
@@ -56,6 +58,104 @@ public class Utils {
 
 	public static String makeQualifiedObjectName(String obj) {
 		return 'L' + obj.replace('.', '/') + ';';
+	}
+
+	public static String smaliNameToJavaName(String descString) {
+		if (descString.isEmpty()) {
+			return descString;
+		}
+
+		String javaName;
+		switch (descString.charAt(0)) {
+			case 'V':
+				javaName = "void";
+				break;
+			case 'Z':
+				javaName = "boolean";
+				break;
+			case 'C':
+				javaName = "char";
+				break;
+			case 'B':
+				javaName = "byte";
+				break;
+			case 'S':
+				javaName = "short";
+				break;
+			case 'I':
+				javaName = "int";
+				break;
+			case 'F':
+				javaName = "float";
+				break;
+			case 'J':
+				javaName = "long";
+				break;
+			case 'D':
+				javaName = "double";
+				break;
+			case 'L':
+				javaName = cleanObjectNameWithInnerClass(descString);
+				break;
+			case '[':
+				javaName = String.format("%s[]", smaliNameToJavaName(descString.substring(1, descString.length())));
+				break;
+			default:
+				javaName = descString;
+				break;
+		}
+		return javaName;
+	}
+
+	private static String cleanObjectNameWithInnerClass(String obj) {
+		// Probably can just update the Utils.cleanObjectName method?
+		String result = Utils.cleanObjectName(obj);
+		return result.replace('$', '.');
+	}
+
+	public static String javaNameToSmaliName(String descString) {
+		if (descString.isEmpty()) {
+			return descString;
+		}
+
+		if (descString.endsWith("[]")) {
+			return String.format("[%s", javaNameToSmaliName(descString.substring(0, descString.length() - 2)));
+		}
+
+		String javaName;
+		switch (descString) {
+			case "void":
+				javaName = "V";
+				break;
+			case "boolean":
+				javaName = "Z";
+				break;
+			case "char":
+				javaName = "C";
+				break;
+			case "byte":
+				javaName = "B";
+				break;
+			case "short":
+				javaName = "S";
+				break;
+			case "int":
+				javaName = "I";
+				break;
+			case "float":
+				javaName = "F";
+				break;
+			case "long":
+				javaName = "J";
+				break;
+			case "double":
+				javaName = "D";
+				break;
+			default:
+				javaName = Utils.makeQualifiedObjectName(descString);
+				break;
+		}
+		return javaName;
 	}
 
 	@SuppressWarnings("StringRepeatCanBeUsed")
@@ -513,6 +613,8 @@ public class Utils {
 
 	private static final class SimpleThreadFactory implements ThreadFactory {
 		private static final AtomicInteger POOL = new AtomicInteger(0);
+		private static final Thread.UncaughtExceptionHandler EXC_HANDLER = new SimpleUncaughtExceptionHandler();
+
 		private final AtomicInteger number = new AtomicInteger(0);
 		private final String name;
 
@@ -522,9 +624,25 @@ public class Utils {
 
 		@Override
 		public Thread newThread(@NotNull Runnable r) {
-			return new Thread(r, "jadx-" + name
+			Thread thread = new Thread(r, "jadx-" + name
 					+ '-' + POOL.incrementAndGet()
 					+ '-' + number.incrementAndGet());
+			thread.setUncaughtExceptionHandler(EXC_HANDLER);
+			return thread;
+		}
+
+		private static class SimpleUncaughtExceptionHandler implements Thread.UncaughtExceptionHandler {
+			private static final Logger LOG = LoggerFactory.getLogger(SimpleUncaughtExceptionHandler.class);
+
+			@Override
+			public void uncaughtException(Thread thread, Throwable e) {
+				if (e instanceof OutOfMemoryError) {
+					thread.interrupt();
+					LOG.error("OutOfMemoryError in thread: {}, forcing interrupt", thread.getName());
+				} else {
+					LOG.error("Uncaught thread exception, thread: {}", thread.getName(), e);
+				}
+			}
 		}
 	}
 

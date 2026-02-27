@@ -6,15 +6,17 @@ dependencies {
 	api(project(":jadx-plugins:jadx-input-api"))
 	api(project(":jadx-commons:jadx-zip"))
 
-	implementation("com.google.code.gson:gson:2.13.1")
+	implementation("com.google.code.gson:gson:2.13.2")
 
-	testImplementation("org.apache.commons:commons-lang3:3.17.0")
+	testImplementation("org.apache.commons:commons-lang3:3.20.0")
 
 	testImplementation(project(":jadx-plugins:jadx-dex-input"))
-	testRuntimeOnly(project(":jadx-plugins:jadx-smali-input"))
-	testRuntimeOnly(project(":jadx-plugins:jadx-java-convert"))
-	testRuntimeOnly(project(":jadx-plugins:jadx-java-input"))
-	testRuntimeOnly(project(":jadx-plugins:jadx-raung-input"))
+	// 'ClassNotFound' error is raised if set as 'testRuntime'
+	// for the plugins below when running the tests from vscode.
+	testImplementation(project(":jadx-plugins:jadx-smali-input"))
+	testImplementation(project(":jadx-plugins:jadx-java-convert"))
+	testImplementation(project(":jadx-plugins:jadx-java-input"))
+	testImplementation(project(":jadx-plugins:jadx-raung-input"))
 
 	testImplementation("org.eclipse.jdt:ecj") {
 		version {
@@ -22,7 +24,7 @@ dependencies {
 			strictly("[3.33, 3.34[") // from 3.34 compiled with Java 17
 		}
 	}
-	testImplementation("tools.profiler:async-profiler:4.0")
+	testImplementation("tools.profiler:async-profiler:4.2")
 }
 
 val jadxTestJavaVersion = getTestJavaVersion()

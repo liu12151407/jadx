@@ -129,7 +129,8 @@ public class UsageInfoVisitor extends AbstractVisitor {
 			try {
 				processInsn(root, mth, insnData, usageInfo);
 			} catch (Exception e) {
-				mth.addError("Dependency scan failed at insn: " + insnData, e);
+				throw new JadxRuntimeException(
+						"Usage info collection failed with error: " + e.getMessage() + " at insn: " + insnData, e);
 			}
 		});
 	}
@@ -165,6 +166,11 @@ public class UsageInfoVisitor extends AbstractVisitor {
 				MethodNode methodNode = root.resolveMethod(MethodInfo.fromRef(root, mthRef));
 				if (methodNode != null) {
 					usageInfo.methodUse(mth, methodNode);
+				} else {
+					mthRef.load();
+					if (mthRef.getName() != null || mthRef.getParentClassType() != null) {
+						usageInfo.unresolvedMethodUse(mth, mthRef);
+					}
 				}
 				break;
 			}
@@ -178,6 +184,8 @@ public class UsageInfoVisitor extends AbstractVisitor {
 					MethodNode mthNode = root.resolveMethod(MethodInfo.fromRef(root, mthRef));
 					if (mthNode != null) {
 						usageInfo.methodUse(mth, mthNode);
+					} else if (mthRef.getName() != null || mthRef.getParentClassType() != null) {
+						usageInfo.unresolvedMethodUse(mth, mthRef);
 					}
 				}
 				break;

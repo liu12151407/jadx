@@ -15,6 +15,7 @@ import jadx.api.JadxArgs;
 import jadx.core.deobf.DeobfuscatorVisitor;
 import jadx.core.deobf.SaveDeobfMapping;
 import jadx.core.dex.attributes.AFlag;
+import jadx.core.dex.visitors.AdjustForIfMergeVisitor;
 import jadx.core.dex.visitors.AnonymousClassVisitor;
 import jadx.core.dex.visitors.ApplyVariableNames;
 import jadx.core.dex.visitors.AttachCommentsVisitor;
@@ -66,6 +67,7 @@ import jadx.core.dex.visitors.regions.IfRegionVisitor;
 import jadx.core.dex.visitors.regions.LoopRegionVisitor;
 import jadx.core.dex.visitors.regions.RegionMakerVisitor;
 import jadx.core.dex.visitors.regions.ReturnVisitor;
+import jadx.core.dex.visitors.regions.SwitchBreakVisitor;
 import jadx.core.dex.visitors.regions.SwitchOverStringVisitor;
 import jadx.core.dex.visitors.regions.variables.ProcessVariables;
 import jadx.core.dex.visitors.rename.CodeRenameVisitor;
@@ -155,6 +157,8 @@ public class Jadx {
 		passes.add(new FixTypesVisitor());
 		passes.add(new FinishTypeInference());
 
+		passes.add(new AdjustForIfMergeVisitor());
+
 		if (args.getUseKotlinMethodsForVarNames() != JadxArgs.UseKotlinMethodsForVarNames.DISABLE) {
 			passes.add(new ProcessKotlinInternals());
 		}
@@ -196,12 +200,14 @@ public class Jadx {
 		passes.add(new FixAccessModifiers());
 		passes.add(new ClassModifier());
 		passes.add(new LoopRegionVisitor());
+		passes.add(new SwitchBreakVisitor());
 
 		if (args.isInlineMethods()) {
 			passes.add(new MarkMethodsForInline());
 		}
 		passes.add(new ProcessVariables());
 		passes.add(new ApplyVariableNames());
+
 		passes.add(new PrepareForCodeGen());
 		if (args.isCfgOutput()) {
 			passes.add(DotGraphVisitor.dumpRegions());

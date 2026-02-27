@@ -61,6 +61,9 @@ public abstract class ArgType {
 			PrimitiveType.INT, PrimitiveType.FLOAT,
 			PrimitiveType.SHORT, PrimitiveType.BYTE, PrimitiveType.CHAR);
 
+	public static final ArgType NARROW_NEG_NUMBERS = unknown(
+			PrimitiveType.INT, PrimitiveType.SHORT, PrimitiveType.BYTE, PrimitiveType.FLOAT);
+
 	public static final ArgType NARROW_NUMBERS_NO_FLOAT = unknown(
 			PrimitiveType.INT, PrimitiveType.BOOLEAN,
 			PrimitiveType.SHORT, PrimitiveType.BYTE, PrimitiveType.CHAR);
@@ -746,6 +749,9 @@ public abstract class ArgType {
 			case '[':
 				return array(parse(type.substring(1)));
 			default:
+				if (type.length() != 1) {
+					throw new JadxRuntimeException("Unknown type string: \"" + type + '"');
+				}
 				return parse(f);
 		}
 	}
@@ -772,7 +778,7 @@ public abstract class ArgType {
 				return VOID;
 
 			default:
-				return null;
+				throw new JadxRuntimeException("Unknown type char: '" + f + "' (0x" + Integer.toHexString(f) + ')');
 		}
 	}
 

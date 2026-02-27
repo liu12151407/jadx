@@ -138,11 +138,16 @@ public final class JadxDecompiler implements Closeable {
 		loadFinished();
 	}
 
+	/**
+	 * Reload passes and plugins without processing classes and inputs
+	 */
 	public void reloadPasses() {
 		LOG.info("reloading (passes only) ...");
 		customPasses.clear();
 		root.resetPasses();
 		events.reset();
+		unloadPlugins();
+
 		loadPlugins();
 		root.mergePasses(customPasses);
 		root.restartVisitors();
@@ -435,7 +440,7 @@ public final class JadxDecompiler implements Closeable {
 		return list;
 	}
 
-	public List<JavaClass> getClasses() {
+	public synchronized List<JavaClass> getClasses() {
 		if (root == null) {
 			return Collections.emptyList();
 		}
@@ -443,10 +448,7 @@ public final class JadxDecompiler implements Closeable {
 			List<ClassNode> classNodeList = root.getClasses();
 			List<JavaClass> clsList = new ArrayList<>(classNodeList.size());
 			for (ClassNode classNode : classNodeList) {
-				if (classNode.contains(AFlag.DONT_GENERATE)) {
-					continue;
-				}
-				if (!classNode.getClassInfo().isInner()) {
+				if (!classNode.contains(AFlag.DONT_GENERATE) && !classNode.isInner()) {
 					clsList.add(convertClassNode(classNode));
 				}
 			}
@@ -546,9 +548,10 @@ public final class JadxDecompiler implements Closeable {
 			return foundPkg;
 		}
 		List<JavaClass> clsList = Utils.collectionMap(pkg.getClasses(), this::convertClassNode);
+		List<JavaClass> clsListNoDup = Utils.collectionMap(pkg.getClassesNoDup(), this::convertClassNode);
 		int subPkgsCount = pkg.getSubPackages().size();
 		List<JavaPackage> subPkgs = subPkgsCount == 0 ? Collections.emptyList() : new ArrayList<>(subPkgsCount);
-		JavaPackage javaPkg = new JavaPackage(pkg, clsList, subPkgs);
+		JavaPackage javaPkg = new JavaPackage(pkg, clsList, clsListNoDup, subPkgs);
 		if (subPkgsCount != 0) {
 			// add subpackages after parent to avoid endless recursion
 			for (PackageNode subPackage : pkg.getSubPackages()) {

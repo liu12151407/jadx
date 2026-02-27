@@ -49,6 +49,7 @@ import org.slf4j.LoggerFactory;
 
 import ch.qos.logback.classic.Level;
 
+import jadx.api.JavaNode;
 import jadx.gui.logs.LogOptions;
 import jadx.gui.treemodel.JNode;
 import jadx.gui.treemodel.JResSearchNode;
@@ -89,7 +90,7 @@ public abstract class CommonSearchDialog extends JFrame {
 		this.mainWindow = mainWindow;
 		this.tabsController = mainWindow.getTabsController();
 		this.cache = mainWindow.getCacheObject();
-		this.codeFont = mainWindow.getSettings().getFont();
+		this.codeFont = mainWindow.getSettings().getCodeFont();
 		this.windowTitle = title;
 		UiUtils.setWindowIcons(this);
 		updateTitle("");
@@ -152,7 +153,7 @@ public abstract class CommonSearchDialog extends JFrame {
 		} else {
 			tabsController.codeJump(node);
 		}
-		if (!mainWindow.getSettings().getKeepCommonDialogOpen()) {
+		if (!mainWindow.getSettings().isKeepCommonDialogOpen()) {
 			dispose();
 		}
 	}
@@ -185,9 +186,12 @@ public abstract class CommonSearchDialog extends JFrame {
 		StringBuilder sb = new StringBuilder();
 		Set<String> uniqueRefs = new HashSet<>();
 		for (JNode node : resultsModel.rows) {
-			String codeNodeRef = node.getJavaNode().getCodeNodeRef().toString();
-			if (uniqueRefs.add(codeNodeRef)) {
-				sb.append(codeNodeRef).append("\n");
+			JavaNode javaNode = node.getJavaNode();
+			if (javaNode != null) {
+				String codeNodeRef = javaNode.getCodeNodeRef().toString();
+				if (uniqueRefs.add(codeNodeRef)) {
+					sb.append(codeNodeRef).append("\n");
+				}
 			}
 		}
 		UiUtils.copyToClipboard(sb.toString());
@@ -206,11 +210,8 @@ public abstract class CommonSearchDialog extends JFrame {
 		copyBtn.addActionListener(event -> copyAllSearchResults());
 
 		JCheckBox cbKeepOpen = new JCheckBox(NLS.str("search_dialog.keep_open"));
-		cbKeepOpen.setSelected(mainWindow.getSettings().getKeepCommonDialogOpen());
-		cbKeepOpen.addActionListener(e -> {
-			mainWindow.getSettings().setKeepCommonDialogOpen(cbKeepOpen.isSelected());
-			mainWindow.getSettings().sync();
-		});
+		cbKeepOpen.setSelected(mainWindow.getSettings().isKeepCommonDialogOpen());
+		cbKeepOpen.addActionListener(e -> mainWindow.getSettings().saveKeepCommonDialogOpen(cbKeepOpen.isSelected()));
 		cbKeepOpen.setAlignmentY(Component.CENTER_ALIGNMENT);
 
 		JPanel buttonPane = new JPanel();
@@ -282,10 +283,10 @@ public abstract class CommonSearchDialog extends JFrame {
 		JScrollPane scroll = new JScrollPane(resultsTable, VERTICAL_SCROLLBAR_AS_NEEDED, HORIZONTAL_SCROLLBAR_AS_NEEDED);
 
 		resultsInfoLabel = new JLabel("");
-		resultsInfoLabel.setFont(mainWindow.getSettings().getFont());
+		resultsInfoLabel.setFont(mainWindow.getSettings().getUiFont());
 
 		progressInfoLabel = new JLabel("");
-		progressInfoLabel.setFont(mainWindow.getSettings().getFont());
+		progressInfoLabel.setFont(mainWindow.getSettings().getUiFont());
 		progressInfoLabel.addMouseListener(new MouseAdapter() {
 			@Override
 			public void mouseClicked(MouseEvent e) {

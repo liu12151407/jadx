@@ -6,10 +6,11 @@ plugins {
 dependencies {
 	api(project(":jadx-core"))
 
-	implementation("org.jetbrains.kotlinx:kotlinx-metadata-jvm:0.9.0")
+	implementation("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.10")
 
 	testImplementation(project.project(":jadx-core").sourceSets.getByName("test").output)
-	testImplementation("org.apache.commons:commons-lang3:3.17.0")
+	testImplementation("org.apache.commons:commons-lang3:3.20.0")
 
 	testRuntimeOnly(project(":jadx-plugins:jadx-smali-input"))
+	testRuntimeOnly(project(":jadx-plugins:jadx-java-input"))
 }

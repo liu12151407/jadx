@@ -7,44 +7,40 @@ import javax.swing.SwingUtilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import jadx.cli.JCommanderWrapper;
-import jadx.cli.LogHelper;
+import jadx.cli.JadxCLIArgs;
+import jadx.cli.config.JadxConfigAdapter;
+import jadx.commons.app.JadxSystemInfo;
+import jadx.core.Jadx;
 import jadx.core.utils.files.FileUtils;
 import jadx.gui.logs.LogCollector;
 import jadx.gui.settings.JadxSettings;
-import jadx.gui.settings.JadxSettingsAdapter;
+import jadx.gui.settings.JadxSettingsData;
 import jadx.gui.ui.MainWindow;
-import jadx.gui.ui.dialog.ExceptionDialog;
 import jadx.gui.utils.LafManager;
 import jadx.gui.utils.NLS;
-import jadx.gui.utils.SystemInfo;
 
 public class JadxGUI {
 	private static final Logger LOG = LoggerFactory.getLogger(JadxGUI.class);
 
 	public static void main(String[] args) {
 		try {
-			JadxSettings cliArgs = new JadxSettings();
-			JCommanderWrapper jcw = new JCommanderWrapper(cliArgs);
-			if (!jcw.parse(args) || !cliArgs.process(jcw)) {
+			JadxConfigAdapter<JadxSettingsData> configAdapter = JadxSettings.buildConfigAdapter();
+			JadxSettingsData settingsData = JadxCLIArgs.processArgs(args, new JadxSettingsData(), configAdapter);
+			if (settingsData == null) {
 				return;
 			}
-			LogHelper.initLogLevel(cliArgs);
-			LogHelper.setLogLevelsForDecompileStage();
+			JadxSettings settings = new JadxSettings(configAdapter);
+			settings.loadSettingsData(settingsData);
+
 			LogCollector.register();
 			printSystemInfo();
-
-			JadxSettings settings = JadxSettingsAdapter.load();
-			// overwrite loaded settings by command line arguments
-			jcw.overrideProvided(settings);
-
-			LafManager.init(settings);
 			NLS.setLocale(settings.getLangLocale());
-			ExceptionDialog.registerUncaughtExceptionHandler();
 			SwingUtilities.invokeLater(() -> {
+				LafManager.init(settings);
+				settings.getFontSettings().updateDefaultFont();
 				MainWindow mw = new MainWindow(settings);
-				mw.init();
 				registerOpenFileHandler(mw);
+				mw.init();
 			});
 		} catch (Exception e) {
 			LOG.error("Error: {}", e.getMessage(), e);
@@ -67,10 +63,10 @@ public class JadxGUI {
 
 	private static void printSystemInfo() {
 		if (LOG.isDebugEnabled()) {
-			LOG.debug("Starting jadx-gui. Version: '{}'. JVM: {} {}. OS: {} {}",
-					SystemInfo.JADX_VERSION,
-					SystemInfo.JAVA_VM, SystemInfo.JAVA_VER,
-					SystemInfo.OS_NAME, SystemInfo.OS_VERSION);
+			LOG.debug("Starting jadx-gui. Version: '{}'. JVM: {} {}. OS: {}, version: {}, arch: {}",
+					Jadx.getVersion(),
+					JadxSystemInfo.JAVA_VM, JadxSystemInfo.JAVA_VER,
+					JadxSystemInfo.OS_NAME, JadxSystemInfo.OS_VERSION, JadxSystemInfo.OS_ARCH);
 		}
 	}
 }

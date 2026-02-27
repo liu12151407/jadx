@@ -4,7 +4,6 @@ import java.io.Closeable;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -167,6 +166,12 @@ public class JadxArgs implements Closeable {
 
 	private IntegerFormat integerFormat = IntegerFormat.AUTO;
 
+	/**
+	 * Maximum updates allowed total in method per one instruction.
+	 * Should be more or equal 1, default value is 10.
+	 */
+	private int typeUpdatesLimitCount = 10;
+
 	private boolean useDxInput = false;
 
 	public enum UseKotlinMethodsForVarNames {
@@ -195,6 +200,11 @@ public class JadxArgs implements Closeable {
 	 * Run additional expensive checks to verify internal invariants and info integrity
 	 */
 	private boolean runDebugChecks = false;
+
+	/**
+	 * Passes to exclude from processing.
+	 */
+	private final List<String> disabledPasses = new ArrayList<>();
 
 	private Map<String, String> pluginOptions = new HashMap<>();
 
@@ -239,8 +249,12 @@ public class JadxArgs implements Closeable {
 		return inputFiles;
 	}
 
+	public void addInputFile(File inputFile) {
+		this.inputFiles.add(inputFile);
+	}
+
 	public void setInputFile(File inputFile) {
-		this.inputFiles = Collections.singletonList(inputFile);
+		addInputFile(inputFile);
 	}
 
 	public void setInputFiles(List<File> inputFiles) {
@@ -738,6 +752,14 @@ public class JadxArgs implements Closeable {
 		this.integerFormat = format;
 	}
 
+	public int getTypeUpdatesLimitCount() {
+		return typeUpdatesLimitCount;
+	}
+
+	public void setTypeUpdatesLimitCount(int typeUpdatesLimitCount) {
+		this.typeUpdatesLimitCount = Math.max(1, typeUpdatesLimitCount);
+	}
+
 	public boolean isUseDxInput() {
 		return useDxInput;
 	}
@@ -784,6 +806,10 @@ public class JadxArgs implements Closeable {
 
 	public void setRunDebugChecks(boolean runDebugChecks) {
 		this.runDebugChecks = runDebugChecks;
+	}
+
+	public List<String> getDisabledPasses() {
+		return disabledPasses;
 	}
 
 	public Map<String, String> getPluginOptions() {
@@ -839,7 +865,7 @@ public class JadxArgs implements Closeable {
 				+ insertDebugLines + extractFinally
 				+ debugInfo + escapeUnicode + replaceConsts + restoreSwitchOverString
 				+ respectBytecodeAccModifiers + fsCaseSensitive + renameFlags
-				+ commentsLevel + useDxInput + integerFormat
+				+ commentsLevel + useDxInput + integerFormat + typeUpdatesLimitCount
 				+ "|" + buildPluginsHash(decompiler);
 		return FileUtils.md5Sum(argStr);
 	}
@@ -898,6 +924,7 @@ public class JadxArgs implements Closeable {
 				+ ", cfgOutput=" + cfgOutput
 				+ ", rawCFGOutput=" + rawCFGOutput
 				+ ", useHeadersForDetectResourceExtensions=" + useHeadersForDetectResourceExtensions
+				+ ", typeUpdatesLimitCount=" + typeUpdatesLimitCount
 				+ '}';
 	}
 }

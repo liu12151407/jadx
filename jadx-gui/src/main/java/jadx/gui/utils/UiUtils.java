@@ -15,6 +15,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
+import java.io.File;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -45,6 +46,7 @@ import org.slf4j.LoggerFactory;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 
 import jadx.commons.app.JadxCommonEnv;
+import jadx.commons.app.JadxSystemInfo;
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.utils.StringUtils;
@@ -86,7 +88,7 @@ public class UiUtils {
 	private UiUtils() {
 	}
 
-	public static FlatSVGIcon openSvgIcon(String name) {
+	public static ImageIcon openSvgIcon(String name) {
 		String iconPath = "icons/" + name + ".svg";
 		FlatSVGIcon icon = new FlatSVGIcon(iconPath);
 		boolean found;
@@ -155,6 +157,32 @@ public class UiUtils {
 
 	public static String escapeHtml(String str) {
 		return str.replace("<", "&lt;").replace(">", "&gt;");
+	}
+
+	private static final String CUT_STR_REPLACE = "...";
+
+	public static String limitStringLength(String str, int maxLength) {
+		if (str.length() <= maxLength) {
+			return str;
+		}
+		char fileSepChar = File.separatorChar;
+		int firstFileSep = str.indexOf(fileSepChar);
+		if (firstFileSep != -1) {
+			// remove path parts
+			int lastFileSep = str.lastIndexOf(fileSepChar);
+			if (firstFileSep == lastFileSep) {
+				// single path char => cut before
+				str = CUT_STR_REPLACE + str.substring(lastFileSep - 1);
+			} else {
+				// cut middle
+				str = str.substring(0, firstFileSep + 1) + CUT_STR_REPLACE + str.substring(lastFileSep);
+			}
+			if (str.length() < maxLength) {
+				return str;
+			}
+		}
+		// cut end by default
+		return str.substring(0, maxLength - CUT_STR_REPLACE.length()) + CUT_STR_REPLACE;
 	}
 
 	public static String typeStr(ArgType type) {
@@ -278,7 +306,7 @@ public class UiUtils {
 	@SuppressWarnings("deprecation")
 	@MagicConstant(flagsFromClass = InputEvent.class)
 	private static int getCtrlButton() {
-		if (SystemInfo.IS_MAC) {
+		if (JadxSystemInfo.IS_MAC) {
 			return Toolkit.getDefaultToolkit().getMenuShortcutKeyMask();
 		} else {
 			return InputEvent.CTRL_DOWN_MASK;
@@ -351,9 +379,12 @@ public class UiUtils {
 	}
 
 	public static void errorMessage(Component parent, String message) {
+		errorMessage(parent, NLS.str("message.errorTitle"), message);
+	}
+
+	public static void errorMessage(Component parent, String title, String message) {
 		LOG.error(message);
-		JOptionPane.showMessageDialog(parent, message,
-				NLS.str("message.errorTitle"), JOptionPane.ERROR_MESSAGE);
+		JOptionPane.showMessageDialog(parent, message, title, JOptionPane.ERROR_MESSAGE);
 	}
 
 	public static void copyToClipboard(String text) {
@@ -429,25 +460,19 @@ public class UiUtils {
 	 * Uses single thread, so all tasks are ordered.
 	 */
 	public static void bgRun(Runnable runnable) {
-		BACKGROUND_THREAD.submit(runnable);
+		BACKGROUND_THREAD.execute(runnable);
 	}
 
 	public static void uiThreadGuard() {
-		if (!SwingUtilities.isEventDispatchThread()) {
+		if (JADX_GUI_DEBUG && !SwingUtilities.isEventDispatchThread()) {
 			LOG.warn("Expect UI thread, got: {}", Thread.currentThread(), new JadxRuntimeException());
 		}
 	}
 
 	public static void notUiThreadGuard() {
-		if (SwingUtilities.isEventDispatchThread()) {
+		if (JADX_GUI_DEBUG && SwingUtilities.isEventDispatchThread()) {
 			LOG.warn("Expect background thread, got: {}", Thread.currentThread(), new JadxRuntimeException());
 		}
-	}
-
-	public static boolean isXToolkit() {
-		return SystemInfo.IS_UNIX
-				&& !SystemInfo.IS_MAC
-				&& "sun.awt.X11.XToolkit".equals(Toolkit.getDefaultToolkit().getClass().getName());
 	}
 
 	@TestOnly
@@ -535,5 +560,16 @@ public class UiUtils {
 			field.putClientProperty("JComponent.outline", "");
 		}
 		field.repaint();
+	}
+
+	public static boolean nearlyEqual(float a, float b) {
+		return Math.abs(a - b) < 1E-6f;
+	}
+
+	// Formats a string to be in a .DOT node
+	public static String toDotNodeName(String fullName) {
+		String newName = fullName.replace("<", "\\<");
+		newName = newName.replace(">", "\\>");
+		return newName;
 	}
 }
